@@ -3,256 +3,128 @@ package telegram
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	tgmd "github.com/Mad-Pixels/goldmark-tgmd"
+	"github.com/yuin/goldmark/parser"
+
 	"github.com/vaayne/anna/agent"
+	tele "gopkg.in/telebot.v4"
 )
 
-const (
-	telegramMaxMessageLen = 4000
-	longPollTimeout       = 30
-	retryDelay            = 5 * time.Second
-)
-
-type telegramUpdate struct {
-	UpdateID int              `json:"update_id"`
-	Message  *telegramMessage `json:"message"`
-}
-
-type telegramMessage struct {
-	Chat telegramChat `json:"chat"`
-	Text string       `json:"text"`
-}
-
-type telegramChat struct {
-	ID int64 `json:"id"`
-}
-
-type telegramGetUpdatesResponse struct {
-	OK     bool             `json:"ok"`
-	Result []telegramUpdate `json:"result"`
-}
-
-type telegramSendMessageRequest struct {
-	ChatID    int64  `json:"chat_id"`
-	Text      string `json:"text"`
-	ParseMode string `json:"parse_mode,omitempty"`
-}
-
-type telegramSendChatActionRequest struct {
-	ChatID int64  `json:"chat_id"`
-	Action string `json:"action"`
-}
+const telegramMaxMessageLen = 4000
 
 var log = slog.With("component", "telegram")
 
 // Run starts a Telegram bot using long polling. It blocks until ctx is
-// cancelled. Messages are processed sequentially.
+// cancelled.
 func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
-	return runTelegramLoop(ctx, "https://api.telegram.org/bot"+token, &http.Client{}, sm)
-}
+	bot, err := tele.NewBot(tele.Settings{
+		Token:  token,
+		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
+	})
+	if err != nil {
+		return fmt.Errorf("create bot: %w", err)
+	}
 
-func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, sm agent.SessionProvider) error {
-	offset := 0
-	log.Info("polling started")
+	md := tgmd.TGMD()
 
-	for {
-		select {
-		case <-ctx.Done():
-			log.Info("polling stopped")
-			return ctx.Err()
-		default:
+	bot.Handle("/new", func(c tele.Context) error {
+		sessionID := strconv.FormatInt(c.Chat().ID, 10)
+		if err := sm.NewSession(sessionID); err != nil {
+			log.Error("new session failed", "session_id", sessionID, "error", err)
+			return c.Send(fmt.Sprintf("Error creating new session: %v", err))
 		}
+		log.Info("new session created", "session_id", sessionID)
+		return c.Send("New session started.")
+	})
 
-		updates, err := getUpdates(ctx, client, baseURL, offset)
+	bot.Handle(tele.OnText, func(c tele.Context) error {
+		chatID := c.Chat().ID
+		sessionID := strconv.FormatInt(chatID, 10)
+		text := c.Message().Text
+
+		log.Debug("message received", "chat_id", chatID, "text_len", len(text))
+
+		_ = c.Notify(tele.Typing)
+
+		ag, err := sm.GetOrCreate(ctx, sessionID)
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			log.Warn("getUpdates error, retrying", "error", err, "retry_delay", retryDelay)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(retryDelay):
-			}
-			continue
+			log.Error("get or create agent failed", "session_id", sessionID, "error", err)
+			return c.Send(fmt.Sprintf("Error starting agent: %v", err))
 		}
 
-		for _, u := range updates {
-			if u.UpdateID >= offset {
-				offset = u.UpdateID + 1
+		var sb strings.Builder
+		var streamErr error
+		for evt := range ag.SendPrompt(ctx, text) {
+			if evt.Err != nil {
+				streamErr = evt.Err
+				break
 			}
+			sb.WriteString(evt.Text)
+		}
 
-			if u.Message == nil || strings.TrimSpace(u.Message.Text) == "" {
-				continue
+		response := sb.String()
+		if streamErr != nil {
+			log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
+			if response == "" {
+				response = fmt.Sprintf("Agent error: %v", streamErr)
+			} else {
+				response += fmt.Sprintf("\n\n[Agent error: %v]", streamErr)
 			}
+		}
 
-			chatID := u.Message.Chat.ID
-			sessionID := strconv.FormatInt(chatID, 10)
-			text := u.Message.Text
+		if strings.TrimSpace(response) == "" {
+			response = "(empty response)"
+		}
 
-			log.Debug("message received", "chat_id", chatID, "text_len", len(text))
-
-			// Handle /new command to start a fresh session.
-			if strings.TrimSpace(text) == "/new" {
-				if err := sm.NewSession(sessionID); err != nil {
-					log.Error("new session failed", "session_id", sessionID, "error", err)
-					_ = sendMessage(ctx, client, baseURL, chatID, fmt.Sprintf("Error creating new session: %v", err))
-				} else {
-					log.Info("new session created", "session_id", sessionID)
-					_ = sendMessage(ctx, client, baseURL, chatID, "New session started.")
-				}
-				continue
-			}
-
-			// Send typing indicator (best-effort).
-			_ = sendChatAction(ctx, client, baseURL, chatID, "typing")
-
-			ag, err := sm.GetOrCreate(ctx, sessionID)
-			if err != nil {
-				log.Error("get or create agent failed", "session_id", sessionID, "error", err)
-				_ = sendMessage(ctx, client, baseURL, chatID, fmt.Sprintf("Error starting agent: %v", err))
-				continue
-			}
-			// Collect streaming response.
-			var sb strings.Builder
-			var streamErr error
-			for evt := range ag.SendPrompt(ctx, text) {
-				if evt.Err != nil {
-					streamErr = evt.Err
-					break
-				}
-				sb.WriteString(evt.Text)
-			}
-
-			response := sb.String()
-			if streamErr != nil {
-				log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
-				if response == "" {
-					response = fmt.Sprintf("Agent error: %v", streamErr)
-				} else {
-					response += fmt.Sprintf("\n\n[Agent error: %v]", streamErr)
-				}
-			}
-
-			if strings.TrimSpace(response) == "" {
-				response = "(empty response)"
-			}
-
-			// Split and send.
-			chunks := splitMessage(response)
-			for _, chunk := range chunks {
-				if err := sendMessage(ctx, client, baseURL, chatID, chunk); err != nil {
+		chunks := splitMessage(response)
+		for _, chunk := range chunks {
+			rendered := renderMarkdown(md, chunk)
+			if err := c.Send(rendered, tele.ModeMarkdownV2); err != nil {
+				log.Warn("markdown send failed, falling back to plain text", "error", err)
+				if err := c.Send(chunk); err != nil {
 					log.Error("sendMessage failed", "chat_id", chatID, "error", err)
 				}
 			}
-			log.Debug("response sent", "chat_id", chatID, "chunks", len(chunks), "response_len", len(response))
 		}
-	}
+		log.Debug("response sent", "chat_id", chatID, "chunks", len(chunks), "response_len", len(response))
+		return nil
+	})
+
+	log.Info("polling started")
+
+	go func() {
+		<-ctx.Done()
+		log.Info("polling stopped")
+		bot.Stop()
+	}()
+
+	bot.Start()
+	return ctx.Err()
 }
 
-// getUpdates calls the Telegram getUpdates API with long polling.
-func getUpdates(ctx context.Context, client *http.Client, baseURL string, offset int) ([]telegramUpdate, error) {
-	url := fmt.Sprintf("%s/getUpdates?offset=%d&timeout=%d", baseURL, offset, longPollTimeout)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+// renderMarkdown converts standard markdown to Telegram MarkdownV2 format.
+func renderMarkdown(md goldmarkMD, text string) string {
+	var buf bytes.Buffer
+	if err := md.Convert([]byte(text), &buf); err != nil {
+		return text
 	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
+	result := buf.String()
+	if result == "" {
+		return text
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result telegramGetUpdatesResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	if !result.OK {
-		return nil, fmt.Errorf("telegram API returned ok=false: %s", string(body))
-	}
-
-	return result.Result, nil
+	return result
 }
 
-// sendMessage sends a text message to a Telegram chat, returning any error.
-func sendMessage(ctx context.Context, client *http.Client, baseURL string, chatID int64, text string) error {
-	payload := telegramSendMessageRequest{
-		ChatID: chatID,
-		Text:   text,
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-
-	url := baseURL + "/sendMessage"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// sendChatAction sends a chat action (e.g. "typing") to a Telegram chat.
-func sendChatAction(ctx context.Context, client *http.Client, baseURL string, chatID int64, action string) error {
-	payload := telegramSendChatActionRequest{
-		ChatID: chatID,
-		Action: action,
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-
-	url := baseURL + "/sendChatAction"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	return nil
+// goldmarkMD is the interface satisfied by the goldmark Markdown converter.
+type goldmarkMD interface {
+	Convert(source []byte, w io.Writer, opts ...parser.ParseOption) error
 }
 
 // splitMessage splits a message into chunks that fit within Telegram's 4096
