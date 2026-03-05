@@ -25,18 +25,14 @@ type TelegramConfig struct {
 }
 
 func configDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".pibot")
+	return filepath.Join(".", ".agents")
 }
 
 func configPath() string {
 	return filepath.Join(configDir(), "config.yaml")
 }
 
-// LoadConfig loads config from the default path (~/.pibot/config.yaml).
+// LoadConfig loads config from the default path (.agents/config.yaml).
 func LoadConfig() (*Config, error) {
 	return loadConfigFrom(configDir())
 }
@@ -78,7 +74,7 @@ func loadConfigFrom(dir string) (*Config, error) {
 		cfg.Pi.IdleTimeout = 10
 	}
 	if cfg.Sessions == "" {
-		cfg.Sessions = filepath.Join(dir, "sessions")
+		cfg.Sessions = filepath.Join(dir, "workspace", "sessions")
 	}
 
 	return cfg, nil

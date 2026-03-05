@@ -29,7 +29,9 @@ mise run run:telegram # Build + run Telegram bot
 
 ## Configuration
 
-Config file: `~/.pibot/config.yaml`
+Config file: `.agents/config.yaml`
+Agent data: `.agents/pi` (set via `PI_CODING_AGENT_DIR` env)
+Session data: `.agents/workspace/sessions`
 
 Env var overrides:
 - `PIBOT_TELEGRAM_TOKEN` → telegram.token

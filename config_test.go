@@ -20,8 +20,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Pi.IdleTimeout != 10 {
 		t.Errorf("Pi.IdleTimeout = %d, want 10", cfg.Pi.IdleTimeout)
 	}
-	if cfg.Sessions != filepath.Join(dir, "sessions") {
-		t.Errorf("Sessions = %q, want %q", cfg.Sessions, filepath.Join(dir, "sessions"))
+	if cfg.Sessions != filepath.Join(dir, "workspace", "sessions") {
+		t.Errorf("Sessions = %q, want %q", cfg.Sessions, filepath.Join(dir, "workspace", "sessions"))
 	}
 	if cfg.Telegram.Token != "" {
 		t.Errorf("Telegram.Token = %q, want empty", cfg.Telegram.Token)
@@ -141,15 +141,15 @@ func TestLoadConfigCreatesDir(t *testing.T) {
 
 func TestConfigDir(t *testing.T) {
 	dir := configDir()
-	if !strings.HasSuffix(dir, ".pibot") {
-		t.Errorf("configDir() = %q, want suffix .pibot", dir)
+	if !strings.HasSuffix(dir, ".agents") {
+		t.Errorf("configDir() = %q, want suffix .agents", dir)
 	}
 }
 
 func TestConfigPath(t *testing.T) {
 	p := configPath()
-	if !strings.HasSuffix(p, filepath.Join(".pibot", "config.yaml")) {
-		t.Errorf("configPath() = %q, want suffix .pibot/config.yaml", p)
+	if !strings.HasSuffix(p, filepath.Join(".agents", "config.yaml")) {
+		t.Errorf("configPath() = %q, want suffix .agents/config.yaml", p)
 	}
 }
 
@@ -201,7 +201,7 @@ func TestRunTelegramNoToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing token")
 	}
-	if !strings.Contains(err.Error(), "Telegram token") {
-		t.Errorf("err = %q, want contains 'Telegram token'", err.Error())
+	if !strings.Contains(err.Error(), "Telegram token not configured") {
+		t.Errorf("err = %q, want contains 'Telegram token not configured'", err.Error())
 	}
 }

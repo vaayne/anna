@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,6 +89,18 @@ func (a *Agent) Start(ctx context.Context) error {
 		args = append(args, "--model", a.model)
 	}
 	a.cmd = exec.CommandContext(ctx, a.binary, args...)
+	a.cmd.Env = append(os.Environ(), "PI_CODING_AGENT_DIR="+filepath.Join(".", ".agents", "pi"))
+
+	// Resolve the binary path for debug logging.
+	resolvedBinary, _ := exec.LookPath(a.binary)
+	if resolvedBinary == "" {
+		resolvedBinary = a.binary
+	}
+	log.Printf("agent: spawning process: %s %s", resolvedBinary, strings.Join(args, " "))
+	log.Printf("agent: working dir: %s", a.cmd.Dir)
+	log.Printf("agent: PI_CODING_AGENT_DIR=%s", filepath.Join(".", ".agents", "pi"))
+	log.Printf("agent: session path: %s", a.sessionPath)
+	log.Printf("agent: pid will follow after start")
 
 	var err error
 	a.stdin, err = a.cmd.StdinPipe()
@@ -106,6 +121,8 @@ func (a *Agent) Start(ctx context.Context) error {
 	if err := a.cmd.Start(); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
+
+	log.Printf("agent: process started with pid %d", a.cmd.Process.Pid)
 
 	a.decoder = json.NewDecoder(stdout)
 

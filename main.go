@@ -74,7 +74,7 @@ func run(args []string) error {
 		return cli.RunChat(ctx, sm)
 	case "telegram":
 		if cfg.Telegram.Token == "" {
-			return fmt.Errorf("Telegram token not configured. Set in ~/.pibot/config.yaml or PIBOT_TELEGRAM_TOKEN env var")
+			return fmt.Errorf("Telegram token not configured. Set in .agents/config.yaml or PIBOT_TELEGRAM_TOKEN env var")
 		}
 		log.Println("pibot: starting Telegram bot...")
 		if err := bot.RunTelegram(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
