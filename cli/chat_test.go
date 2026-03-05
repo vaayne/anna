@@ -41,7 +41,7 @@ func TestRunChatQuit(t *testing.T) {
 		{"type": "agent_end"},
 	})
 
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	// Pipe: send "hello", then "/quit".
@@ -91,7 +91,7 @@ func TestRunChatExit(t *testing.T) {
 		{"type": "agent_end"},
 	})
 
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	r, w, _ := os.Pipe()
@@ -124,7 +124,7 @@ func TestRunChatEOF(t *testing.T) {
 		{"type": "agent_end"},
 	})
 
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	r, w, _ := os.Pipe()
@@ -154,7 +154,7 @@ func TestRunChatSkipsEmpty(t *testing.T) {
 		{"type": "agent_end"},
 	})
 
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	r, w, _ := os.Pipe()

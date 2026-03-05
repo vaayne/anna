@@ -45,6 +45,7 @@ type StreamEvent struct {
 // Agent manages a single Pi RPC process.
 type Agent struct {
 	binary      string
+	model       string
 	sessionPath string
 
 	cmd     *exec.Cmd
@@ -63,9 +64,10 @@ type Agent struct {
 }
 
 // NewAgent creates a new Agent but does not start the process.
-func NewAgent(binary string, sessionPath string) *Agent {
+func NewAgent(binary string, model string, sessionPath string) *Agent {
 	return &Agent{
 		binary:       binary,
+		model:        model,
 		sessionPath:  sessionPath,
 		events:       make(chan *RPCEvent, 100),
 		done:         make(chan struct{}),
@@ -79,7 +81,11 @@ func (a *Agent) Start(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.cmd = exec.CommandContext(ctx, a.binary, "--mode", "rpc", "--session", a.sessionPath)
+	args := []string{"--mode", "rpc", "--session-dir", a.sessionPath}
+	if a.model != "" {
+		args = append(args, "--model", a.model)
+	}
+	a.cmd = exec.CommandContext(ctx, a.binary, args...)
 
 	var err error
 	a.stdin, err = a.cmd.StdinPipe()

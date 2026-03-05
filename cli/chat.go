@@ -4,11 +4,40 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/vaayne/pibot/agent"
 )
+
+// RunStream reads all of stdin as a prompt, sends it to the agent, and streams the response to stdout.
+func RunStream(ctx context.Context, sm *agent.SessionManager) error {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("reading stdin: %w", err)
+	}
+
+	prompt := strings.TrimSpace(string(input))
+	if prompt == "" {
+		return fmt.Errorf("empty prompt")
+	}
+
+	ag, err := sm.GetOrCreate(ctx, "cli")
+	if err != nil {
+		return fmt.Errorf("failed to get agent: %w", err)
+	}
+
+	stream := ag.SendPrompt(ctx, prompt)
+	for evt := range stream {
+		if evt.Err != nil {
+			return evt.Err
+		}
+		fmt.Print(evt.Text)
+	}
+	fmt.Println()
+	return nil
+}
 
 // RunChat starts an interactive terminal chat session using the given SessionManager.
 func RunChat(ctx context.Context, sm *agent.SessionManager) error {

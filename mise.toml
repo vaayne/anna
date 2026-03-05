@@ -18,6 +18,11 @@ description = "Run interactive CLI chat"
 depends = ["build"]
 run = "./bin/$BINARY_NAME chat"
 
+[tasks."run:stream"]
+description = "Run streaming chat (pipe prompt via stdin)"
+depends = ["build"]
+run = "./bin/$BINARY_NAME chat --stream"
+
 [tasks."run:telegram"]
 description = "Run Telegram bot"
 depends = ["build"]

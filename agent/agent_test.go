@@ -23,7 +23,7 @@ func writeMockBinary(t *testing.T) string {
 }
 
 func TestNewAgent(t *testing.T) {
-	ag := NewAgent("/usr/bin/echo", "/tmp/session")
+	ag := NewAgent("/usr/bin/echo", "", "/tmp/session")
 	if ag.binary != "/usr/bin/echo" {
 		t.Errorf("binary = %q, want %q", ag.binary, "/usr/bin/echo")
 	}
@@ -37,7 +37,7 @@ func TestNewAgent(t *testing.T) {
 
 func TestAgentStartWithMock(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -74,7 +74,7 @@ func TestAgentStartWithMock(t *testing.T) {
 }
 
 func TestAgentStartInvalidBinary(t *testing.T) {
-	ag := NewAgent("/nonexistent/binary", t.TempDir())
+	ag := NewAgent("/nonexistent/binary", "", t.TempDir())
 	err := ag.Start(context.Background())
 	if err == nil {
 		t.Fatal("expected error for invalid binary")
@@ -83,7 +83,7 @@ func TestAgentStartInvalidBinary(t *testing.T) {
 
 func TestAgentStop(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
 	if err := ag.Start(ctx); err != nil {
@@ -102,7 +102,7 @@ func TestAgentStop(t *testing.T) {
 
 func TestAgentSendPromptStreamEvents(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
 	if err := ag.Start(ctx); err != nil {
@@ -153,7 +153,7 @@ func TestAgentSendPromptStreamEvents(t *testing.T) {
 
 func TestAgentSendPromptErrorEvent(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
 	if err := ag.Start(ctx); err != nil {
@@ -191,7 +191,7 @@ func TestAgentSendPromptErrorEvent(t *testing.T) {
 
 func TestAgentLastActivity(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 	before := ag.LastActivity()
 
 	time.Sleep(10 * time.Millisecond)
@@ -222,7 +222,7 @@ func TestAgentLastActivity(t *testing.T) {
 
 func TestAgentResponseRouting(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
 	if err := ag.Start(ctx); err != nil {
@@ -254,7 +254,7 @@ func TestAgentResponseRouting(t *testing.T) {
 
 func TestAgentSendPromptAfterStop(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
 	if err := ag.Start(ctx); err != nil {
@@ -278,7 +278,7 @@ func TestAgentSendPromptAfterStop(t *testing.T) {
 
 func TestAgentSendPromptContextCancel(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, t.TempDir())
+	ag := NewAgent(bin, "", t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := ag.Start(ctx); err != nil {

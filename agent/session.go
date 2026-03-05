@@ -13,6 +13,7 @@ import (
 // SessionManager manages a pool of Agent instances keyed by session ID.
 type SessionManager struct {
 	binary      string
+	model       string
 	sessionsDir string
 	idleTimeout time.Duration
 	agents      map[string]*Agent
@@ -20,9 +21,10 @@ type SessionManager struct {
 }
 
 // NewSessionManager creates a new SessionManager.
-func NewSessionManager(binary, sessionsDir string, idleTimeout time.Duration) *SessionManager {
+func NewSessionManager(binary, model, sessionsDir string, idleTimeout time.Duration) *SessionManager {
 	return &SessionManager{
 		binary:      binary,
+		model:       model,
 		sessionsDir: sessionsDir,
 		idleTimeout: idleTimeout,
 		agents:      make(map[string]*Agent),
@@ -49,7 +51,7 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, sessionID string) (*A
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 
-	ag := NewAgent(sm.binary, sessionPath)
+	ag := NewAgent(sm.binary, sm.model, sessionPath)
 	if err := ag.Start(ctx); err != nil {
 		return nil, fmt.Errorf("start agent for session %q: %w", sessionID, err)
 	}

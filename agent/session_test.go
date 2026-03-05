@@ -8,7 +8,7 @@ import (
 
 func TestNewSessionManager(t *testing.T) {
 	bin := writeMockBinary(t)
-	sm := NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	if sm.binary != bin {
 		t.Errorf("binary = %q, want %q", sm.binary, bin)
 	}
@@ -20,7 +20,7 @@ func TestNewSessionManager(t *testing.T) {
 func TestSessionManagerGetOrCreate(t *testing.T) {
 	dir := t.TempDir()
 	// Use "cat" as mock binary — it starts and stays alive.
-	sm := NewSessionManager(writeMockBinary(t), dir, 10*time.Minute)
+	sm := NewSessionManager(writeMockBinary(t), "", dir, 10*time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -47,7 +47,7 @@ func TestSessionManagerGetOrCreate(t *testing.T) {
 
 func TestSessionManagerMultipleSessions(t *testing.T) {
 	dir := t.TempDir()
-	sm := NewSessionManager(writeMockBinary(t), dir, 10*time.Minute)
+	sm := NewSessionManager(writeMockBinary(t), "", dir, 10*time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -70,7 +70,7 @@ func TestSessionManagerMultipleSessions(t *testing.T) {
 
 func TestSessionManagerReplacesDeadAgent(t *testing.T) {
 	dir := t.TempDir()
-	sm := NewSessionManager(writeMockBinary(t), dir, 10*time.Minute)
+	sm := NewSessionManager(writeMockBinary(t), "", dir, 10*time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -101,7 +101,7 @@ func TestSessionManagerReplacesDeadAgent(t *testing.T) {
 
 func TestSessionManagerStopAll(t *testing.T) {
 	dir := t.TempDir()
-	sm := NewSessionManager(writeMockBinary(t), dir, 10*time.Minute)
+	sm := NewSessionManager(writeMockBinary(t), "", dir, 10*time.Minute)
 
 	ctx := context.Background()
 
@@ -122,7 +122,7 @@ func TestSessionManagerStopAll(t *testing.T) {
 func TestSessionManagerReap(t *testing.T) {
 	dir := t.TempDir()
 	// Very short idle timeout for testing.
-	sm := NewSessionManager(writeMockBinary(t), dir, 1*time.Millisecond)
+	sm := NewSessionManager(writeMockBinary(t), "", dir, 1*time.Millisecond)
 
 	ctx := context.Background()
 	defer sm.StopAll()
@@ -154,7 +154,7 @@ func TestSessionManagerReap(t *testing.T) {
 
 func TestSessionManagerReapRemovesDead(t *testing.T) {
 	dir := t.TempDir()
-	sm := NewSessionManager(writeMockBinary(t), dir, 10*time.Minute)
+	sm := NewSessionManager(writeMockBinary(t), "", dir, 10*time.Minute)
 
 	ctx := context.Background()
 
@@ -173,7 +173,7 @@ func TestSessionManagerReapRemovesDead(t *testing.T) {
 }
 
 func TestSessionManagerStartReaperCancels(t *testing.T) {
-	sm := NewSessionManager(writeMockBinary(t), t.TempDir(), 10*time.Minute)
+	sm := NewSessionManager(writeMockBinary(t), "", t.TempDir(), 10*time.Minute)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -193,7 +193,7 @@ func TestSessionManagerStartReaperCancels(t *testing.T) {
 }
 
 func TestSessionManagerInvalidBinary(t *testing.T) {
-	sm := NewSessionManager("/nonexistent/binary", t.TempDir(), 10*time.Minute)
+	sm := NewSessionManager("/nonexistent/binary", "", t.TempDir(), 10*time.Minute)
 	_, err := sm.GetOrCreate(context.Background(), "test")
 	if err == nil {
 		t.Fatal("expected error for invalid binary")

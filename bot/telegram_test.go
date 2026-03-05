@@ -226,7 +226,7 @@ func TestGetUpdatesCancelled(t *testing.T) {
 
 func TestRunTelegramCancelledImmediately(t *testing.T) {
 	bin := writeMockPiBinary(t)
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -261,7 +261,7 @@ done
 
 func TestRunTelegramLoop(t *testing.T) {
 	bin := writeMockPiBinary(t)
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	var callCount atomic.Int32
@@ -323,7 +323,7 @@ func TestRunTelegramLoop(t *testing.T) {
 
 func TestRunTelegramLoopSkipsEmptyMessage(t *testing.T) {
 	bin := writeMockPiBinary(t)
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	var sendCalled atomic.Int32
@@ -363,7 +363,7 @@ func TestRunTelegramLoopSkipsEmptyMessage(t *testing.T) {
 
 func TestRunTelegramLoopRetryOnError(t *testing.T) {
 	bin := writeMockPiBinary(t)
-	sm := agent.NewSessionManager(bin, t.TempDir(), 10*time.Minute)
+	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
 
 	var calls atomic.Int32

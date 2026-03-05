@@ -14,11 +14,14 @@ import (
 	"github.com/vaayne/pibot/cli"
 )
 
-const usage = `Usage: pibot <command>
+const usage = `Usage: pibot <command> [flags]
 
 Commands:
   chat      Start interactive CLI chat
-  telegram  Start Telegram bot`
+  telegram  Start Telegram bot
+
+Flags (chat):
+  --stream  Read prompt from stdin and stream response to stdout`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -51,12 +54,23 @@ func run(args []string) error {
 
 	// Create session manager.
 	idleTimeout := time.Duration(cfg.Pi.IdleTimeout) * time.Minute
-	sm := agent.NewSessionManager(cfg.Pi.Binary, cfg.Sessions, idleTimeout)
+	sm := agent.NewSessionManager(cfg.Pi.Binary, cfg.Pi.Model, cfg.Sessions, idleTimeout)
 	go sm.StartReaper(ctx)
 	defer sm.StopAll()
 
+	// Check for --stream flag in remaining args.
+	stream := false
+	for _, a := range args[1:] {
+		if a == "--stream" {
+			stream = true
+		}
+	}
+
 	switch cmd {
 	case "chat":
+		if stream {
+			return cli.RunStream(ctx, sm)
+		}
 		return cli.RunChat(ctx, sm)
 	case "telegram":
 		if cfg.Telegram.Token == "" {

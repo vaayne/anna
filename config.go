@@ -16,6 +16,7 @@ type Config struct {
 
 type PiConfig struct {
 	Binary      string `yaml:"binary"`
+	Model       string `yaml:"model"`
 	IdleTimeout int    `yaml:"idle_timeout"`
 }
 
@@ -64,6 +65,9 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 	if v := os.Getenv("PIBOT_PI_BINARY"); v != "" {
 		cfg.Pi.Binary = v
+	}
+	if v := os.Getenv("PIBOT_PI_MODEL"); v != "" {
+		cfg.Pi.Model = v
 	}
 
 	// Apply defaults for missing values.
