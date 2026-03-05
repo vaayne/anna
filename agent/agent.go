@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,6 +63,7 @@ type Agent struct {
 	pendingMu sync.Mutex
 
 	lastActivity time.Time
+	log          *slog.Logger
 }
 
 // NewAgent creates a new Agent but does not start the process.
@@ -74,6 +76,7 @@ func NewAgent(binary string, model string, sessionFile string) *Agent {
 		done:         make(chan struct{}),
 		pending:      make(map[string]chan *RPCEvent),
 		lastActivity: time.Now(),
+		log:          slog.With("component", "agent", "session_file", sessionFile),
 	}
 }
 
@@ -109,6 +112,8 @@ func (a *Agent) Start(ctx context.Context) error {
 		return fmt.Errorf("start process: %w", err)
 	}
 
+	a.log.Info("process started", "pid", a.cmd.Process.Pid, "binary", a.binary, "model", a.model)
+
 	a.decoder = json.NewDecoder(stdout)
 
 	go a.readStdout()
@@ -127,6 +132,9 @@ func (a *Agent) readStdout() {
 	for {
 		var evt RPCEvent
 		if err := a.decoder.Decode(&evt); err != nil {
+			if err != io.EOF {
+				a.log.Warn("stdout decode error", "error", err)
+			}
 			return
 		}
 
@@ -149,11 +157,14 @@ func (a *Agent) readStdout() {
 	}
 }
 
-// readStderr drains stderr to prevent pipe deadlock.
+// readStderr drains stderr and logs any output.
 func (a *Agent) readStderr(stderr io.Reader) {
 	buf := make([]byte, 4096)
 	for {
-		_, err := stderr.Read(buf)
+		n, err := stderr.Read(buf)
+		if n > 0 {
+			a.log.Warn("stderr output", "text", string(buf[:n]))
+		}
 		if err != nil {
 			return
 		}
@@ -162,7 +173,12 @@ func (a *Agent) readStderr(stderr io.Reader) {
 
 // waitProcess waits for the process to exit, then signals done.
 func (a *Agent) waitProcess() {
-	_ = a.cmd.Wait()
+	err := a.cmd.Wait()
+	if err != nil {
+		a.log.Warn("process exited with error", "error", err)
+	} else {
+		a.log.Info("process exited")
+	}
 	close(a.done)
 }
 
@@ -181,6 +197,8 @@ func (a *Agent) SendPrompt(ctx context.Context, message string) <-chan StreamEve
 		Type:    "prompt",
 		Message: message,
 	}
+
+	a.log.Debug("sending prompt", "request_id", id, "message_len", len(message))
 
 	if err := a.sendCommand(cmd); err != nil {
 		go func() {
@@ -219,9 +237,11 @@ func (a *Agent) SendPrompt(ctx context.Context, message string) <-chan StreamEve
 						}
 					}
 				case "error":
+					a.log.Error("rpc error", "request_id", id, "error", evt.Error)
 					out <- StreamEvent{Err: fmt.Errorf("pi error: %s", evt.Error)}
 					return
 				case "agent_end":
+					a.log.Debug("prompt completed", "request_id", id)
 					return
 				}
 			}
@@ -261,8 +281,10 @@ func (a *Agent) Stop() error {
 
 	select {
 	case <-a.done:
+		a.log.Info("agent stopped gracefully")
 		return nil
 	case <-time.After(5 * time.Second):
+		a.log.Warn("agent did not exit in time, force killing")
 		if a.cmd != nil && a.cmd.Process != nil {
 			return a.cmd.Process.Kill()
 		}

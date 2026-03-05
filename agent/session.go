@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +18,7 @@ type SessionManager struct {
 	idleTimeout time.Duration
 	agents      map[string]*Agent
 	mu          sync.Mutex
+	log         *slog.Logger
 }
 
 // NewSessionManager creates a new SessionManager.
@@ -28,6 +29,7 @@ func NewSessionManager(binary, model, sessionsDir string, idleTimeout time.Durat
 		sessionsDir: sessionsDir,
 		idleTimeout: idleTimeout,
 		agents:      make(map[string]*Agent),
+		log:         slog.With("component", "session"),
 	}
 }
 
@@ -44,9 +46,11 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, sessionID string) (*A
 
 	if ag, ok := sm.agents[sessionID]; ok {
 		if ag.Alive() {
+			sm.log.Debug("returning existing agent", "session_id", sessionID)
 			return ag, nil
 		}
 		// Dead agent — clean up and fall through to create a new one.
+		sm.log.Warn("replacing dead agent", "session_id", sessionID)
 		_ = ag.Stop()
 		delete(sm.agents, sessionID)
 	}
@@ -61,6 +65,7 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, sessionID string) (*A
 		return nil, fmt.Errorf("start agent for session %q: %w", sessionID, err)
 	}
 
+	sm.log.Info("created new agent", "session_id", sessionID)
 	sm.agents[sessionID] = ag
 	return ag, nil
 }
@@ -86,7 +91,7 @@ func (sm *SessionManager) NewSession(sessionID string) error {
 		if err := os.Rename(sessionFile, backup); err != nil {
 			return fmt.Errorf("backup session file: %w", err)
 		}
-		log.Printf("session: backed up %s → %s", sessionFile, backup)
+		sm.log.Info("backed up session", "session_id", sessionID, "from", sessionFile, "to", backup)
 	}
 
 	return nil
@@ -98,7 +103,7 @@ func (sm *SessionManager) StopAll() {
 	defer sm.mu.Unlock()
 
 	for id, ag := range sm.agents {
-		log.Printf("session: stopping agent %q", id)
+		sm.log.Info("stopping agent", "session_id", id)
 		_ = ag.Stop()
 	}
 	sm.agents = make(map[string]*Agent)
@@ -129,12 +134,12 @@ func (sm *SessionManager) reap() {
 	now := time.Now()
 	for id, ag := range sm.agents {
 		if !ag.Alive() {
-			log.Printf("session: removing dead agent %q", id)
+			sm.log.Warn("removing dead agent", "session_id", id)
 			delete(sm.agents, id)
 			continue
 		}
 		if now.Sub(ag.LastActivity()) > sm.idleTimeout {
-			log.Printf("session: reaping idle agent %q (idle %s)", id, now.Sub(ag.LastActivity()).Round(time.Second))
+			sm.log.Info("reaping idle agent", "session_id", id, "idle_duration", now.Sub(ag.LastActivity()).Round(time.Second))
 			_ = ag.Stop()
 			delete(sm.agents, id)
 		}

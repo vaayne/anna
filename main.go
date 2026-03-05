@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,6 +24,10 @@ Flags (chat):
   --stream  Read prompt from stdin and stream response to stdout`
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})))
+
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -85,7 +89,7 @@ func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) erro
 
 	if cfg.Telegram.Token != "" {
 		started++
-		log.Println("anna: starting Telegram bot...")
+		slog.Info("starting telegram bot")
 		if err := telegram.Run(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("telegram: %w", err)
 		}
@@ -95,6 +99,6 @@ func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) erro
 		return fmt.Errorf("no gateway services configured. Check .agents/config.yaml")
 	}
 
-	log.Println("anna: gateway stopped.")
+	slog.Info("gateway stopped")
 	return nil
 }

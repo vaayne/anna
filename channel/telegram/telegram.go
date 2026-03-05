@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,6 +51,8 @@ type telegramSendChatActionRequest struct {
 	Action string `json:"action"`
 }
 
+var log = slog.With("component", "telegram")
+
 // Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled. Messages are processed sequentially.
 func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
@@ -59,10 +61,12 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 
 func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, sm agent.SessionProvider) error {
 	offset := 0
+	log.Info("polling started")
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Info("polling stopped")
 			return ctx.Err()
 		default:
 		}
@@ -72,7 +76,7 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Printf("telegram: getUpdates error: %v, retrying in %s", err, retryDelay)
+			log.Warn("getUpdates error, retrying", "error", err, "retry_delay", retryDelay)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -94,12 +98,15 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 			sessionID := strconv.FormatInt(chatID, 10)
 			text := u.Message.Text
 
+			log.Debug("message received", "chat_id", chatID, "text_len", len(text))
+
 			// Handle /new command to start a fresh session.
 			if strings.TrimSpace(text) == "/new" {
 				if err := sm.NewSession(sessionID); err != nil {
-					log.Printf("telegram: new session error for %s: %v", sessionID, err)
+					log.Error("new session failed", "session_id", sessionID, "error", err)
 					_ = sendMessage(ctx, client, baseURL, chatID, fmt.Sprintf("Error creating new session: %v", err))
 				} else {
+					log.Info("new session created", "session_id", sessionID)
 					_ = sendMessage(ctx, client, baseURL, chatID, "New session started.")
 				}
 				continue
@@ -110,7 +117,7 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 
 			ag, err := sm.GetOrCreate(ctx, sessionID)
 			if err != nil {
-				log.Printf("telegram: new session %s error: %v", sessionID, err)
+				log.Error("get or create agent failed", "session_id", sessionID, "error", err)
 				_ = sendMessage(ctx, client, baseURL, chatID, fmt.Sprintf("Error starting agent: %v", err))
 				continue
 			}
@@ -127,7 +134,7 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 
 			response := sb.String()
 			if streamErr != nil {
-				log.Printf("telegram: agent error for session %s: %v", sessionID, streamErr)
+				log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
 				if response == "" {
 					response = fmt.Sprintf("Agent error: %v", streamErr)
 				} else {
@@ -143,9 +150,10 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 			chunks := splitMessage(response)
 			for _, chunk := range chunks {
 				if err := sendMessage(ctx, client, baseURL, chatID, chunk); err != nil {
-					log.Printf("telegram: sendMessage error for chat %d: %v", chatID, err)
+					log.Error("sendMessage failed", "chat_id", chatID, "error", err)
 				}
 			}
+			log.Debug("response sent", "chat_id", chatID, "chunks", len(chunks), "response_len", len(response))
 		}
 	}
 }
