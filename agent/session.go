@@ -31,6 +31,11 @@ func NewSessionManager(binary, model, sessionsDir string, idleTimeout time.Durat
 	}
 }
 
+// sessionFile returns the path to the session file for the given session ID.
+func (sm *SessionManager) sessionFile(sessionID string) string {
+	return filepath.Join(sm.sessionsDir, fmt.Sprintf("%s.jsonl", sessionID))
+}
+
 // GetOrCreate returns an existing live agent for the given session ID,
 // or creates and starts a new one. The session directory is created if needed.
 func (sm *SessionManager) GetOrCreate(ctx context.Context, sessionID string) (*Agent, error) {
@@ -46,18 +51,45 @@ func (sm *SessionManager) GetOrCreate(ctx context.Context, sessionID string) (*A
 		delete(sm.agents, sessionID)
 	}
 
-	sessionPath := filepath.Join(sm.sessionsDir, sessionID)
-	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+	sessionFile := sm.sessionFile(sessionID)
+	if err := os.MkdirAll(filepath.Dir(sessionFile), 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 
-	ag := NewAgent(sm.binary, sm.model, sessionPath)
+	ag := NewAgent(sm.binary, sm.model, sessionFile)
 	if err := ag.Start(ctx); err != nil {
 		return nil, fmt.Errorf("start agent for session %q: %w", sessionID, err)
 	}
 
 	sm.agents[sessionID] = ag
 	return ag, nil
+}
+
+// NewSession stops the current agent for the given session ID, backs up the
+// existing session file to a timestamped name, and removes the agent from the
+// pool so the next GetOrCreate call starts a fresh session.
+func (sm *SessionManager) NewSession(sessionID string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if ag, ok := sm.agents[sessionID]; ok {
+		_ = ag.Stop()
+		delete(sm.agents, sessionID)
+	}
+
+	sessionFile := sm.sessionFile(sessionID)
+	if _, err := os.Stat(sessionFile); err == nil {
+		backup := filepath.Join(
+			filepath.Dir(sessionFile),
+			time.Now().Format("20060102-150405")+".jsonl",
+		)
+		if err := os.Rename(sessionFile, backup); err != nil {
+			return fmt.Errorf("backup session file: %w", err)
+		}
+		log.Printf("session: backed up %s → %s", sessionFile, backup)
+	}
+
+	return nil
 }
 
 // StopAll stops every managed agent.

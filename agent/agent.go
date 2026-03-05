@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,7 +47,7 @@ type StreamEvent struct {
 type Agent struct {
 	binary      string
 	model       string
-	sessionPath string
+	sessionFile string
 
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
@@ -67,11 +65,11 @@ type Agent struct {
 }
 
 // NewAgent creates a new Agent but does not start the process.
-func NewAgent(binary string, model string, sessionPath string) *Agent {
+func NewAgent(binary string, model string, sessionFile string) *Agent {
 	return &Agent{
 		binary:       binary,
 		model:        model,
-		sessionPath:  sessionPath,
+		sessionFile:  sessionFile,
 		events:       make(chan *RPCEvent, 100),
 		done:         make(chan struct{}),
 		pending:      make(map[string]chan *RPCEvent),
@@ -84,23 +82,12 @@ func (a *Agent) Start(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	args := []string{"--mode", "rpc", "--session-dir", a.sessionPath}
+	args := []string{"--mode", "rpc", "--session", a.sessionFile}
 	if a.model != "" {
 		args = append(args, "--model", a.model)
 	}
 	a.cmd = exec.CommandContext(ctx, a.binary, args...)
 	a.cmd.Env = append(os.Environ(), "PI_CODING_AGENT_DIR="+filepath.Join(".", ".agents", "pi"))
-
-	// Resolve the binary path for debug logging.
-	resolvedBinary, _ := exec.LookPath(a.binary)
-	if resolvedBinary == "" {
-		resolvedBinary = a.binary
-	}
-	log.Printf("agent: spawning process: %s %s", resolvedBinary, strings.Join(args, " "))
-	log.Printf("agent: working dir: %s", a.cmd.Dir)
-	log.Printf("agent: PI_CODING_AGENT_DIR=%s", filepath.Join(".", ".agents", "pi"))
-	log.Printf("agent: session path: %s", a.sessionPath)
-	log.Printf("agent: pid will follow after start")
 
 	var err error
 	a.stdin, err = a.cmd.StdinPipe()
@@ -122,8 +109,6 @@ func (a *Agent) Start(ctx context.Context) error {
 		return fmt.Errorf("start process: %w", err)
 	}
 
-	log.Printf("agent: process started with pid %d", a.cmd.Process.Pid)
-
 	a.decoder = json.NewDecoder(stdout)
 
 	go a.readStdout()
@@ -142,9 +127,6 @@ func (a *Agent) readStdout() {
 	for {
 		var evt RPCEvent
 		if err := a.decoder.Decode(&evt); err != nil {
-			if err != io.EOF {
-				log.Printf("agent: stdout decode error: %v", err)
-			}
 			return
 		}
 
@@ -171,10 +153,7 @@ func (a *Agent) readStdout() {
 func (a *Agent) readStderr(stderr io.Reader) {
 	buf := make([]byte, 4096)
 	for {
-		n, err := stderr.Read(buf)
-		if n > 0 {
-			log.Printf("agent stderr: %s", string(buf[:n]))
-		}
+		_, err := stderr.Read(buf)
 		if err != nil {
 			return
 		}

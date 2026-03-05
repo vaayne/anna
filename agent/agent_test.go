@@ -27,8 +27,8 @@ func TestNewAgent(t *testing.T) {
 	if ag.binary != "/usr/bin/echo" {
 		t.Errorf("binary = %q, want %q", ag.binary, "/usr/bin/echo")
 	}
-	if ag.sessionPath != "/tmp/session" {
-		t.Errorf("sessionPath = %q, want %q", ag.sessionPath, "/tmp/session")
+	if ag.sessionFile != "/tmp/session" {
+		t.Errorf("sessionFile = %q, want %q", ag.sessionFile, "/tmp/session")
 	}
 	if !ag.Alive() {
 		t.Error("new agent should report Alive()")

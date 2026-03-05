@@ -94,6 +94,17 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 			sessionID := strconv.FormatInt(chatID, 10)
 			text := u.Message.Text
 
+			// Handle /new command to start a fresh session.
+			if strings.TrimSpace(text) == "/new" {
+				if err := sm.NewSession(sessionID); err != nil {
+					log.Printf("telegram: new session error for %s: %v", sessionID, err)
+					_ = sendMessage(ctx, client, baseURL, chatID, fmt.Sprintf("Error creating new session: %v", err))
+				} else {
+					_ = sendMessage(ctx, client, baseURL, chatID, "New session started.")
+				}
+				continue
+			}
+
 			// Send typing indicator (best-effort).
 			_ = sendChatAction(ctx, client, baseURL, chatID, "typing")
 
@@ -103,8 +114,6 @@ func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, s
 				_ = sendMessage(ctx, client, baseURL, chatID, fmt.Sprintf("Error starting agent: %v", err))
 				continue
 			}
-			log.Printf("telegram: session %s active, processing message", sessionID)
-
 			// Collect streaming response.
 			var sb strings.Builder
 			var streamErr error
