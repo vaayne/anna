@@ -9,15 +9,20 @@ import (
 )
 
 type Config struct {
-	Pi       PiConfig       `yaml:"pi"`
+	Runner   RunnerConfig   `yaml:"runner"`
 	Telegram TelegramConfig `yaml:"telegram"`
 	Sessions string         `yaml:"sessions"`
 }
 
-type PiConfig struct {
-	Binary      string `yaml:"binary"`
-	Model       string `yaml:"model"`
-	IdleTimeout int    `yaml:"idle_timeout"`
+type RunnerConfig struct {
+	Type        string        `yaml:"type"`
+	Process     ProcessConfig `yaml:"process"`
+	IdleTimeout int           `yaml:"idle_timeout"`
+}
+
+type ProcessConfig struct {
+	Binary string `yaml:"binary"`
+	Model  string `yaml:"model"`
 }
 
 type TelegramConfig struct {
@@ -60,18 +65,21 @@ func loadConfigFrom(dir string) (*Config, error) {
 		cfg.Telegram.Token = v
 	}
 	if v := os.Getenv("ANNA_PI_BINARY"); v != "" {
-		cfg.Pi.Binary = v
+		cfg.Runner.Process.Binary = v
 	}
 	if v := os.Getenv("ANNA_PI_MODEL"); v != "" {
-		cfg.Pi.Model = v
+		cfg.Runner.Process.Model = v
 	}
 
 	// Apply defaults for missing values.
-	if cfg.Pi.Binary == "" {
-		cfg.Pi.Binary = "pi"
+	if cfg.Runner.Type == "" {
+		cfg.Runner.Type = "process"
 	}
-	if cfg.Pi.IdleTimeout == 0 {
-		cfg.Pi.IdleTimeout = 10
+	if cfg.Runner.Process.Binary == "" {
+		cfg.Runner.Process.Binary = "pi"
+	}
+	if cfg.Runner.IdleTimeout == 0 {
+		cfg.Runner.IdleTimeout = 10
 	}
 	if cfg.Sessions == "" {
 		cfg.Sessions = filepath.Join(dir, "workspace", "sessions")

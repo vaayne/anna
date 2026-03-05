@@ -96,9 +96,9 @@ func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error
 	ctx, cancel := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	_ = cancel // cancel is deferred via the caller's lifecycle
 
-	idleTimeout := time.Duration(cfg.Pi.IdleTimeout) * time.Minute
+	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
 	factory := func(ctx context.Context) (agent.Runner, error) {
-		return agent.NewProcessRunner(ctx, cfg.Pi.Binary, cfg.Pi.Model)
+		return agent.NewProcessRunner(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
 	}
 	pool := agent.NewPool(factory, agent.WithIdleTimeout(idleTimeout))
 	go pool.StartReaper(ctx)
