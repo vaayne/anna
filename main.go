@@ -57,16 +57,16 @@ func chatCommand() *ucli.Command {
 				}
 			}
 
-			ctx, _, sm, err := setup(c.Context)
+			ctx, _, pool, err := setup(c.Context)
 			if err != nil {
 				return err
 			}
-			defer sm.StopAll()
+			defer pool.Close()
 
 			if c.Bool("stream") {
-				return clicmd.RunStream(ctx, sm)
+				return clicmd.RunStream(ctx, pool)
 			}
-			return clicmd.RunChat(ctx, sm)
+			return clicmd.RunChat(ctx, pool)
 		},
 	}
 }
@@ -76,18 +76,18 @@ func gatewayCommand() *ucli.Command {
 		Name:  "gateway",
 		Usage: "Start daemon services (Telegram, etc.) based on config",
 		Action: func(c *ucli.Context) error {
-			ctx, cfg, sm, err := setup(c.Context)
+			ctx, cfg, pool, err := setup(c.Context)
 			if err != nil {
 				return err
 			}
-			defer sm.StopAll()
+			defer pool.Close()
 
-			return runGateway(ctx, cfg, sm)
+			return runGateway(ctx, cfg, pool)
 		},
 	}
 }
 
-func setup(parent context.Context) (context.Context, *Config, *agent.SessionManager, error) {
+func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("loading config: %w", err)
@@ -97,10 +97,13 @@ func setup(parent context.Context) (context.Context, *Config, *agent.SessionMana
 	_ = cancel // cancel is deferred via the caller's lifecycle
 
 	idleTimeout := time.Duration(cfg.Pi.IdleTimeout) * time.Minute
-	sm := agent.NewSessionManager(cfg.Pi.Binary, cfg.Pi.Model, cfg.Sessions, idleTimeout)
-	go sm.StartReaper(ctx)
+	factory := func(ctx context.Context) (agent.Runner, error) {
+		return agent.NewProcessRunner(ctx, cfg.Pi.Binary, cfg.Pi.Model)
+	}
+	pool := agent.NewPool(factory, agent.WithIdleTimeout(idleTimeout))
+	go pool.StartReaper(ctx)
 
-	return ctx, cfg, sm, nil
+	return ctx, cfg, pool, nil
 }
 
 func setupLogFile() error {
@@ -118,13 +121,13 @@ func setupLogFile() error {
 	return nil
 }
 
-func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) error {
+func runGateway(ctx context.Context, cfg *Config, pool *agent.Pool) error {
 	started := 0
 
 	if cfg.Telegram.Token != "" {
 		started++
 		slog.Info("starting telegram bot")
-		if err := telegram.Run(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
+		if err := telegram.Run(ctx, cfg.Telegram.Token, pool); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("telegram: %w", err)
 		}
 	}

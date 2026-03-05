@@ -14,7 +14,7 @@ import (
 
 // streamStartMsg carries the stream channel from the agent.
 type streamStartMsg struct {
-	stream <-chan agent.StreamEvent
+	stream <-chan agent.Event
 }
 
 // streamChunkMsg carries a text delta from the agent stream.
@@ -28,10 +28,10 @@ type streamErrMsg struct{ err error }
 
 type chatModel struct {
 	ctx      context.Context
-	sp       agent.SessionProvider
+	pool     *agent.Pool
 	textarea textarea.Model
 	viewport viewport.Model
-	stream   <-chan agent.StreamEvent
+	stream   <-chan agent.Event
 
 	history   *strings.Builder
 	streaming bool
@@ -41,7 +41,7 @@ type chatModel struct {
 	ready     bool
 }
 
-func newChatModel(ctx context.Context, sp agent.SessionProvider) chatModel {
+func newChatModel(ctx context.Context, pool *agent.Pool) chatModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message... (Enter to send, Alt+Enter for newline)"
 	ta.Focus()
@@ -51,7 +51,7 @@ func newChatModel(ctx context.Context, sp agent.SessionProvider) chatModel {
 
 	return chatModel{
 		ctx:      ctx,
-		sp:       sp,
+		pool:     pool,
 		textarea: ta,
 		history:  &strings.Builder{},
 	}
@@ -159,7 +159,7 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 	case "/quit", "/exit":
 		return tea.Quit
 	case "/new":
-		if err := m.sp.NewSession(defaultSessionId); err != nil {
+		if err := m.pool.Reset(defaultSessionId); err != nil {
 			m.history.WriteString(errorStyle.Render("error: "+err.Error()) + "\n\n")
 		} else {
 			m.history.WriteString(systemStyle.Render("[new session started]") + "\n\n")
@@ -179,22 +179,14 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 	m.textarea.Blur()
 
 	ctx := m.ctx
-	sp := m.sp
 	return func() tea.Msg {
-		ag, err := sp.GetOrCreate(ctx, defaultSessionId)
-		if err != nil {
-			return streamErrMsg{fmt.Errorf("failed to get agent: %w", err)}
-		}
-		if !ag.Alive() {
-			return streamErrMsg{fmt.Errorf("agent was restarted, please try again")}
-		}
-		stream := ag.SendPrompt(ctx, input)
+		stream := m.pool.Chat(ctx, defaultSessionId, input)
 		return streamStartMsg{stream: stream}
 	}
 }
 
 // waitNextChunk returns a Cmd that reads the next event from the stream channel.
-func waitNextChunk(stream <-chan agent.StreamEvent) tea.Cmd {
+func waitNextChunk(stream <-chan agent.Event) tea.Cmd {
 	if stream == nil {
 		return nil
 	}
