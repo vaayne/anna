@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/vaayne/pibot/agent"
+	"github.com/vaayne/anna/agent"
 )
 
 const defaultSessionId = "session"
@@ -43,7 +43,7 @@ func RunStream(ctx context.Context, sm agent.SessionProvider) error {
 
 // RunChat starts an interactive terminal chat session using the given SessionProvider.
 func RunChat(ctx context.Context, sm agent.SessionProvider) error {
-	fmt.Println("pibot — type your message, /new for new session, /quit to exit")
+	fmt.Println("anna — type your message, /new for new session, /quit to exit")
 
 	scanner := bufio.NewScanner(os.Stdin)
 

@@ -1,6 +1,6 @@
 ## Project Overview
 
-pibot is a minimal Go CLI that acts as a local AI assistant. It spawns Pi (a coding agent) as a local process and communicates via JSON-RPC over stdin/stdout. Two interfaces: interactive CLI chat and Telegram bot (long polling).
+anna is a minimal Go CLI that acts as a local AI assistant. It spawns Pi (a coding agent) as a local process and communicates via JSON-RPC over stdin/stdout. Two interfaces: interactive CLI chat and Telegram bot (long polling).
 
 ## Architecture
 
@@ -20,7 +20,7 @@ Uses [mise](https://mise.jdx.dev/) for task automation.
 
 ```bash
 mise tasks          # List all tasks
-mise run build      # Build binary → bin/pibot
+mise run build      # Build binary → bin/anna
 mise run test       # Run tests with race detection
 mise run lint       # go vet
 mise run format     # gofmt + go mod tidy
@@ -35,8 +35,8 @@ Agent data: `.agents/pi` (set via `PI_CODING_AGENT_DIR` env)
 Session data: `.agents/workspace/sessions`
 
 Env var overrides:
-- `PIBOT_TELEGRAM_TOKEN` → telegram.token
-- `PIBOT_PI_BINARY` → pi.binary
+- `ANNA_TELEGRAM_TOKEN` → telegram.token
+- `ANNA_PI_BINARY` → pi.binary
 
 ## Code Conventions
 

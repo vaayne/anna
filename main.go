@@ -9,12 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vaayne/pibot/agent"
-	"github.com/vaayne/pibot/channel/cli"
-	"github.com/vaayne/pibot/channel/telegram"
+	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/channel/cli"
+	"github.com/vaayne/anna/channel/telegram"
 )
 
-const usage = `Usage: pibot <command> [flags]
+const usage = `Usage: anna <command> [flags]
 
 Commands:
   chat      Start interactive CLI chat
@@ -85,7 +85,7 @@ func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) erro
 
 	if cfg.Telegram.Token != "" {
 		started++
-		log.Println("pibot: starting Telegram bot...")
+		log.Println("anna: starting Telegram bot...")
 		if err := telegram.Run(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("telegram: %w", err)
 		}
@@ -95,6 +95,6 @@ func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) erro
 		return fmt.Errorf("no gateway services configured. Check .agents/config.yaml")
 	}
 
-	log.Println("pibot: gateway stopped.")
+	log.Println("anna: gateway stopped.")
 	return nil
 }

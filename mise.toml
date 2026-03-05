@@ -2,14 +2,14 @@
 go = "1.23"
 
 [env]
-BINARY_NAME = "pibot"
+BINARY_NAME = "anna"
 
 [tasks.build]
-description = "Build pibot binary"
+description = "Build anna binary"
 run = "go build -o bin/$BINARY_NAME ."
 
 [tasks.run]
-description = "Run pibot (pass args after --)"
+description = "Run anna (pass args after --)"
 depends = ["build"]
 run = "./bin/$BINARY_NAME {{arg(name='command', default='chat')}}"
 

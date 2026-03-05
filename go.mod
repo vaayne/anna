@@ -1,4 +1,4 @@
-module github.com/vaayne/pibot
+module github.com/vaayne/anna
 
 go 1.23.0
 

@@ -64,8 +64,8 @@ sessions: "/tmp/sessions"
 func TestLoadConfigEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 
-	t.Setenv("PIBOT_TELEGRAM_TOKEN", "env-token")
-	t.Setenv("PIBOT_PI_BINARY", "/env/pi")
+	t.Setenv("ANNA_TELEGRAM_TOKEN", "env-token")
+	t.Setenv("ANNA_PI_BINARY", "/env/pi")
 
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
@@ -92,8 +92,8 @@ pi:
 		t.Fatal(err)
 	}
 
-	t.Setenv("PIBOT_TELEGRAM_TOKEN", "env-token")
-	t.Setenv("PIBOT_PI_BINARY", "")
+	t.Setenv("ANNA_TELEGRAM_TOKEN", "env-token")
+	t.Setenv("ANNA_PI_BINARY", "")
 
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestConfigPath(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
-	// LoadConfig uses the real ~/.pibot/ dir. Just verify it doesn't error.
+	// LoadConfig uses the real .agents/ dir. Just verify it doesn't error.
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
@@ -196,7 +196,7 @@ func TestRunUnknownCommand(t *testing.T) {
 }
 
 func TestRunGatewayNoServices(t *testing.T) {
-	t.Setenv("PIBOT_TELEGRAM_TOKEN", "")
+	t.Setenv("ANNA_TELEGRAM_TOKEN", "")
 	orig, _ := os.Getwd()
 	os.Chdir(t.TempDir())
 	defer os.Chdir(orig)

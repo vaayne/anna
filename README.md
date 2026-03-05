@@ -1,4 +1,4 @@
-# pibot
+# anna
 
 A minimal Go CLI that acts as a local AI assistant. It spawns [Pi](https://github.com/anthropics/claude-code) as a local process and communicates via JSON-RPC over stdin/stdout.
 
@@ -26,15 +26,15 @@ Two interfaces: **interactive CLI chat** and **gateway daemon** (Telegram via lo
 ## Install
 
 ```bash
-go install github.com/vaayne/pibot@latest
+go install github.com/vaayne/anna@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/vaayne/pibot.git
-cd pibot
-go build -o pibot .
+git clone https://github.com/vaayne/anna.git
+cd anna
+go build -o anna .
 ```
 
 ## Usage
@@ -42,7 +42,7 @@ go build -o pibot .
 ### CLI Chat
 
 ```bash
-pibot chat
+anna chat
 ```
 
 Starts an interactive terminal session. Type your message, get streaming responses. `/quit` or `/exit` to stop.
@@ -51,17 +51,17 @@ Starts an interactive terminal session. Type your message, get streaming respons
 
 ```bash
 # Starts all configured services (e.g. Telegram bot)
-pibot gateway
+anna gateway
 
 # Or via environment variable
-PIBOT_TELEGRAM_TOKEN=your-token pibot gateway
+ANNA_TELEGRAM_TOKEN=your-token anna gateway
 ```
 
 The gateway starts services based on your config. For Telegram, get a bot token from [@BotFather](https://t.me/BotFather).
 
 ## Configuration
 
-Config file: `~/.pibot/config.yaml`
+Config file: `.agents/config.yaml`
 
 ```yaml
 # Pi CLI configuration
@@ -76,22 +76,22 @@ telegram:
   # Bot token from @BotFather
   token: "YOUR_TELEGRAM_BOT_TOKEN"
 
-# Directory for session state files (default: ~/.pibot/sessions)
-sessions: "~/.pibot/sessions"
+# Directory for session state files (default: .agents/workspace/sessions)
+sessions: ".agents/workspace/sessions"
 ```
 
 ### Environment Variable Overrides
 
 | Variable | Overrides |
 |----------|-----------|
-| `PIBOT_TELEGRAM_TOKEN` | `telegram.token` |
-| `PIBOT_PI_BINARY` | `pi.binary` |
+| `ANNA_TELEGRAM_TOKEN` | `telegram.token` |
+| `ANNA_PI_BINARY` | `pi.binary` |
 
 ## Architecture
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│                      pibot                             │
+│                      anna                              │
 │                                                        │
 │  ┌──────────┐      ┌────────────────┐                │
 │  │ CLI Chat  │─────▶│                │                │
@@ -101,7 +101,7 @@ sessions: "~/.pibot/sessions"
 │  │ Telegram  │─────▶│                │                │
 │  │ LongPoll  │      └────────────────┘                │
 │  └──────────┘                                         │
-└───────────────────────────────────────────────────────┘
+└────────────────────────────────────��──────────────────┘
 ```
 
 ```
@@ -118,7 +118,7 @@ cli/chat.go        Interactive terminal chat
 Uses [mise](https://mise.jdx.dev/) for task automation:
 
 ```bash
-mise run build          # Build binary → bin/pibot
+mise run build          # Build binary → bin/anna
 mise run test           # Run tests with race detection
 mise run lint           # go vet
 mise run format         # gofmt + go mod tidy
@@ -130,7 +130,7 @@ mise run clean          # Remove build artifacts
 Or with plain Go:
 
 ```bash
-go build -o pibot .
+go build -o anna .
 go test -race ./...
 ```
 

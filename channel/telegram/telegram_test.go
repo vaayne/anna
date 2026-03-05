@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vaayne/pibot/agent"
+	"github.com/vaayne/anna/agent"
 )
 
 func TestSplitMessageShort(t *testing.T) {

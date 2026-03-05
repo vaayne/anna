@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vaayne/pibot/agent"
+	"github.com/vaayne/anna/agent"
 )
 
 func writeMockPi(t *testing.T, events []map[string]interface{}) string {
@@ -81,7 +81,7 @@ func TestRunChatQuit(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "pibot") {
+	if !strings.Contains(output, "anna") {
 		t.Errorf("output missing welcome message: %s", output)
 	}
 }

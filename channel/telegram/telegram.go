@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vaayne/pibot/agent"
+	"github.com/vaayne/anna/agent"
 )
 
 const (

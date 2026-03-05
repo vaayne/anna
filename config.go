@@ -56,13 +56,13 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 
 	// Apply environment variable overrides.
-	if v := os.Getenv("PIBOT_TELEGRAM_TOKEN"); v != "" {
+	if v := os.Getenv("ANNA_TELEGRAM_TOKEN"); v != "" {
 		cfg.Telegram.Token = v
 	}
-	if v := os.Getenv("PIBOT_PI_BINARY"); v != "" {
+	if v := os.Getenv("ANNA_PI_BINARY"); v != "" {
 		cfg.Pi.Binary = v
 	}
-	if v := os.Getenv("PIBOT_PI_MODEL"); v != "" {
+	if v := os.Getenv("ANNA_PI_MODEL"); v != "" {
 		cfg.Pi.Model = v
 	}
 
