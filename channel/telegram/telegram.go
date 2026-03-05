@@ -1,4 +1,4 @@
-package bot
+package telegram
 
 import (
 	"bytes"
@@ -51,13 +51,13 @@ type telegramSendChatActionRequest struct {
 	Action string `json:"action"`
 }
 
-// RunTelegram starts a Telegram bot using long polling. It blocks until ctx is
+// Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled. Messages are processed sequentially.
-func RunTelegram(ctx context.Context, token string, sm *agent.SessionManager) error {
+func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 	return runTelegramLoop(ctx, "https://api.telegram.org/bot"+token, &http.Client{}, sm)
 }
 
-func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, sm *agent.SessionManager) error {
+func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, sm agent.SessionProvider) error {
 	offset := 0
 
 	for {

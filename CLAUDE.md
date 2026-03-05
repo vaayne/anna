@@ -5,12 +5,13 @@ pibot is a minimal Go CLI that acts as a local AI assistant. It spawns Pi (a cod
 ## Architecture
 
 ```
-main.go        → Entry point, signal handling, wiring
-config.go      → Config types, YAML loading, env var overrides
-agent/agent.go → Pi process lifecycle, JSON-RPC protocol
-agent/session.go → Agent pool by session ID, idle reaping
-bot/telegram.go  → Telegram long polling, message splitting
-cli/chat.go      → Interactive terminal chat
+main.go                       → Entry point, signal handling, wiring
+config.go                     → Config types, YAML loading, env var overrides
+agent/agent.go                → Pi process lifecycle, JSON-RPC protocol
+agent/session.go              → Agent pool by session ID, idle reaping
+agent/provider.go             → SessionProvider interface for channels
+channel/telegram/telegram.go  → Telegram long polling, message splitting
+channel/cli/cli.go            → Interactive terminal chat
 ```
 
 ## Development
@@ -39,7 +40,7 @@ Env var overrides:
 
 ## Code Conventions
 
-- Flat package structure: `main`, `agent`, `bot`, `cli`
+- Channel-based package structure: `main`, `agent`, `channel/cli`, `channel/telegram`
 - Minimal dependencies (only `gopkg.in/yaml.v3`)
 - stdlib `net/http` for Telegram API (no third-party bot libraries)
 - `json.Decoder` for NDJSON reading (not `bufio.Scanner`)

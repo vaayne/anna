@@ -14,7 +14,7 @@ import (
 const defaultSessionId = "session"
 
 // RunStream reads all of stdin as a prompt, sends it to the agent, and streams the response to stdout.
-func RunStream(ctx context.Context, sm *agent.SessionManager) error {
+func RunStream(ctx context.Context, sm agent.SessionProvider) error {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("reading stdin: %w", err)
@@ -41,8 +41,8 @@ func RunStream(ctx context.Context, sm *agent.SessionManager) error {
 	return nil
 }
 
-// RunChat starts an interactive terminal chat session using the given SessionManager.
-func RunChat(ctx context.Context, sm *agent.SessionManager) error {
+// RunChat starts an interactive terminal chat session using the given SessionProvider.
+func RunChat(ctx context.Context, sm agent.SessionProvider) error {
 	fmt.Println("pibot — type your message, /new for new session, /quit to exit")
 
 	scanner := bufio.NewScanner(os.Stdin)

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/vaayne/pibot/agent"
-	"github.com/vaayne/pibot/bot"
-	"github.com/vaayne/pibot/cli"
+	"github.com/vaayne/pibot/channel/cli"
+	"github.com/vaayne/pibot/channel/telegram"
 )
 
 const usage = `Usage: pibot <command> [flags]
@@ -77,7 +77,7 @@ func run(args []string) error {
 			return fmt.Errorf("Telegram token not configured. Set in .agents/config.yaml or PIBOT_TELEGRAM_TOKEN env var")
 		}
 		log.Println("pibot: starting Telegram bot...")
-		if err := bot.RunTelegram(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
+		if err := telegram.Run(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("telegram: %w", err)
 		}
 		log.Println("pibot: Telegram bot stopped.")

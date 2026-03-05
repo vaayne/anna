@@ -1,4 +1,4 @@
-package bot
+package telegram
 
 import (
 	"context"
@@ -224,7 +224,7 @@ func TestGetUpdatesCancelled(t *testing.T) {
 	}
 }
 
-func TestRunTelegramCancelledImmediately(t *testing.T) {
+func TestRunCancelledImmediately(t *testing.T) {
 	bin := writeMockPiBinary(t)
 	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
 	defer sm.StopAll()
@@ -232,7 +232,7 @@ func TestRunTelegramCancelledImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel before starting.
 
-	err := RunTelegram(ctx, "fake-token", sm)
+	err := Run(ctx, "fake-token", sm)
 	if err != context.Canceled {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
