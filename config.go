@@ -35,17 +35,20 @@ func configPath() string {
 	return filepath.Join(configDir(), "config.yaml")
 }
 
+// LoadConfig loads config from the default path (~/.pibot/config.yaml).
 func LoadConfig() (*Config, error) {
+	return loadConfigFrom(configDir())
+}
+
+// loadConfigFrom loads config from the given directory.
+func loadConfigFrom(dir string) (*Config, error) {
 	cfg := &Config{}
 
-	// Ensure config directory exists.
-	dir := configDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
 	}
 
-	// Read config file if it exists.
-	data, err := os.ReadFile(configPath())
+	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}

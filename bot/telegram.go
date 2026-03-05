@@ -54,8 +54,10 @@ type telegramSendChatActionRequest struct {
 // RunTelegram starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled. Messages are processed sequentially.
 func RunTelegram(ctx context.Context, token string, sm *agent.SessionManager) error {
-	baseURL := "https://api.telegram.org/bot" + token
-	client := &http.Client{}
+	return runTelegramLoop(ctx, "https://api.telegram.org/bot"+token, &http.Client{}, sm)
+}
+
+func runTelegramLoop(ctx context.Context, baseURL string, client *http.Client, sm *agent.SessionManager) error {
 	offset := 0
 
 	for {

@@ -21,22 +21,28 @@ Commands:
   telegram  Start Telegram bot`
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println(usage)
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
 
-	cmd := os.Args[1]
+func run(args []string) error {
+	if len(args) == 0 {
+		fmt.Println(usage)
+		return fmt.Errorf("no command specified")
+	}
+
+	cmd := args[0]
 
 	if cmd == "--help" || cmd == "-h" {
 		fmt.Println(usage)
-		return
+		return nil
 	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	// Create context that cancels on SIGINT/SIGTERM.
@@ -51,22 +57,19 @@ func main() {
 
 	switch cmd {
 	case "chat":
-		if err := cli.RunChat(ctx, sm); err != nil {
-			log.Fatalf("chat: %v", err)
-		}
+		return cli.RunChat(ctx, sm)
 	case "telegram":
 		if cfg.Telegram.Token == "" {
-			fmt.Fprintln(os.Stderr, "Error: Telegram token not configured. Set in ~/.pibot/config.yaml or PIBOT_TELEGRAM_TOKEN env var.")
-			os.Exit(1)
+			return fmt.Errorf("Telegram token not configured. Set in ~/.pibot/config.yaml or PIBOT_TELEGRAM_TOKEN env var")
 		}
 		log.Println("pibot: starting Telegram bot...")
 		if err := bot.RunTelegram(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
-			log.Fatalf("telegram: %v", err)
+			return fmt.Errorf("telegram: %w", err)
 		}
 		log.Println("pibot: Telegram bot stopped.")
+		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		fmt.Println(usage)
-		os.Exit(1)
+		return fmt.Errorf("unknown command: %s", cmd)
 	}
 }
