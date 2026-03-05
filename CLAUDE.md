@@ -25,7 +25,7 @@ mise run test       # Run tests with race detection
 mise run lint       # go vet
 mise run format     # gofmt + go mod tidy
 mise run run:chat   # Build + run CLI chat
-mise run run:telegram # Build + run Telegram bot
+mise run run:gateway  # Build + run gateway daemon
 ```
 
 ## Configuration

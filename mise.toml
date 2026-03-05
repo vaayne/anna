@@ -23,10 +23,10 @@ description = "Run streaming chat (pipe prompt via stdin)"
 depends = ["build"]
 run = "./bin/$BINARY_NAME chat --stream"
 
-[tasks."run:telegram"]
-description = "Run Telegram bot"
+[tasks."run:gateway"]
+description = "Run gateway daemon (Telegram, etc.)"
 depends = ["build"]
-run = "./bin/$BINARY_NAME telegram"
+run = "./bin/$BINARY_NAME gateway"
 
 [tasks.test]
 description = "Run all tests with race detection"

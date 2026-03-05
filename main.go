@@ -18,7 +18,7 @@ const usage = `Usage: pibot <command> [flags]
 
 Commands:
   chat      Start interactive CLI chat
-  telegram  Start Telegram bot
+  gateway   Start daemon services (Telegram, etc.) based on config
 
 Flags (chat):
   --stream  Read prompt from stdin and stream response to stdout`
@@ -72,18 +72,29 @@ func run(args []string) error {
 			return cli.RunStream(ctx, sm)
 		}
 		return cli.RunChat(ctx, sm)
-	case "telegram":
-		if cfg.Telegram.Token == "" {
-			return fmt.Errorf("Telegram token not configured. Set in .agents/config.yaml or PIBOT_TELEGRAM_TOKEN env var")
-		}
-		log.Println("pibot: starting Telegram bot...")
-		if err := telegram.Run(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
-			return fmt.Errorf("telegram: %w", err)
-		}
-		log.Println("pibot: Telegram bot stopped.")
-		return nil
+	case "gateway":
+		return runGateway(ctx, cfg, sm)
 	default:
 		fmt.Println(usage)
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
+}
+
+func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) error {
+	started := 0
+
+	if cfg.Telegram.Token != "" {
+		started++
+		log.Println("pibot: starting Telegram bot...")
+		if err := telegram.Run(ctx, cfg.Telegram.Token, sm); err != nil && ctx.Err() == nil {
+			return fmt.Errorf("telegram: %w", err)
+		}
+	}
+
+	if started == 0 {
+		return fmt.Errorf("no gateway services configured. Check .agents/config.yaml")
+	}
+
+	log.Println("pibot: gateway stopped.")
+	return nil
 }

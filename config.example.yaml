@@ -10,5 +10,5 @@ telegram:
   # Bot token from @BotFather
   token: "YOUR_TELEGRAM_BOT_TOKEN"
 
-# Directory for session state files (default: ~/.pibot/sessions)
-sessions: "~/.pibot/sessions"
+# Directory for session state files (default: ~/.agents/workspaces/sessions)
+sessions: "~/.agents/workspaces/sessions"

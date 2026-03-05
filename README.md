@@ -2,7 +2,7 @@
 
 A minimal Go CLI that acts as a local AI assistant. It spawns [Pi](https://github.com/anthropics/claude-code) as a local process and communicates via JSON-RPC over stdin/stdout.
 
-Two interfaces: **interactive CLI chat** and **Telegram bot** (long polling).
+Two interfaces: **interactive CLI chat** and **gateway daemon** (Telegram via long polling, etc.).
 
 ~880 lines of Go. Single dependency (`gopkg.in/yaml.v3`).
 
@@ -47,17 +47,17 @@ pibot chat
 
 Starts an interactive terminal session. Type your message, get streaming responses. `/quit` or `/exit` to stop.
 
-### Telegram Bot
+### Gateway (Daemon)
 
 ```bash
-# Via config file
-pibot telegram
+# Starts all configured services (e.g. Telegram bot)
+pibot gateway
 
 # Or via environment variable
-PIBOT_TELEGRAM_TOKEN=your-token pibot telegram
+PIBOT_TELEGRAM_TOKEN=your-token pibot gateway
 ```
 
-Get a bot token from [@BotFather](https://t.me/BotFather) on Telegram.
+The gateway starts services based on your config. For Telegram, get a bot token from [@BotFather](https://t.me/BotFather).
 
 ## Configuration
 
@@ -123,7 +123,7 @@ mise run test           # Run tests with race detection
 mise run lint           # go vet
 mise run format         # gofmt + go mod tidy
 mise run run:chat       # Build + run CLI chat
-mise run run:telegram   # Build + run Telegram bot
+mise run run:gateway    # Build + run gateway daemon
 mise run clean          # Remove build artifacts
 ```
 

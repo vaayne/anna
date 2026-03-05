@@ -195,13 +195,16 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestRunTelegramNoToken(t *testing.T) {
+func TestRunGatewayNoServices(t *testing.T) {
 	t.Setenv("PIBOT_TELEGRAM_TOKEN", "")
-	err := run([]string{"telegram"})
+	orig, _ := os.Getwd()
+	os.Chdir(t.TempDir())
+	defer os.Chdir(orig)
+	err := run([]string{"gateway"})
 	if err == nil {
-		t.Fatal("expected error for missing token")
+		t.Fatal("expected error for no configured services")
 	}
-	if !strings.Contains(err.Error(), "Telegram token not configured") {
-		t.Errorf("err = %q, want contains 'Telegram token not configured'", err.Error())
+	if !strings.Contains(err.Error(), "no gateway services configured") {
+		t.Errorf("err = %q, want contains 'no gateway services configured'", err.Error())
 	}
 }
