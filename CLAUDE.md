@@ -5,13 +5,15 @@ anna is a minimal Go CLI that acts as a local AI assistant. It spawns Pi (a codi
 ## Architecture
 
 ```
-main.go                       → Entry point, signal handling, wiring
-config.go                     → Config types, YAML loading, env var overrides
-agent/agent.go                → Pi process lifecycle, JSON-RPC protocol
-agent/session.go              → Agent pool by session ID, idle reaping
-agent/provider.go             → SessionProvider interface for channels
-channel/telegram/telegram.go  → Telegram long polling, message splitting
-channel/cli/cli.go            → Interactive terminal chat
+main.go                         → Entry point, signal handling, wiring
+config.go                       → Config types, YAML loading, env var overrides
+agent/runner.go                 → Runner interface, Event, RPCEvent, RPCCommand types
+agent/pool.go                   → Pool: session management, history, runner lifecycle
+agent/session.go                → Session: event history + runner
+agent/process_runner.go         → ProcessRunner: Pi process via NDJSON stdin/stdout
+channel/telegram/telegram.go    → Telegram long polling, message splitting
+channel/cli/cli.go              → Interactive terminal chat
+channel/cli/chat.go             → Bubble Tea TUI chat model
 ```
 
 ## Development
@@ -36,7 +38,8 @@ Session data: `.agents/workspace/sessions`
 
 Env var overrides:
 - `ANNA_TELEGRAM_TOKEN` → telegram.token
-- `ANNA_PI_BINARY` → pi.binary
+- `ANNA_PI_BINARY` → runner.process.binary
+- `ANNA_PI_MODEL` → runner.process.model
 
 ## Code Conventions
 

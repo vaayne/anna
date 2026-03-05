@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — brainstorm output, not yet implemented.
+Implemented — core architecture (Runner interface, Pool, ProcessRunner) is live.
 
 ## Problem
 
