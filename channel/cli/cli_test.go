@@ -2,60 +2,52 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/vaayne/anna/agent"
 )
 
+// mockRunner implements agent.Runner for testing.
+type mockRunner struct {
+	events []agent.Event
+}
+
+func (m *mockRunner) Chat(_ context.Context, _ []agent.RPCEvent, _ string) <-chan agent.Event {
+	ch := make(chan agent.Event, len(m.events))
+	for _, e := range m.events {
+		ch <- e
+	}
+	close(ch)
+	return ch
+}
+
+func newTestPool(events []agent.Event) *agent.Pool {
+	factory := func(_ context.Context) (agent.Runner, error) {
+		return &mockRunner{events: events}, nil
+	}
+	return agent.NewPool(factory)
+}
+
 // initModel creates a chatModel and sends an initial WindowSizeMsg so the viewport is ready.
-func initModel(t *testing.T, sm agent.SessionProvider) chatModel {
+func initModel(t *testing.T, pool *agent.Pool) chatModel {
 	t.Helper()
-	m := newChatModel(context.Background(), sm)
+	m := newChatModel(context.Background(), pool)
 	result, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return result.(chatModel)
 }
 
-func writeMockPi(t *testing.T, events []map[string]interface{}) string {
-	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "mock-pi")
-
-	var lines []string
-	for _, evt := range events {
-		data, _ := json.Marshal(evt)
-		lines = append(lines, fmt.Sprintf("echo '%s'", string(data)))
-	}
-
-	script := "#!/bin/sh\nread line\n" + strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return bin
-}
-
 func TestChatModelQuit(t *testing.T) {
-	bin := writeMockPi(t, []map[string]interface{}{
-		{"type": "agent_end"},
-	})
-	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
-	defer sm.StopAll()
+	pool := newTestPool(nil)
+	defer pool.Close()
 
-	m := initModel(t, sm)
+	m := initModel(t, pool)
 
-	// Type "/quit" into textarea then press Enter.
 	m.textarea.SetValue("/quit")
-	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	_ = result
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// The cmd should be tea.Quit.
 	if cmd == nil {
 		t.Fatal("expected quit command, got nil")
 	}
@@ -66,13 +58,10 @@ func TestChatModelQuit(t *testing.T) {
 }
 
 func TestChatModelExit(t *testing.T) {
-	bin := writeMockPi(t, []map[string]interface{}{
-		{"type": "agent_end"},
-	})
-	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
-	defer sm.StopAll()
+	pool := newTestPool(nil)
+	defer pool.Close()
 
-	m := initModel(t, sm)
+	m := initModel(t, pool)
 
 	m.textarea.SetValue("/exit")
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -87,13 +76,10 @@ func TestChatModelExit(t *testing.T) {
 }
 
 func TestChatModelNewSession(t *testing.T) {
-	bin := writeMockPi(t, []map[string]interface{}{
-		{"type": "agent_end"},
-	})
-	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
-	defer sm.StopAll()
+	pool := newTestPool(nil)
+	defer pool.Close()
 
-	m := initModel(t, sm)
+	m := initModel(t, pool)
 
 	m.textarea.SetValue("/new")
 	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -105,15 +91,11 @@ func TestChatModelNewSession(t *testing.T) {
 }
 
 func TestChatModelSkipsEmpty(t *testing.T) {
-	bin := writeMockPi(t, []map[string]interface{}{
-		{"type": "agent_end"},
-	})
-	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
-	defer sm.StopAll()
+	pool := newTestPool(nil)
+	defer pool.Close()
 
-	m := initModel(t, sm)
+	m := initModel(t, pool)
 
-	// Empty input — pressing Enter with nothing typed.
 	m.textarea.SetValue("")
 	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := result.(chatModel)
@@ -127,15 +109,11 @@ func TestChatModelSkipsEmpty(t *testing.T) {
 }
 
 func TestChatModelStreaming(t *testing.T) {
-	bin := writeMockPi(t, []map[string]interface{}{
-		{"type": "agent_end"},
-	})
-	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
-	defer sm.StopAll()
+	pool := newTestPool(nil)
+	defer pool.Close()
 
-	m := initModel(t, sm)
+	m := initModel(t, pool)
 
-	// Send a prompt — puts model into streaming state.
 	m.textarea.SetValue("hello")
 	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = result.(chatModel)
@@ -151,9 +129,9 @@ func TestChatModelStreaming(t *testing.T) {
 	}
 
 	// Simulate streamStartMsg with a fake channel.
-	ch := make(chan agent.StreamEvent, 3)
-	ch <- agent.StreamEvent{Text: "Hello"}
-	ch <- agent.StreamEvent{Text: " world"}
+	ch := make(chan agent.Event, 3)
+	ch <- agent.Event{Text: "Hello"}
+	ch <- agent.Event{Text: " world"}
 	close(ch)
 
 	result, cmd = m.Update(streamStartMsg{stream: ch})
@@ -175,13 +153,10 @@ func TestChatModelStreaming(t *testing.T) {
 }
 
 func TestChatModelCtrlCQuits(t *testing.T) {
-	bin := writeMockPi(t, []map[string]interface{}{
-		{"type": "agent_end"},
-	})
-	sm := agent.NewSessionManager(bin, "", t.TempDir(), 10*time.Minute)
-	defer sm.StopAll()
+	pool := newTestPool(nil)
+	defer pool.Close()
 
-	m := initModel(t, sm)
+	m := initModel(t, pool)
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
