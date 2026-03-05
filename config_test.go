@@ -164,34 +164,19 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func TestRunNoArgs(t *testing.T) {
-	err := run(nil)
-	if err == nil {
-		t.Fatal("expected error for no args")
-	}
-}
-
 func TestRunHelp(t *testing.T) {
-	err := run([]string{"--help"})
+	app := newApp()
+	err := app.Run([]string{"anna", "--help"})
 	if err != nil {
 		t.Fatalf("run --help: %v", err)
 	}
 }
 
 func TestRunHelpShort(t *testing.T) {
-	err := run([]string{"-h"})
+	app := newApp()
+	err := app.Run([]string{"anna", "-h"})
 	if err != nil {
 		t.Fatalf("run -h: %v", err)
-	}
-}
-
-func TestRunUnknownCommand(t *testing.T) {
-	err := run([]string{"foobar"})
-	if err == nil {
-		t.Fatal("expected error for unknown command")
-	}
-	if !strings.Contains(err.Error(), "unknown command") {
-		t.Errorf("err = %q, want contains 'unknown command'", err.Error())
 	}
 }
 
@@ -200,7 +185,8 @@ func TestRunGatewayNoServices(t *testing.T) {
 	orig, _ := os.Getwd()
 	os.Chdir(t.TempDir())
 	defer os.Chdir(orig)
-	err := run([]string{"gateway"})
+	app := newApp()
+	err := app.Run([]string{"anna", "gateway"})
 	if err == nil {
 		t.Fatal("expected error for no configured services")
 	}

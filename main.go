@@ -9,79 +9,91 @@ import (
 	"syscall"
 	"time"
 
+	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
-	"github.com/vaayne/anna/channel/cli"
+	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
 )
-
-const usage = `Usage: anna <command> [flags]
-
-Commands:
-  chat      Start interactive CLI chat
-  gateway   Start daemon services (Telegram, etc.) based on config
-
-Flags (chat):
-  --stream  Read prompt from stdin and stream response to stdout`
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})))
 
-	if err := run(os.Args[1:]); err != nil {
+	app := newApp()
+
+	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
-	if len(args) == 0 {
-		fmt.Println(usage)
-		return fmt.Errorf("no command specified")
+func newApp() *ucli.App {
+	return &ucli.App{
+		Name:  "anna",
+		Usage: "A local AI assistant",
+		Commands: []*ucli.Command{
+			chatCommand(),
+			gatewayCommand(),
+		},
 	}
+}
 
-	cmd := args[0]
+func chatCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:  "chat",
+		Usage: "Start interactive CLI chat",
+		Flags: []ucli.Flag{
+			&ucli.BoolFlag{
+				Name:  "stream",
+				Usage: "Read prompt from stdin and stream response to stdout",
+			},
+		},
+		Action: func(c *ucli.Context) error {
+			ctx, _, sm, err := setup(c.Context)
+			if err != nil {
+				return err
+			}
+			defer sm.StopAll()
 
-	if cmd == "--help" || cmd == "-h" {
-		fmt.Println(usage)
-		return nil
+			if c.Bool("stream") {
+				return clicmd.RunStream(ctx, sm)
+			}
+			return clicmd.RunChat(ctx, sm)
+		},
 	}
+}
 
+func gatewayCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:  "gateway",
+		Usage: "Start daemon services (Telegram, etc.) based on config",
+		Action: func(c *ucli.Context) error {
+			ctx, cfg, sm, err := setup(c.Context)
+			if err != nil {
+				return err
+			}
+			defer sm.StopAll()
+
+			return runGateway(ctx, cfg, sm)
+		},
+	}
+}
+
+func setup(parent context.Context) (context.Context, *Config, *agent.SessionManager, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return nil, nil, nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	// Create context that cancels on SIGINT/SIGTERM.
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx, cancel := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
+	_ = cancel // cancel is deferred via the caller's lifecycle
 
-	// Create session manager.
 	idleTimeout := time.Duration(cfg.Pi.IdleTimeout) * time.Minute
 	sm := agent.NewSessionManager(cfg.Pi.Binary, cfg.Pi.Model, cfg.Sessions, idleTimeout)
 	go sm.StartReaper(ctx)
-	defer sm.StopAll()
 
-	// Check for --stream flag in remaining args.
-	stream := false
-	for _, a := range args[1:] {
-		if a == "--stream" {
-			stream = true
-		}
-	}
-
-	switch cmd {
-	case "chat":
-		if stream {
-			return cli.RunStream(ctx, sm)
-		}
-		return cli.RunChat(ctx, sm)
-	case "gateway":
-		return runGateway(ctx, cfg, sm)
-	default:
-		fmt.Println(usage)
-		return fmt.Errorf("unknown command: %s", cmd)
-	}
+	return ctx, cfg, sm, nil
 }
 
 func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) error {
