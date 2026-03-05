@@ -20,4 +20,8 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("8"))
+
+	statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("3")).
+			Italic(true)
 )

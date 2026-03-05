@@ -35,6 +35,7 @@ type chatModel struct {
 
 	history   *strings.Builder
 	streaming bool
+	status    string
 	width     int
 	height    int
 	ready     bool
@@ -92,6 +93,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitNextChunk(m.stream)
 
 	case streamChunkMsg:
+		m.status = ""
 		m.history.WriteString(string(msg))
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
@@ -99,6 +101,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamDoneMsg:
 		m.streaming = false
+		m.status = ""
 		m.stream = nil
 		m.history.WriteString("\n\n")
 		m.viewport.SetContent(m.history.String())
@@ -108,6 +111,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamErrMsg:
 		m.streaming = false
+		m.status = ""
 		m.stream = nil
 		m.history.WriteString("\n" + errorStyle.Render("error: "+msg.err.Error()) + "\n\n")
 		m.viewport.SetContent(m.history.String())
@@ -132,7 +136,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *chatModel) resize() {
 	inputHeight := m.textarea.Height() + 2
 	helpHeight := 1
-	vpHeight := m.height - inputHeight - helpHeight - 1
+	statusHeight := 1
+	vpHeight := m.height - inputHeight - helpHeight - statusHeight - 1
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
@@ -170,6 +175,7 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 	m.viewport.GotoBottom()
 
 	m.streaming = true
+	m.status = "Thinking..."
 	m.textarea.Blur()
 
 	ctx := m.ctx
@@ -209,6 +215,10 @@ func (m chatModel) View() string {
 		return "Initializing..."
 	}
 
+	status := " "
+	if m.status != "" {
+		status = statusStyle.Render(" " + m.status)
+	}
 	help := helpStyle.Render(" /new: new session • /quit: exit • ctrl+c: quit")
-	return fmt.Sprintf("%s\n%s\n%s", m.viewport.View(), m.textarea.View(), help)
+	return fmt.Sprintf("%s\n%s\n%s\n%s", m.viewport.View(), status, m.textarea.View(), help)
 }

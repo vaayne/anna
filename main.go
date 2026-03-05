@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -50,6 +51,12 @@ func chatCommand() *ucli.Command {
 			},
 		},
 		Action: func(c *ucli.Context) error {
+			if !c.Bool("stream") {
+				if err := setupLogFile(); err != nil {
+					return fmt.Errorf("setup log file: %w", err)
+				}
+			}
+
 			ctx, _, sm, err := setup(c.Context)
 			if err != nil {
 				return err
@@ -94,6 +101,21 @@ func setup(parent context.Context) (context.Context, *Config, *agent.SessionMana
 	go sm.StartReaper(ctx)
 
 	return ctx, cfg, sm, nil
+}
+
+func setupLogFile() error {
+	logPath := filepath.Join(configDir(), "anna.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})))
+	return nil
 }
 
 func runGateway(ctx context.Context, cfg *Config, sm *agent.SessionManager) error {
