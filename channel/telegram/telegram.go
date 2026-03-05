@@ -19,6 +19,12 @@ import (
 
 const telegramMaxMessageLen = 4000
 
+// streamEditInterval controls how often we edit the message during streaming.
+const streamEditInterval = time.Second
+
+// typingCursor is appended to the message while streaming to indicate activity.
+const typingCursor = " \u258D"
+
 var log = slog.With("component", "telegram")
 
 // Run starts a Telegram bot using long polling. It blocks until ctx is
@@ -59,17 +65,8 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 			return c.Send(fmt.Sprintf("Error starting agent: %v", err))
 		}
 
-		var sb strings.Builder
-		var streamErr error
-		for evt := range ag.SendPrompt(ctx, text) {
-			if evt.Err != nil {
-				streamErr = evt.Err
-				break
-			}
-			sb.WriteString(evt.Text)
-		}
+		response, streamErr := streamResponse(bot, c, ag, ctx, text)
 
-		response := sb.String()
 		if streamErr != nil {
 			log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
 			if response == "" {
@@ -83,17 +80,8 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 			response = "(empty response)"
 		}
 
-		chunks := splitMessage(response)
-		for _, chunk := range chunks {
-			rendered := renderMarkdown(md, chunk)
-			if err := c.Send(rendered, tele.ModeMarkdownV2); err != nil {
-				log.Warn("markdown send failed, falling back to plain text", "error", err)
-				if err := c.Send(chunk); err != nil {
-					log.Error("sendMessage failed", "chat_id", chatID, "error", err)
-				}
-			}
-		}
-		log.Debug("response sent", "chat_id", chatID, "chunks", len(chunks), "response_len", len(response))
+		sendFinalResponse(bot, c, md, response)
+		log.Debug("response sent", "chat_id", chatID, "response_len", len(response))
 		return nil
 	})
 
@@ -107,6 +95,80 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 
 	bot.Start()
 	return ctx.Err()
+}
+
+// streamResponse consumes the agent stream, sending and editing a Telegram
+// message in place as tokens arrive. It returns the final accumulated text
+// and any stream error. The sent message (if any) is deleted before returning
+// so the caller can send the final rendered version.
+func streamResponse(bot *tele.Bot, c tele.Context, ag *agent.Agent, ctx context.Context, prompt string) (string, error) {
+	var sb strings.Builder
+	var sentMsg *tele.Message
+	var streamErr error
+	lastEdit := time.Time{}
+
+	for evt := range ag.SendPrompt(ctx, prompt) {
+		if evt.Err != nil {
+			streamErr = evt.Err
+			break
+		}
+		sb.WriteString(evt.Text)
+
+		now := time.Now()
+		if now.Sub(lastEdit) < streamEditInterval {
+			continue
+		}
+
+		current := sb.String()
+		if strings.TrimSpace(current) == "" {
+			continue
+		}
+
+		// Truncate display text if it exceeds the message limit.
+		display := current
+		if len(display)+len(typingCursor) > telegramMaxMessageLen {
+			display = display[:telegramMaxMessageLen-len(typingCursor)-3] + "..."
+		}
+
+		if sentMsg == nil {
+			msg, err := bot.Send(c.Chat(), display+typingCursor)
+			if err != nil {
+				log.Warn("stream send failed", "error", err)
+			} else {
+				sentMsg = msg
+			}
+		} else {
+			if _, err := bot.Edit(sentMsg, display+typingCursor); err != nil {
+				log.Warn("stream edit failed", "error", err)
+			}
+		}
+		lastEdit = now
+	}
+
+	// Clean up the streaming message so the caller can send the final version.
+	if sentMsg != nil {
+		if err := bot.Delete(sentMsg); err != nil {
+			log.Warn("delete streaming message failed", "error", err)
+		}
+	}
+
+	return sb.String(), streamErr
+}
+
+// sendFinalResponse sends the completed response with markdown rendering,
+// splitting into chunks if necessary.
+func sendFinalResponse(bot *tele.Bot, c tele.Context, md goldmarkMD, response string) {
+	chatID := c.Chat().ID
+	chunks := splitMessage(response)
+	for _, chunk := range chunks {
+		rendered := renderMarkdown(md, chunk)
+		if err := c.Send(rendered, tele.ModeMarkdownV2); err != nil {
+			log.Warn("markdown send failed, falling back to plain text", "error", err)
+			if err := c.Send(chunk); err != nil {
+				log.Error("sendMessage failed", "chat_id", chatID, "error", err)
+			}
+		}
+	}
 }
 
 // renderMarkdown converts standard markdown to Telegram MarkdownV2 format.
