@@ -1,0 +1,40 @@
+[tools]
+go = "1.23"
+
+[env]
+BINARY_NAME = "pibot"
+
+[tasks.build]
+description = "Build pibot binary"
+run = "go build -o bin/$BINARY_NAME ."
+
+[tasks.run]
+description = "Run pibot (pass args after --)"
+depends = ["build"]
+run = "./bin/$BINARY_NAME {{arg(name='command', default='chat')}}"
+
+[tasks."run:chat"]
+description = "Run interactive CLI chat"
+depends = ["build"]
+run = "./bin/$BINARY_NAME chat"
+
+[tasks."run:telegram"]
+description = "Run Telegram bot"
+depends = ["build"]
+run = "./bin/$BINARY_NAME telegram"
+
+[tasks.test]
+description = "Run all tests with race detection"
+run = "go test -v -race ./..."
+
+[tasks.lint]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.format]
+description = "Format Go code and tidy modules"
+run = "gofmt -w . && go mod tidy"
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "rm -rf bin/"
