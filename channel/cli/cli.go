@@ -38,8 +38,8 @@ func RunStream(ctx context.Context, pool *agent.Pool) error {
 }
 
 // RunChat starts an interactive terminal chat session using Bubble Tea.
-func RunChat(ctx context.Context, pool *agent.Pool) error {
-	m := newChatModel(ctx, pool)
+func RunChat(ctx context.Context, pool *agent.Pool, provider, model string) error {
+	m := newChatModel(ctx, pool, provider, model)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

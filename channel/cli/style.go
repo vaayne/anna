@@ -24,4 +24,8 @@ var (
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("3")).
 			Italic(true)
+
+	titleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("5")).
+			Bold(true)
 )

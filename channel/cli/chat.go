@@ -34,6 +34,8 @@ type chatModel struct {
 	viewport viewport.Model
 	stream   <-chan runner.Event
 
+	provider  string
+	model     string
 	history   *strings.Builder
 	streaming bool
 	status    string
@@ -42,7 +44,7 @@ type chatModel struct {
 	ready     bool
 }
 
-func newChatModel(ctx context.Context, pool *agent.Pool) chatModel {
+func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string) chatModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message... (Enter to send, Alt+Enter for newline)"
 	ta.Focus()
@@ -54,6 +56,8 @@ func newChatModel(ctx context.Context, pool *agent.Pool) chatModel {
 		ctx:      ctx,
 		pool:     pool,
 		textarea: ta,
+		provider: provider,
+		model:    model,
 		history:  &strings.Builder{},
 	}
 }
@@ -212,6 +216,7 @@ func (m chatModel) View() string {
 	if m.status != "" {
 		status = statusStyle.Render(" " + m.status)
 	}
+	info := titleStyle.Render(fmt.Sprintf(" Anna - %s/%s", m.provider, m.model))
 	help := helpStyle.Render(" /new: new session • /quit: exit • ctrl+c: quit")
-	return fmt.Sprintf("%s\n%s\n%s\n%s", m.viewport.View(), status, m.textarea.View(), help)
+	return fmt.Sprintf("%s\n%s\n%s\n%s %s", m.viewport.View(), status, m.textarea.View(), info, help)
 }

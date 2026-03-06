@@ -60,7 +60,7 @@ func chatCommand() *ucli.Command {
 				}
 			}
 
-			ctx, _, pool, err := setup(c.Context)
+			ctx, cfg, pool, err := setup(c.Context)
 			if err != nil {
 				return err
 			}
@@ -69,7 +69,7 @@ func chatCommand() *ucli.Command {
 			if c.Bool("stream") {
 				return clicmd.RunStream(ctx, pool)
 			}
-			return clicmd.RunChat(ctx, pool)
+			return clicmd.RunChat(ctx, pool, cfg.Provider, cfg.Model)
 		},
 	}
 }
