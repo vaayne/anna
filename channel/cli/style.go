@@ -75,15 +75,11 @@ var (
 			Foreground(lipgloss.Color("7")).
 			Bold(true)
 
-	toolUseStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("3")).
-			Italic(true)
-
 	toolDoneStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("2")).
-			Italic(true)
+			Foreground(lipgloss.Color("8")).
+			Faint(true)
 
 	toolErrorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("1")).
-			Italic(true)
+			Faint(true)
 )

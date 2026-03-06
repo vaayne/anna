@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -58,8 +59,11 @@ type chatModel struct {
 	completions    []slashCommand
 	completeCursor int
 
+	// Tool use tracking
+	toolStartTime time.Time
+
 	// Model picker
-	picking        bool
+	picking bool
 	models         []modelOption
 	filteredModels []modelOption
 	modelCursor    int
@@ -186,13 +190,16 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.status {
 		case "running":
+			m.toolStartTime = time.Now()
 			m.status = "Running " + label + "..."
 		case "done":
+			elapsed := formatDuration(time.Since(m.toolStartTime))
 			m.status = ""
-			m.history.WriteString(toolDoneStyle.Render("  ✓ "+label) + "\n")
+			m.history.WriteString(toolDoneStyle.Render(fmt.Sprintf("    ✓ %s (%s)", label, elapsed)) + "\n")
 		case "error":
+			elapsed := formatDuration(time.Since(m.toolStartTime))
 			m.status = ""
-			m.history.WriteString(toolErrorStyle.Render("  ✗ "+label) + "\n")
+			m.history.WriteString(toolErrorStyle.Render(fmt.Sprintf("    ✗ %s (%s)", label, elapsed)) + "\n")
 		}
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
@@ -363,6 +370,18 @@ func waitNextChunk(stream <-chan runner.Event) tea.Cmd {
 			}
 		}
 		return streamChunkMsg(evt.Text)
+	}
+}
+
+// formatDuration returns a human-friendly duration string.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%.0fm%.0fs", d.Minutes(), d.Seconds()-d.Minutes()*60)
 	}
 }
 
