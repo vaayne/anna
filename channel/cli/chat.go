@@ -85,11 +85,6 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
 
-	renderer, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(0), // we handle wrapping via viewport width
-	)
-
 	return chatModel{
 		ctx:         ctx,
 		pool:        pool,
@@ -100,7 +95,6 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 		models:      models,
 		switchModel: switchFn,
 		currentRaw:  &strings.Builder{},
-		mdRenderer:  renderer,
 	}
 }
 
@@ -339,6 +333,12 @@ func (m *chatModel) resize() {
 	}
 
 	m.textarea.SetWidth(m.width - 2) // match viewport inner width
+
+	// Recreate markdown renderer with updated word wrap width
+	m.mdRenderer, _ = glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(vpInnerWidth),
+	)
 }
 
 func (m *chatModel) handleInput(input string) tea.Cmd {
