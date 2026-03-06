@@ -226,6 +226,9 @@ func modelSwitcher(cfg *Config, pool *agent.Pool) channel.ModelSwitchFunc {
 			return err
 		}
 		pool.SetFactory(factory)
+		if err := SaveModelSelection(provider, model); err != nil {
+			slog.Warn("failed to persist model selection", "error", err)
+		}
 		return nil
 	}
 }

@@ -179,6 +179,35 @@ func (cfg *Config) ResolveModel() types.Model {
 	}
 }
 
+// SaveModelSelection persists the provider and model to the config file,
+// preserving all other fields.
+func SaveModelSelection(provider, model string) error {
+	path := configPath()
+
+	raw := make(map[string]any)
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read config: %w", err)
+	}
+	if err == nil {
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
+	}
+
+	raw["provider"] = provider
+	raw["model"] = model
+
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
 func modelConfigToType(provider string, m ModelConfig) types.Model {
 	model := types.Model{
 		ID:            m.ID,
