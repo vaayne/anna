@@ -29,7 +29,7 @@ func ExecuteToolCalls(ctx context.Context, calls []aitypes.ToolCall, tools agent
 				ToolCallID: call.ID,
 				ToolName:   call.Name,
 				IsError:    true,
-				Content:    []aitypes.ToolResultContent{{Text: "tool not found"}},
+				Content:    []aitypes.ContentBlock{aitypes.TextContent{Text: "tool not found"}},
 			}
 			results = append(results, result)
 			if cb.OnFinish != nil {
@@ -39,10 +39,10 @@ func ExecuteToolCalls(ctx context.Context, calls []aitypes.ToolCall, tools agent
 		}
 
 		content, err := toolFn(ctx, call)
-		result := aitypes.ToolResultMessage{ToolCallID: call.ID, ToolName: call.Name, Content: []aitypes.ToolResultContent{content}}
+		result := aitypes.ToolResultMessage{ToolCallID: call.ID, ToolName: call.Name, Content: []aitypes.ContentBlock{content}}
 		if err != nil {
 			result.IsError = true
-			result.Content = []aitypes.ToolResultContent{{Text: err.Error()}}
+			result.Content = []aitypes.ContentBlock{aitypes.TextContent{Text: err.Error()}}
 		}
 		results = append(results, result)
 		if cb.OnFinish != nil {

@@ -22,8 +22,6 @@ func ConvertMessagesToPrompt(ctx types.Context) string {
 			parts = append(parts, fmt.Sprintf("assistant: %s", flattenAssistantContent(m.Content)))
 		case types.ToolResultMessage:
 			parts = append(parts, fmt.Sprintf("tool[%s]: %s", m.ToolName, flattenToolResult(m.Content)))
-		case types.SystemMessage:
-			parts = append(parts, fmt.Sprintf("system: %s", m.Content))
 		}
 	}
 
@@ -45,11 +43,11 @@ func flattenAssistantContent(blocks []types.ContentBlock) string {
 	return strings.Join(parts, " ")
 }
 
-func flattenToolResult(content []types.ToolResultContent) string {
+func flattenToolResult(content []types.ContentBlock) string {
 	parts := make([]string, 0, len(content))
-	for _, c := range content {
-		if c.Text != "" {
-			parts = append(parts, c.Text)
+	for _, block := range content {
+		if t, ok := block.(types.TextContent); ok && t.Text != "" {
+			parts = append(parts, t.Text)
 		}
 	}
 	return strings.Join(parts, " ")

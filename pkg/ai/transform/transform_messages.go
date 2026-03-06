@@ -11,7 +11,7 @@ func Messages(messages []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(messages)+2)
 	now := time.Now().UTC()
 
-	for i := 0; i < len(messages); i++ {
+	for i := range messages {
 		msg := messages[i]
 		out = append(out, msg)
 
@@ -31,9 +31,9 @@ func Messages(messages []types.Message) []types.Message {
 			out = append(out, types.ToolResultMessage{
 				ToolCallID: call.ID,
 				ToolName:   call.Name,
-				Content: []types.ToolResultContent{{
-					Text: "synthetic tool result: missing tool output",
-				}},
+				Content: []types.ContentBlock{
+					types.TextContent{Text: "synthetic tool result: missing tool output"},
+				},
 				IsError:   true,
 				Timestamp: now,
 			})

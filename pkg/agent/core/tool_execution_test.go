@@ -12,8 +12,8 @@ import (
 func TestExecuteToolCalls(t *testing.T) {
 	calls := []aitypes.ToolCall{{ID: "1", Name: "echo"}, {ID: "2", Name: "missing"}}
 	tools := agenttypes.ToolSet{
-		"echo": func(ctx context.Context, call aitypes.ToolCall) (aitypes.ToolResultContent, error) {
-			return aitypes.ToolResultContent{Text: "ok"}, nil
+		"echo": func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error) {
+			return aitypes.TextContent{Text: "ok"}, nil
 		},
 	}
 
@@ -35,8 +35,8 @@ func TestExecuteToolCalls(t *testing.T) {
 func TestExecuteToolCallsToolError(t *testing.T) {
 	calls := []aitypes.ToolCall{{ID: "1", Name: "fail"}}
 	tools := agenttypes.ToolSet{
-		"fail": func(ctx context.Context, call aitypes.ToolCall) (aitypes.ToolResultContent, error) {
-			return aitypes.ToolResultContent{}, errors.New("boom")
+		"fail": func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error) {
+			return aitypes.TextContent{}, errors.New("boom")
 		},
 	}
 

@@ -104,8 +104,6 @@ func messageType(msg aitypes.Message) string {
 		return "assistant"
 	case aitypes.ToolResultMessage:
 		return "tool"
-	case aitypes.SystemMessage:
-		return "system"
 	default:
 		return fmt.Sprintf("unknown(%T)", msg)
 	}

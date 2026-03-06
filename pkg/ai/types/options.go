@@ -8,8 +8,11 @@ type StreamOptions struct {
 	MaxTokens       *int
 	APIKey          string
 	BaseURL         string
+	Transport       Transport
+	CacheRetention  CacheRetention
 	SessionID       string
-	CacheRetention  string
+	Headers         map[string]string
+	Metadata        map[string]any
 	MaxRetryDelayMS *int
 	Timeout         time.Duration
 }
@@ -17,8 +20,8 @@ type StreamOptions struct {
 // SimpleStreamOptions extends StreamOptions with reasoning controls.
 type SimpleStreamOptions struct {
 	StreamOptions
-	Reasoning       string
-	ThinkingBudgets map[string]int
+	Reasoning       ThinkingLevel
+	ThinkingBudgets *ThinkingBudgets
 }
 
 // CompleteOptions configures non-streaming requests.

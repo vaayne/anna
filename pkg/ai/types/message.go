@@ -2,6 +2,13 @@ package types
 
 import "time"
 
+// TextSignatureV1 carries model-generated text signature metadata.
+type TextSignatureV1 struct {
+	V     int    `json:"v"`
+	ID    string `json:"id"`
+	Phase string `json:"phase,omitempty"` // "commentary" | "final_answer"
+}
+
 // ContentBlock is the normalized assistant content unit.
 type ContentBlock interface {
 	contentBlockKind() string
@@ -9,7 +16,8 @@ type ContentBlock interface {
 
 // TextContent represents plain text output.
 type TextContent struct {
-	Text string
+	Text          string
+	TextSignature string // legacy id string or TextSignatureV1 JSON
 }
 
 func (TextContent) contentBlockKind() string { return "text" }
@@ -23,6 +31,14 @@ type ThinkingContent struct {
 
 func (ThinkingContent) contentBlockKind() string { return "thinking" }
 
+// ImageContent represents base64-encoded image data.
+type ImageContent struct {
+	Data     string // base64 encoded
+	MimeType string // e.g. "image/jpeg", "image/png"
+}
+
+func (ImageContent) contentBlockKind() string { return "image" }
+
 // ToolCall represents a tool invocation emitted by an assistant.
 type ToolCall struct {
 	ID               string
@@ -33,18 +49,13 @@ type ToolCall struct {
 
 func (ToolCall) contentBlockKind() string { return "toolCall" }
 
-// ToolResultContent represents output from a tool execution.
-type ToolResultContent struct {
-	Text string
-	JSON map[string]any
-}
-
 // Message is the base conversation entry.
 type Message interface {
 	messageRole() string
 }
 
 // UserMessage contains user-provided content.
+// Content is string or []ContentBlock (TextContent | ImageContent).
 type UserMessage struct {
 	Content   any
 	Timestamp time.Time
@@ -55,6 +66,9 @@ func (UserMessage) messageRole() string { return "user" }
 // AssistantMessage contains assistant output and metadata.
 type AssistantMessage struct {
 	Content      []ContentBlock
+	Api          string
+	Provider     string
+	Model        string
 	Usage        Usage
 	StopReason   StopReason
 	ErrorMessage string
@@ -67,16 +81,10 @@ func (AssistantMessage) messageRole() string { return "assistant" }
 type ToolResultMessage struct {
 	ToolCallID string
 	ToolName   string
-	Content    []ToolResultContent
+	Content    []ContentBlock // TextContent | ImageContent
+	Details    any
 	IsError    bool
 	Timestamp  time.Time
 }
 
 func (ToolResultMessage) messageRole() string { return "tool" }
-
-// SystemMessage represents system-level instructions in the transcript.
-type SystemMessage struct {
-	Content string
-}
-
-func (SystemMessage) messageRole() string { return "system" }

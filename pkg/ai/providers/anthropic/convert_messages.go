@@ -17,7 +17,7 @@ func ConvertMessages(ctx types.Context) []any {
 				"content": []any{map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": m.ToolCallID,
-					"content":     m.Content,
+					"content":     flattenContentBlocks(m.Content),
 					"is_error":    m.IsError,
 				}},
 			})

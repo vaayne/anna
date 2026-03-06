@@ -7,7 +7,7 @@ import (
 )
 
 // ToolFunc executes one tool invocation.
-type ToolFunc func(ctx context.Context, call aitypes.ToolCall) (aitypes.ToolResultContent, error)
+type ToolFunc func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error)
 
 // ToolSet maps tool names to handlers.
 type ToolSet map[string]ToolFunc
