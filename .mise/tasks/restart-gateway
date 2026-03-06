@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
+#MISE description="Restart the gateway daemon (stop existing, rebuild, start in background)"
+#MISE depends=["build"]
 set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT_DIR"
 
 find_gateway_pids() {
   ps -axo pid=,command= | awk '
     /mise run:gateway|(^|[[:space:]])\.\/bin\/anna gateway([[:space:]]|$)|(^|[[:space:]])bin\/anna gateway([[:space:]]|$)/ {
-      if ($0 !~ /awk/ && $0 !~ /restart-gateway\.sh/) print $1
+      if ($0 !~ /awk/ && $0 !~ /restart-gateway/) print $1
     }
   '
 }
@@ -36,9 +35,9 @@ else
   echo "No running anna gateway process found."
 fi
 
-echo "Starting anna gateway with mise..."
-mkdir -p "$ROOT_DIR/.agents/workspace"
-nohup mise run:gateway > "$ROOT_DIR/.agents/workspace/anna-gateway.log" 2>&1 &
+echo "Starting anna gateway..."
+mkdir -p .agents/workspace
+nohup ./bin/anna gateway > .agents/workspace/anna-gateway.log 2>&1 &
 
-echo "Started. Logs: $ROOT_DIR/.agents/workspace/anna-gateway.log"
+echo "Started. Logs: $(pwd)/.agents/workspace/anna-gateway.log"
 echo "New PID: $!"
