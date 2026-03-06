@@ -25,10 +25,10 @@ const maxToolIterations = 40
 type Config struct {
 	API     string // provider key: "anthropic", "openai"
 	Model   string // e.g. "claude-sonnet-4-20250514"
-	APIKey  string
-	System  string // system prompt
-	BaseURL string // optional provider base URL override
-	WorkDir string // working directory for tool execution
+	APIKey    string
+	BaseURL   string // optional provider base URL override
+	WorkDir   string // working directory for tool execution
+	AgentsDir string // .agents dir for persona files (soul.md, user.md, memory.md)
 }
 
 // Runner implements runner.Runner by calling LLM providers directly via Engine.
@@ -68,7 +68,7 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 		tools:        tool.NewRegistry(cfg.WorkDir),
 		model:        aitypes.Model{API: cfg.API, Name: cfg.Model},
 		apiKey:       cfg.APIKey,
-		system:       cfg.System,
+		system:       BuildSystemPrompt(cfg.AgentsDir),
 		lastActivity: time.Now(),
 		log:          slog.With("component", "go_runner"),
 	}, nil

@@ -139,11 +139,11 @@ func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
 		providerCfg := cfg.Providers[cfg.Provider]
 		return func(ctx context.Context) (runner.Runner, error) {
 			return gorunner.New(ctx, gorunner.Config{
-				API:     cfg.Provider,
-				Model:   cfg.Model,
-				APIKey:  providerCfg.APIKey,
-				System:  cfg.Runner.System,
-				BaseURL: providerCfg.BaseURL,
+				API:       cfg.Provider,
+				Model:     cfg.Model,
+				APIKey:    providerCfg.APIKey,
+				AgentsDir: configDir(),
+				BaseURL:   providerCfg.BaseURL,
 			})
 		}, nil
 	default:
