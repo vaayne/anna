@@ -17,6 +17,7 @@ import (
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/channel"
+
 )
 
 // streamStartMsg carries the stream channel from the agent.
@@ -93,7 +94,7 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 	// Resolve session: resume the most recent active session, or create a new one.
 	sessionID := resolveSession(pool)
 
-	return chatModel{
+	m := chatModel{
 		ctx:         ctx,
 		pool:        pool,
 		textarea:    ta,
@@ -105,6 +106,14 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 		switchModel: switchFn,
 		currentRaw:  &strings.Builder{},
 	}
+
+	// Restore conversation display from persisted history.
+	if rendered := renderResumedHistory(pool, sessionID); rendered != "" {
+		m.history.WriteString(rendered)
+		m.historyPrefix = m.history.String()
+	}
+
+	return m
 }
 
 // resolveSession returns the most recently active non-archived session ID,
@@ -128,6 +137,38 @@ func resolveSession(pool *agent.Pool) string {
 		return "session"
 	}
 	return info.ID
+}
+
+// renderResumedHistory builds the viewport content from a session's persisted events.
+// Only user messages and assistant text are rendered; tool calls are omitted for brevity.
+func renderResumedHistory(pool *agent.Pool, sessionID string) string {
+	events := pool.History(sessionID)
+	if len(events) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(systemStyle.Render("[session resumed]") + "\n\n")
+
+	for _, evt := range events {
+		switch evt.Type {
+		case runner.RPCEventUserMessage:
+			if evt.Summary == "" || evt.Summary == "[Previous conversation summary]" {
+				continue
+			}
+			b.WriteString(userStyle.Render("You") + "\n")
+			b.WriteString(userBorderStyle.Render(chatTextStyle.Render(evt.Summary)) + "\n\n")
+
+		case runner.RPCEventMessageUpdate:
+			if evt.Summary == "" {
+				continue
+			}
+			b.WriteString(agentStyle.Render("Anna") + "\n")
+			b.WriteString(agentBorderStyle.Render(evt.Summary) + "\n\n")
+		}
+	}
+
+	return b.String()
 }
 
 func (m chatModel) Init() tea.Cmd {

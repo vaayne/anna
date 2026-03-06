@@ -16,6 +16,17 @@ type Config struct {
 	Runner    RunnerConfig              `yaml:"runner"`
 	Telegram  TelegramConfig            `yaml:"telegram"`
 	Sessions  string                    `yaml:"sessions"`
+	Cron      CronConfig                `yaml:"cron"`
+}
+
+type CronConfig struct {
+	Enabled *bool  `yaml:"enabled"`
+	DataDir string `yaml:"data_dir"`
+}
+
+// CronEnabled returns whether cron is enabled (defaults to true).
+func (c CronConfig) CronEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 type ProviderConfig struct {
@@ -138,6 +149,9 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 	if cfg.Sessions == "" {
 		cfg.Sessions = filepath.Join(dir, "workspace", "sessions")
+	}
+	if cfg.Cron.DataDir == "" {
+		cfg.Cron.DataDir = filepath.Join(dir, "cron")
 	}
 
 	return cfg, nil

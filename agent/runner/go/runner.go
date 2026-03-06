@@ -27,9 +27,10 @@ type Config struct {
 	Model     string // e.g. "claude-sonnet-4-20250514"
 	APIKey    string
 	BaseURL   string // optional provider base URL override
-	WorkDir   string // working directory for tool execution
-	AgentsDir string // .agents dir for persona files (soul.md, user.md, memory.md)
-	System    string // optional system prompt override (bypasses BuildSystemPrompt)
+	WorkDir    string      // working directory for tool execution
+	AgentsDir  string      // .agents dir for persona files (soul.md, user.md, memory.md)
+	System     string      // optional system prompt override (bypasses BuildSystemPrompt)
+	ExtraTools []tool.Tool // additional tools to register
 }
 
 // Runner implements runner.Runner by calling LLM providers directly via Engine.
@@ -68,10 +69,15 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 		system = BuildSystemPrompt(cfg.AgentsDir, cfg.WorkDir)
 	}
 
+	tools := tool.NewRegistry(cfg.WorkDir)
+	for _, t := range cfg.ExtraTools {
+		tools.Register(t)
+	}
+
 	return &Runner{
 		engine:       &core.Engine{Providers: reg},
 		reg:          reg,
-		tools:        tool.NewRegistry(cfg.WorkDir),
+		tools:        tools,
 		model:        aitypes.Model{API: cfg.API, Name: cfg.Model},
 		apiKey:       cfg.APIKey,
 		system:       system,

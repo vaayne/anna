@@ -13,12 +13,14 @@ import (
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
-	"github.com/vaayne/anna/agent/store"
 	gorunner "github.com/vaayne/anna/agent/runner/go"
+	"github.com/vaayne/anna/agent/runner/go/tool"
 	"github.com/vaayne/anna/agent/runner/pi"
+	"github.com/vaayne/anna/agent/store"
 	"github.com/vaayne/anna/channel"
 	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
+	"github.com/vaayne/anna/cron"
 )
 
 func main() {
@@ -63,18 +65,25 @@ func chatCommand() *ucli.Command {
 				}
 			}
 
-			ctx, cfg, pool, err := setup(c.Context)
+			s, err := setup(c.Context)
 			if err != nil {
 				return err
 			}
-			defer pool.Close()
+			defer s.pool.Close()
+
+			if s.cronSvc != nil {
+				if err := s.cronSvc.Start(s.ctx); err != nil {
+					return fmt.Errorf("start cron: %w", err)
+				}
+				defer s.cronSvc.Stop()
+			}
 
 			if c.Bool("stream") {
-				return clicmd.RunStream(ctx, pool)
+				return clicmd.RunStream(s.ctx, s.pool)
 			}
-			listFn := func() []channel.ModelOption { return collectModels(cfg) }
-			switchFn := modelSwitcher(cfg, pool)
-			return clicmd.RunChat(ctx, pool, cfg.Provider, cfg.Model, listFn, switchFn)
+			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
+			switchFn := modelSwitcher(s.cfg, s.pool, s.extraTools)
+			return clicmd.RunChat(s.ctx, s.pool, s.cfg.Provider, s.cfg.Model, listFn, switchFn)
 		},
 	}
 }
@@ -84,32 +93,59 @@ func gatewayCommand() *ucli.Command {
 		Name:  "gateway",
 		Usage: "Start daemon services (Telegram, etc.) based on config",
 		Action: func(c *ucli.Context) error {
-			ctx, cfg, pool, err := setup(c.Context)
+			s, err := setup(c.Context)
 			if err != nil {
 				return err
 			}
-			defer pool.Close()
+			defer s.pool.Close()
 
-			listFn := func() []channel.ModelOption { return collectModels(cfg) }
-			switchFn := modelSwitcher(cfg, pool)
-			return runGateway(ctx, cfg, pool, listFn, switchFn)
+			if s.cronSvc != nil {
+				if err := s.cronSvc.Start(s.ctx); err != nil {
+					return fmt.Errorf("start cron: %w", err)
+				}
+				defer s.cronSvc.Stop()
+			}
+
+			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
+			switchFn := modelSwitcher(s.cfg, s.pool, s.extraTools)
+			return runGateway(s.ctx, s.cfg, s.pool, listFn, switchFn)
 		},
 	}
 }
 
-func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error) {
+type setupResult struct {
+	ctx        context.Context
+	cfg        *Config
+	pool       *agent.Pool
+	cronSvc    *cron.Service
+	extraTools []tool.Tool
+}
+
+func setup(parent context.Context) (*setupResult, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("loading config: %w", err)
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	_ = cancel // cancel is deferred via the caller's lifecycle
 
+	// Create cron service and tool before the runner factory so the tool
+	// can be injected into the Go runner.
+	var cronSvc *cron.Service
+	var extraTools []tool.Tool
+	if cfg.Cron.CronEnabled() && cfg.Runner.Type == "go" {
+		cronSvc, err = cron.New(cfg.Cron.DataDir)
+		if err != nil {
+			return nil, fmt.Errorf("create cron service: %w", err)
+		}
+		extraTools = append(extraTools, cron.NewTool(cronSvc))
+	}
+
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
-	factory, err := newRunnerFactory(cfg)
+	factory, err := newRunnerFactory(cfg, extraTools)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create runner factory: %w", err)
+		return nil, fmt.Errorf("create runner factory: %w", err)
 	}
 
 	opts := []agent.PoolOption{agent.WithIdleTimeout(idleTimeout)}
@@ -117,7 +153,7 @@ func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error
 		cwd, _ := os.Getwd()
 		s, err := store.NewFileStore(cfg.Sessions, cwd)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("create session store: %w", err)
+			return nil, fmt.Errorf("create session store: %w", err)
 		}
 		opts = append(opts, agent.WithStore(s))
 		slog.Info("session persistence enabled", "dir", cfg.Sessions)
@@ -126,10 +162,30 @@ func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error
 	pool := agent.NewPool(factory, opts...)
 	go pool.StartReaper(ctx)
 
-	return ctx, cfg, pool, nil
+	// Wire the cron callback now that pool exists.
+	if cronSvc != nil {
+		cronSvc.SetOnJob(func(ctx context.Context, job cron.Job) {
+			sessionID := "cron:" + job.ID
+			msg := fmt.Sprintf("[Scheduled Task] %s\n\nInstruction: %s", job.Name, job.Message)
+			ch := pool.Chat(ctx, sessionID, msg)
+			for evt := range ch {
+				if evt.Err != nil {
+					slog.Error("cron job error", "job_id", job.ID, "error", evt.Err)
+				}
+			}
+		})
+	}
+
+	return &setupResult{
+		ctx:        ctx,
+		cfg:        cfg,
+		pool:       pool,
+		cronSvc:    cronSvc,
+		extraTools: extraTools,
+	}, nil
 }
 
-func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
+func newRunnerFactory(cfg *Config, extraTools []tool.Tool) (runner.NewRunnerFunc, error) {
 	switch cfg.Runner.Type {
 	case "process":
 		return func(ctx context.Context) (runner.Runner, error) {
@@ -139,11 +195,12 @@ func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
 		providerCfg := cfg.Providers[cfg.Provider]
 		return func(ctx context.Context) (runner.Runner, error) {
 			return gorunner.New(ctx, gorunner.Config{
-				API:       cfg.Provider,
-				Model:     cfg.Model,
-				APIKey:    providerCfg.APIKey,
-				AgentsDir: configDir(),
-				BaseURL:   providerCfg.BaseURL,
+				API:        cfg.Provider,
+				Model:      cfg.Model,
+				APIKey:     providerCfg.APIKey,
+				AgentsDir:  configDir(),
+				BaseURL:    providerCfg.BaseURL,
+				ExtraTools: extraTools,
 			})
 		}, nil
 	default:
@@ -153,11 +210,11 @@ func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
 
 // modelSwitcher returns a function that switches the pool's runner factory
 // to use a different provider/model combination.
-func modelSwitcher(cfg *Config, pool *agent.Pool) channel.ModelSwitchFunc {
+func modelSwitcher(cfg *Config, pool *agent.Pool, extraTools []tool.Tool) channel.ModelSwitchFunc {
 	return func(provider, model string) error {
 		cfg.Provider = provider
 		cfg.Model = model
-		factory, err := newRunnerFactory(cfg)
+		factory, err := newRunnerFactory(cfg, extraTools)
 		if err != nil {
 			return err
 		}

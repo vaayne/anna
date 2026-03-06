@@ -21,14 +21,15 @@ type Registry struct {
 // NewRegistry creates a registry with the default built-in tools.
 func NewRegistry(workDir string) *Registry {
 	r := &Registry{tools: make(map[string]Tool)}
-	r.register(&ReadTool{})
-	r.register(&BashTool{workDir: workDir})
-	r.register(&EditTool{})
-	r.register(&WriteTool{})
+	r.Register(&ReadTool{})
+	r.Register(&BashTool{workDir: workDir})
+	r.Register(&EditTool{})
+	r.Register(&WriteTool{})
 	return r
 }
 
-func (r *Registry) register(t Tool) {
+// Register adds a tool to the registry.
+func (r *Registry) Register(t Tool) {
 	r.tools[t.Definition().Name] = t
 }
 
