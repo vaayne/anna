@@ -36,6 +36,17 @@ const typingCursor = " \u258D"
 
 var log = slog.With("component", "telegram")
 
+func botCommands() []tele.Command {
+	return []tele.Command{
+		{Text: "new", Description: "Start a new session"},
+		{Text: "model", Description: "List or switch models"},
+	}
+}
+
+func registerCommands(bot *tele.Bot) error {
+	return bot.SetCommands(botCommands())
+}
+
 // Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled.
 func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFunc, switchFn channel.ModelSwitchFunc) error {
@@ -50,6 +61,10 @@ func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFu
 	}
 
 	md := tgmd.TGMD()
+
+	if err := registerCommands(bot); err != nil {
+		log.Warn("register telegram commands failed", "error", err)
+	}
 
 	bot.Handle("/new", func(c tele.Context) error {
 		sessionID := strconv.FormatInt(c.Chat().ID, 10)
