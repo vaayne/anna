@@ -9,6 +9,7 @@ import (
 )
 
 func TestLoadConfigDefaults(t *testing.T) {
+	t.Setenv("ANNA_RUNNER_TYPE", "")
 	dir := t.TempDir()
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
