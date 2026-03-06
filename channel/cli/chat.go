@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/vaayne/anna/agent"
@@ -63,6 +64,11 @@ type chatModel struct {
 	// Tool use tracking
 	toolStartTime time.Time
 
+	// Markdown rendering: track current response segments
+	historyPrefix string                // rendered history before current response
+	currentRaw    *strings.Builder      // raw markdown text of current streaming segment
+	mdRenderer    *glamour.TermRenderer
+
 	// Model picker
 	picking bool
 	models         []modelOption
@@ -79,6 +85,11 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
 
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(0), // we handle wrapping via viewport width
+	)
+
 	return chatModel{
 		ctx:         ctx,
 		pool:        pool,
@@ -88,6 +99,8 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 		history:     &strings.Builder{},
 		models:      models,
 		switchModel: switchFn,
+		currentRaw:  &strings.Builder{},
+		mdRenderer:  renderer,
 	}
 }
 
@@ -179,9 +192,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamChunkMsg:
 		m.status = ""
-		m.history.WriteString(string(msg))
-		m.viewport.SetContent(m.history.String())
-		m.viewport.GotoBottom()
+		m.currentRaw.WriteString(string(msg))
+		m.refreshViewport()
 		return m, waitNextChunk(m.stream)
 
 	case streamToolMsg:
@@ -194,27 +206,42 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toolStartTime = time.Now()
 			m.status = "Running " + label + "..."
 		case "done":
+			// Flush current markdown segment into prefix before tool line
+			if m.currentRaw.Len() > 0 {
+				m.historyPrefix += m.renderMarkdown(m.currentRaw.String()) + "\n"
+				m.currentRaw.Reset()
+			}
 			elapsed := formatDuration(time.Since(m.toolStartTime))
 			m.status = ""
-			m.history.WriteString(toolDoneStyle.Render(fmt.Sprintf("    ✓ %s (%s)", label, elapsed)) + "\n")
+			m.historyPrefix += toolDoneStyle.Render(fmt.Sprintf("    ✓ %s (%s)", label, elapsed)) + "\n"
 		case "error":
+			if m.currentRaw.Len() > 0 {
+				m.historyPrefix += m.renderMarkdown(m.currentRaw.String()) + "\n"
+				m.currentRaw.Reset()
+			}
 			elapsed := formatDuration(time.Since(m.toolStartTime))
 			m.status = ""
 			line := fmt.Sprintf("    ✗ %s (%s)", label, elapsed)
 			if msg.detail != "" {
 				line += " — " + msg.detail
 			}
-			m.history.WriteString(toolErrorStyle.Render(line) + "\n")
+			m.historyPrefix += toolErrorStyle.Render(line) + "\n"
 		}
-		m.viewport.SetContent(m.history.String())
-		m.viewport.GotoBottom()
+		m.refreshViewport()
 		return m, waitNextChunk(m.stream)
 
 	case streamDoneMsg:
 		m.streaming = false
 		m.status = ""
 		m.stream = nil
-		m.history.WriteString("\n\n")
+		// Finalize: flush remaining markdown into history
+		if m.currentRaw.Len() > 0 {
+			m.historyPrefix += m.renderMarkdown(m.currentRaw.String())
+			m.currentRaw.Reset()
+		}
+		m.historyPrefix += "\n\n"
+		m.history.Reset()
+		m.history.WriteString(m.historyPrefix)
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
 		m.textarea.Focus()
@@ -224,7 +251,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.status = ""
 		m.stream = nil
-		m.history.WriteString("\n" + errorStyle.Render("error: "+msg.err.Error()) + "\n\n")
+		if m.currentRaw.Len() > 0 {
+			m.historyPrefix += m.renderMarkdown(m.currentRaw.String())
+			m.currentRaw.Reset()
+		}
+		m.historyPrefix += "\n" + errorStyle.Render("error: "+msg.err.Error()) + "\n\n"
+		m.history.Reset()
+		m.history.WriteString(m.historyPrefix)
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
 		m.textarea.Focus()
@@ -340,7 +373,9 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 
 	m.history.WriteString(userStyle.Render("You") + "\n" + input + "\n\n")
 	m.history.WriteString(agentStyle.Render("Anna") + "\n")
-	m.viewport.SetContent(m.history.String())
+	m.historyPrefix = m.history.String()
+	m.currentRaw.Reset()
+	m.viewport.SetContent(m.historyPrefix)
 	m.viewport.GotoBottom()
 
 	m.streaming = true
@@ -377,6 +412,25 @@ func waitNextChunk(stream <-chan runner.Event) tea.Cmd {
 		}
 		return streamChunkMsg(evt.Text)
 	}
+}
+
+// renderMarkdown renders raw markdown text using glamour, falling back to raw text on error.
+func (m *chatModel) renderMarkdown(raw string) string {
+	if m.mdRenderer == nil || raw == "" {
+		return raw
+	}
+	rendered, err := m.mdRenderer.Render(raw)
+	if err != nil {
+		return raw
+	}
+	return strings.TrimRight(rendered, "\n")
+}
+
+// refreshViewport rebuilds viewport content from historyPrefix + rendered current response.
+func (m *chatModel) refreshViewport() {
+	content := m.historyPrefix + m.renderMarkdown(m.currentRaw.String())
+	m.viewport.SetContent(content)
+	m.viewport.GotoBottom()
 }
 
 // formatDuration returns a human-friendly duration string.
