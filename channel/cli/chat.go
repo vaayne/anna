@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
@@ -139,24 +140,36 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *chatModel) resize() {
-	inputHeight := m.textarea.Height() + 2
+	// Layout height budget:
+	// - Title bar: 1 line
+	// - Separator: 1 line
+	// - Viewport border: 2 lines (top + bottom)
+	// - Input (textarea height + 2 for border)
+	// - Help bar: 1 line
+	titleHeight := 1
+	separatorHeight := 1
+	vpBorderHeight := 2
+	inputHeight := m.textarea.Height() + 2 // textarea + border
 	helpHeight := 1
-	statusHeight := 1
-	vpHeight := m.height - inputHeight - helpHeight - statusHeight - 1
+
+	vpHeight := m.height - titleHeight - separatorHeight - vpBorderHeight - inputHeight - helpHeight
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
 
+	// Viewport inner width (minus border padding)
+	vpInnerWidth := m.width - 2
+
 	if !m.ready {
-		m.viewport = viewport.New(m.width, vpHeight)
+		m.viewport = viewport.New(vpInnerWidth, vpHeight)
 		m.viewport.SetContent(m.history.String())
 		m.ready = true
 	} else {
-		m.viewport.Width = m.width
+		m.viewport.Width = vpInnerWidth
 		m.viewport.Height = vpHeight
 	}
 
-	m.textarea.SetWidth(m.width)
+	m.textarea.SetWidth(m.width - 2) // match viewport inner width
 }
 
 func (m *chatModel) handleInput(input string) tea.Cmd {
@@ -212,11 +225,37 @@ func (m chatModel) View() string {
 		return "Initializing..."
 	}
 
-	status := " "
-	if m.status != "" {
-		status = statusStyle.Render(" " + m.status)
+	// Title bar: "Anna" left, "provider/model" right
+	title := titleStyle.Render(" Anna")
+	modelInfo := modelInfoStyle.Render(fmt.Sprintf("%s/%s ", m.provider, m.model))
+	titleGap := m.width - lipgloss.Width(title) - lipgloss.Width(modelInfo)
+	if titleGap < 0 {
+		titleGap = 0
 	}
-	info := titleStyle.Render(fmt.Sprintf(" Anna - %s/%s", m.provider, m.model))
-	help := helpStyle.Render(" /new: new session • /quit: exit • ctrl+c: quit")
-	return fmt.Sprintf("%s\n%s\n%s\n%s %s", m.viewport.View(), status, m.textarea.View(), info, help)
+	titleBar := title + strings.Repeat(" ", titleGap) + modelInfo
+
+	// Separator
+	separator := separatorStyle.Render(strings.Repeat("─", m.width))
+
+	// Viewport with rounded border
+	vpBorder := viewportBorder.Width(m.width - 2)
+	chatPanel := vpBorder.Render(m.viewport.View())
+
+	// Input area with matching border
+	inputBorder := viewportBorder.Width(m.width - 2)
+	input := inputBorder.Render(m.textarea.View())
+
+	// Help bar: commands left, status right
+	help := helpStyle.Render(" /new · /quit · ctrl+c")
+	status := ""
+	if m.status != "" {
+		status = statusStyle.Render(m.status + " ")
+	}
+	helpGap := m.width - lipgloss.Width(help) - lipgloss.Width(status)
+	if helpGap < 0 {
+		helpGap = 0
+	}
+	helpBar := help + strings.Repeat(" ", helpGap) + status
+
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s", titleBar, separator, chatPanel, input, helpBar)
 }

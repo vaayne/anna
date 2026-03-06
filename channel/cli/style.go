@@ -28,4 +28,14 @@ var (
 	titleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("5")).
 			Bold(true)
+
+	modelInfoStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8"))
+
+	separatorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8"))
+
+	viewportBorder = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("8"))
 )
