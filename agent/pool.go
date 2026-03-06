@@ -155,6 +155,28 @@ func (p *Pool) ArchiveSession(sessionID string) error {
 	return nil
 }
 
+// History returns the event log for a session, loading from disk if needed.
+// Returns nil if the session has no history.
+func (p *Pool) History(sessionID string) []runner.RPCEvent {
+	p.mu.Lock()
+	sess, ok := p.sessions[sessionID]
+	if ok && len(sess.Events) > 0 {
+		events := make([]runner.RPCEvent, len(sess.Events))
+		copy(events, sess.Events)
+		p.mu.Unlock()
+		return events
+	}
+	p.mu.Unlock()
+
+	if p.store != nil {
+		events, err := p.store.Load(sessionID)
+		if err == nil && len(events) > 0 {
+			return events
+		}
+	}
+	return nil
+}
+
 // Chat sends a message in a session and streams back events.
 // Internally: gets/creates runner, passes history, collects events,
 // appends to session log, streams to caller.
