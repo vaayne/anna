@@ -280,18 +280,19 @@ func (p *Pool) collectFullResponse(ctx context.Context, r runner.Runner, history
 	return buf.String(), nil
 }
 
-// NeedsCompaction reports whether a session has exceeded the compaction
-// threshold. Returns false if compaction is disabled or no store is set.
+// NeedsCompaction reports whether a session's estimated token count exceeds
+// the compaction threshold. Returns false if compaction is disabled or no
+// store is set.
 func (p *Pool) NeedsCompaction(sessionID string) bool {
-	if p.store == nil || p.compaction.MaxEvents <= 0 {
+	if p.store == nil || p.compaction.MaxTokens <= 0 {
 		return false
 	}
-	count, err := p.store.EventCount(sessionID)
+	tokens, err := p.store.EstimateTokens(sessionID)
 	if err != nil {
-		p.log.Warn("failed to check event count", "session_id", sessionID, "error", err)
+		p.log.Warn("failed to estimate tokens", "session_id", sessionID, "error", err)
 		return false
 	}
-	return count > p.compaction.MaxEvents
+	return tokens > p.compaction.MaxTokens
 }
 
 // History returns the event log for a session, loading from disk if needed.

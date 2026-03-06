@@ -7,9 +7,9 @@ import (
 
 // CompactionConfig controls automatic session compaction.
 type CompactionConfig struct {
-	// MaxEvents triggers compaction when the session event count exceeds this.
-	// 0 disables automatic compaction. Default: 200.
-	MaxEvents int `yaml:"max_events"`
+	// MaxTokens triggers compaction when the estimated token count exceeds this.
+	// 0 disables automatic compaction. Default: 80000.
+	MaxTokens int `yaml:"max_tokens"`
 	// KeepTail is the number of recent message entries to preserve verbatim
 	// after compaction. Default: 20.
 	KeepTail int `yaml:"keep_tail"`
@@ -17,8 +17,8 @@ type CompactionConfig struct {
 
 // CompactionDefaults returns a CompactionConfig with sane defaults applied.
 func (c CompactionConfig) WithDefaults() CompactionConfig {
-	if c.MaxEvents == 0 {
-		c.MaxEvents = 200
+	if c.MaxTokens == 0 {
+		c.MaxTokens = 80_000
 	}
 	if c.KeepTail == 0 {
 		c.KeepTail = 20

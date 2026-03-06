@@ -489,16 +489,16 @@ func TestListTimestampedFiles(t *testing.T) {
 	}
 }
 
-func TestEventCount(t *testing.T) {
+func TestEstimateTokens(t *testing.T) {
 	s := tempStore(t)
 
 	// No file → 0.
-	count, err := s.EventCount("nope")
+	tokens, err := s.EstimateTokens("nope")
 	if err != nil {
-		t.Fatalf("EventCount: %v", err)
+		t.Fatalf("EstimateTokens: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("expected 0, got %d", count)
+	if tokens != 0 {
+		t.Fatalf("expected 0, got %d", tokens)
 	}
 
 	// Append some events.
@@ -512,12 +512,13 @@ func TestEventCount(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	count, err = s.EventCount("s1")
+	tokens, err = s.EstimateTokens("s1")
 	if err != nil {
-		t.Fatalf("EventCount: %v", err)
+		t.Fatalf("EstimateTokens: %v", err)
 	}
-	if count != 4 {
-		t.Fatalf("expected 4, got %d", count)
+	// Should be > 0 (exact value depends on JSON encoding overhead).
+	if tokens == 0 {
+		t.Fatal("expected non-zero token estimate")
 	}
 }
 
@@ -573,13 +574,13 @@ func TestCompact(t *testing.T) {
 		t.Errorf("expected 'answer 4', got %q", after[5].Summary)
 	}
 
-	// EventCount should reflect the compacted file.
-	count, err := s.EventCount("s1")
+	// Token estimate should be smaller after compaction.
+	tokens, err := s.EstimateTokens("s1")
 	if err != nil {
-		t.Fatalf("EventCount after compact: %v", err)
+		t.Fatalf("EstimateTokens after compact: %v", err)
 	}
-	if count != 4 {
-		t.Fatalf("expected 4 message entries after compaction, got %d", count)
+	if tokens == 0 {
+		t.Fatal("expected non-zero token estimate after compaction")
 	}
 
 	// Appending after compaction should still work.

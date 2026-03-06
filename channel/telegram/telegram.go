@@ -39,6 +39,7 @@ var log = slog.With("component", "telegram")
 func botCommands() []tele.Command {
 	return []tele.Command{
 		{Text: "new", Description: "Start a new session"},
+		{Text: "compact", Description: "Compact session history"},
 		{Text: "model", Description: "List or switch models"},
 	}
 }
@@ -74,6 +75,18 @@ func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFu
 		}
 		log.Info("session reset", "session_id", sessionID)
 		return c.Send("New session started.")
+	})
+
+	bot.Handle("/compact", func(c tele.Context) error {
+		sessionID := strconv.FormatInt(c.Chat().ID, 10)
+		_ = c.Notify(tele.Typing)
+		summary, err := pool.CompactSession(ctx, sessionID)
+		if err != nil {
+			log.Error("compact session failed", "session_id", sessionID, "error", err)
+			return c.Send(fmt.Sprintf("Compaction failed: %v", err))
+		}
+		log.Info("session compacted", "session_id", sessionID, "summary_len", len(summary))
+		return c.Send("Session compacted.")
 	})
 
 	bot.Handle("/model", func(c tele.Context) error {

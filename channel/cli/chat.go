@@ -42,6 +42,12 @@ type streamDoneMsg struct{}
 // streamErrMsg carries a streaming error.
 type streamErrMsg struct{ err error }
 
+// compactDoneMsg signals that session compaction finished.
+type compactDoneMsg struct {
+	summary string
+	err     error
+}
+
 type chatModel struct {
 	ctx      context.Context
 	pool     *agent.Pool
@@ -329,6 +335,20 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		m.textarea.Focus()
 		return m, nil
+
+	case compactDoneMsg:
+		m.streaming = false
+		m.status = ""
+		if msg.err != nil {
+			m.history.WriteString(errorStyle.Render("compaction failed: "+msg.err.Error()) + "\n\n")
+		} else {
+			m.history.WriteString(systemStyle.Render("[session compacted]") + "\n\n")
+		}
+		m.historyPrefix = m.history.String()
+		m.viewport.SetContent(m.history.String())
+		m.viewport.GotoBottom()
+		m.textarea.Focus()
+		return m, nil
 	}
 
 	if !m.streaming {
@@ -440,6 +460,16 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
 		return nil
+	case "/compact":
+		m.streaming = true
+		m.status = "Compacting session..."
+		m.textarea.Blur()
+		ctx := m.ctx
+		sessionID := m.sessionID
+		return func() tea.Msg {
+			summary, err := m.pool.CompactSession(ctx, sessionID)
+			return compactDoneMsg{summary: summary, err: err}
+		}
 	case "/model":
 		m.models = toModelOptions(m.listModels())
 		if len(m.models) == 0 {

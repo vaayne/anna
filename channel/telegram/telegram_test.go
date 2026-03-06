@@ -109,11 +109,11 @@ func TestRenderMarkdownFallback(t *testing.T) {
 
 func TestBotCommands(t *testing.T) {
 	commands := botCommands()
-	if len(commands) != 2 {
-		t.Fatalf("len(commands) = %d, want 2", len(commands))
+	if len(commands) != 3 {
+		t.Fatalf("len(commands) = %d, want 3", len(commands))
 	}
 
-	if commands[0].Text != "new" || commands[1].Text != "model" {
-		t.Fatalf("commands = %#v, want new/model", commands)
+	if commands[0].Text != "new" || commands[1].Text != "compact" || commands[2].Text != "model" {
+		t.Fatalf("commands = %#v, want new/compact/model", commands)
 	}
 }

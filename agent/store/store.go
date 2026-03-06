@@ -38,9 +38,9 @@ type Store interface {
 	// would be loaded from the compacted file.
 	Compact(sessionID string, summary string, keepTail int) ([]runner.RPCEvent, error)
 
-	// EventCount returns the number of message entries in a session file
-	// without fully parsing them. Returns 0 if the session does not exist.
-	EventCount(sessionID string) (int, error)
+	// EstimateTokens returns a rough token count for the session's message
+	// content (~4 bytes per token). Returns 0 if the session does not exist.
+	EstimateTokens(sessionID string) (int, error)
 
 	// SaveInfo persists session metadata to the index.
 	SaveInfo(info SessionInfo) error
@@ -341,8 +341,10 @@ func (s *FileStore) List() ([]string, error) {
 	return ids, nil
 }
 
-// EventCount returns the number of message entries in a session file.
-func (s *FileStore) EventCount(sessionID string) (int, error) {
+// EstimateTokens returns a rough token count for a session by summing the
+// byte length of all message lines and dividing by 4 (≈1 token per 4 chars
+// for English text). Returns 0 if the session does not exist.
+func (s *FileStore) EstimateTokens(sessionID string) (int, error) {
 	p := s.resolve(sessionID)
 	if p == "" {
 		return 0, nil
@@ -354,7 +356,7 @@ func (s *FileStore) EventCount(sessionID string) (int, error) {
 	}
 	defer f.Close()
 
-	count := 0
+	totalBytes := 0
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -365,11 +367,15 @@ func (s *FileStore) EventCount(sessionID string) (int, error) {
 		var peek struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal(line, &peek) == nil && peek.Type == "message" {
-			count++
+		if json.Unmarshal(line, &peek) == nil && (peek.Type == "message" || peek.Type == "compaction") {
+			totalBytes += len(line)
 		}
 	}
-	return count, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	// Rough estimate: ~4 bytes per token for English text + JSON overhead.
+	return totalBytes / 4, nil
 }
 
 // Compact rewrites the session file: a header, a compaction entry with the
