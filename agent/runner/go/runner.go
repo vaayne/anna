@@ -11,6 +11,7 @@ import (
 	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/pkg/ai/providers/anthropic"
 	"github.com/vaayne/anna/pkg/ai/providers/openai"
+	openairesponse "github.com/vaayne/anna/pkg/ai/providers/openai-response"
 	"github.com/vaayne/anna/pkg/ai/registry"
 	"github.com/vaayne/anna/pkg/ai/stream"
 	aitypes "github.com/vaayne/anna/pkg/ai/types"
@@ -52,6 +53,7 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 	reg := registry.New()
 	reg.Register(anthropic.New(anthropic.Config{BaseURL: cfg.BaseURL}))
 	reg.Register(openai.New(openai.Config{BaseURL: cfg.BaseURL}))
+	reg.Register(openairesponse.New(openairesponse.Config{BaseURL: cfg.BaseURL}))
 
 	return &Runner{
 		reg:          reg,

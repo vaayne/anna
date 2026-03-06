@@ -118,6 +118,7 @@ func loadConfigFrom(dir string) (*Config, error) {
 	// Resolve provider env vars for known providers.
 	resolveProviderEnv(cfg, "anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")
 	resolveProviderEnv(cfg, "openai", "OPENAI_API_KEY", "OPENAI_BASE_URL")
+	resolveProviderEnv(cfg, "openai-response", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 
 	// Apply defaults for missing values.
 	if cfg.Provider == "" {
