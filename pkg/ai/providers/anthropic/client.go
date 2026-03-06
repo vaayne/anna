@@ -13,6 +13,7 @@ import (
 // Config configures the Anthropic provider.
 type Config struct {
 	BaseURL string
+	APIKey  string
 }
 
 // Provider implements stream.Provider for Anthropic messages.
@@ -23,6 +24,9 @@ type Provider struct {
 // New returns an Anthropic provider.
 func New(cfg Config) *Provider {
 	opts := []option.RequestOption{}
+	if cfg.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(cfg.APIKey))
+	}
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}

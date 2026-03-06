@@ -16,6 +16,7 @@ import (
 // Config configures the OpenAI Responses provider.
 type Config struct {
 	BaseURL string
+	APIKey  string
 }
 
 // Provider implements stream.Provider for OpenAI Responses API.
@@ -27,6 +28,9 @@ type Provider struct {
 func New(cfg Config) *Provider {
 	opts := []option.RequestOption{
 		option.WithMiddleware(stripLeadingNewlines),
+	}
+	if cfg.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(cfg.APIKey))
 	}
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))

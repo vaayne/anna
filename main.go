@@ -10,13 +10,21 @@ import (
 	"syscall"
 	"time"
 
+	"sort"
+
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
 	gorunner "github.com/vaayne/anna/agent/runner/go"
 	"github.com/vaayne/anna/agent/runner/pi"
+	"github.com/vaayne/anna/channel"
 	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
+
+	"github.com/vaayne/anna/pkg/ai/providers/anthropic"
+	"github.com/vaayne/anna/pkg/ai/providers/openai"
+	openairesponse "github.com/vaayne/anna/pkg/ai/providers/openai-response"
+	"github.com/vaayne/anna/pkg/ai/stream"
 )
 
 func main() {
@@ -69,7 +77,9 @@ func chatCommand() *ucli.Command {
 			if c.Bool("stream") {
 				return clicmd.RunStream(ctx, pool)
 			}
-			return clicmd.RunChat(ctx, pool, cfg.Provider, cfg.Model)
+			models := collectModels(cfg)
+			switchFn := modelSwitcher(cfg, pool)
+			return clicmd.RunChat(ctx, pool, cfg.Provider, cfg.Model, models, switchFn)
 		},
 	}
 }
@@ -85,7 +95,9 @@ func gatewayCommand() *ucli.Command {
 			}
 			defer pool.Close()
 
-			return runGateway(ctx, cfg, pool)
+			models := collectModels(cfg)
+			switchFn := modelSwitcher(cfg, pool)
+			return runGateway(ctx, cfg, pool, models, switchFn)
 		},
 	}
 }
@@ -132,6 +144,92 @@ func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
 	}
 }
 
+// collectModels builds the list of available provider/model pairs from config.
+// It includes the current active model, models from provider configs, and
+// models fetched via ListModels API from each provider.
+func collectModels(cfg *Config) []channel.ModelOption {
+	seen := make(map[string]bool)
+	var models []channel.ModelOption
+
+	add := func(provider, model string) {
+		key := provider + "/" + model
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		models = append(models, channel.ModelOption{Provider: provider, Model: model})
+	}
+
+	// Current model first.
+	add(cfg.Provider, cfg.Model)
+
+	// Stable iteration order for providers.
+	provNames := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		provNames = append(provNames, name)
+	}
+	sort.Strings(provNames)
+
+	for _, provName := range provNames {
+		prov := cfg.Providers[provName]
+
+		// Auto-generate entry using the default model for each provider.
+		add(provName, cfg.Model)
+
+		// Explicitly listed models from config.
+		for _, m := range prov.Models {
+			add(provName, m.ID)
+		}
+
+		// Fetch models from the provider API.
+		if provider := newStreamProvider(provName, prov); provider != nil {
+			if lister, ok := provider.(stream.ModelLister); ok {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				listed, err := lister.ListModels(ctx)
+				cancel()
+				if err != nil {
+					slog.Warn("failed to list models from provider", "provider", provName, "error", err)
+					continue
+				}
+				for _, m := range listed {
+					add(provName, m.ID)
+				}
+			}
+		}
+	}
+
+	return models
+}
+
+// newStreamProvider creates a stream.Provider for the given provider name and config.
+func newStreamProvider(name string, cfg ProviderConfig) stream.Provider {
+	switch name {
+	case "anthropic":
+		return anthropic.New(anthropic.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey})
+	case "openai":
+		return openai.New(openai.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey})
+	case "openai-response":
+		return openairesponse.New(openairesponse.Config{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey})
+	default:
+		return nil
+	}
+}
+
+// modelSwitcher returns a function that switches the pool's runner factory
+// to use a different provider/model combination.
+func modelSwitcher(cfg *Config, pool *agent.Pool) channel.ModelSwitchFunc {
+	return func(provider, model string) error {
+		cfg.Provider = provider
+		cfg.Model = model
+		factory, err := newRunnerFactory(cfg)
+		if err != nil {
+			return err
+		}
+		pool.SetFactory(factory)
+		return nil
+	}
+}
+
 func setupLogFile() error {
 	logPath := filepath.Join(configDir(), "anna.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -147,13 +245,13 @@ func setupLogFile() error {
 	return nil
 }
 
-func runGateway(ctx context.Context, cfg *Config, pool *agent.Pool) error {
+func runGateway(ctx context.Context, cfg *Config, pool *agent.Pool, models []channel.ModelOption, switchFn channel.ModelSwitchFunc) error {
 	started := 0
 
 	if cfg.Telegram.Token != "" {
 		started++
 		slog.Info("starting telegram bot")
-		if err := telegram.Run(ctx, cfg.Telegram.Token, pool); err != nil && ctx.Err() == nil {
+		if err := telegram.Run(ctx, cfg.Telegram.Token, pool, models, switchFn); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("telegram: %w", err)
 		}
 	}

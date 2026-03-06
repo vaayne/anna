@@ -35,7 +35,7 @@ func newTestPool(events []runner.Event) *agent.Pool {
 // initModel creates a chatModel and sends an initial WindowSizeMsg so the viewport is ready.
 func initModel(t *testing.T, pool *agent.Pool) chatModel {
 	t.Helper()
-	m := newChatModel(context.Background(), pool, "test", "test-model")
+	m := newChatModel(context.Background(), pool, "test", "test-model", nil, nil)
 	result, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return result.(chatModel)
 }

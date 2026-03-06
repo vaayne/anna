@@ -108,6 +108,14 @@ func (p *Pool) Reset(sessionID string) error {
 	return nil
 }
 
+// SetFactory replaces the runner factory used for new runners.
+// Existing runners are not affected until their session is reset.
+func (p *Pool) SetFactory(factory runner.NewRunnerFunc) {
+	p.mu.Lock()
+	p.factory = factory
+	p.mu.Unlock()
+}
+
 // Close shuts down all sessions and runners.
 func (p *Pool) Close() error {
 	p.mu.Lock()
