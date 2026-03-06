@@ -145,6 +145,12 @@ func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message st
 
 			// Execute each tool and append results.
 			for _, tc := range toolCalls {
+				out <- runner.Event{ToolUse: &runner.ToolUseEvent{
+					Tool:   tc.Name,
+					Status: "running",
+					Input:  summarizeToolInput(tc.Name, tc.Arguments),
+				}}
+
 				result, execErr := r.tools.Execute(ctx, tc.Name, tc.Arguments)
 				isError := execErr != nil
 				content := result
@@ -154,6 +160,16 @@ func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message st
 						content = result + "\n" + content
 					}
 				}
+
+				status := "done"
+				if isError {
+					status = "error"
+				}
+				out <- runner.Event{ToolUse: &runner.ToolUseEvent{
+					Tool:   tc.Name,
+					Status: status,
+					Input:  summarizeToolInput(tc.Name, tc.Arguments),
+				}}
 
 				r.log.Debug("tool result", "tool", tc.Name, "is_error", isError, "result_len", len(content))
 
@@ -223,6 +239,32 @@ func (r *Runner) LastActivity() time.Time {
 
 // Close is a no-op for the Go runner.
 func (r *Runner) Close() error { return nil }
+
+// summarizeToolInput returns a short human-readable summary of tool arguments.
+func summarizeToolInput(toolName string, args map[string]any) string {
+	switch toolName {
+	case "bash":
+		if cmd, ok := args["command"].(string); ok {
+			if len(cmd) > 80 {
+				return cmd[:80] + "..."
+			}
+			return cmd
+		}
+	case "read":
+		if fp, ok := args["file_path"].(string); ok {
+			return fp
+		}
+	case "write":
+		if fp, ok := args["file_path"].(string); ok {
+			return fp
+		}
+	case "edit":
+		if fp, ok := args["file_path"].(string); ok {
+			return fp
+		}
+	}
+	return ""
+}
 
 // convertHistory rebuilds []aitypes.Message from RPCEvent history.
 // User messages (type "user_message") become UserMessage.

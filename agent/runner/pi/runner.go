@@ -150,6 +150,22 @@ func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message st
 							out <- runner.Event{Text: ame.Delta}
 						}
 					}
+				case "tool_start":
+					out <- runner.Event{ToolUse: &runner.ToolUseEvent{
+						Tool:   evt.Tool,
+						Status: "running",
+						Input:  evt.Summary,
+					}}
+				case "tool_end":
+					status := "done"
+					if evt.Error != "" {
+						status = "error"
+					}
+					out <- runner.Event{ToolUse: &runner.ToolUseEvent{
+						Tool:   evt.Tool,
+						Status: status,
+						Input:  evt.Summary,
+					}}
 				case "error":
 					r.log.Error("rpc error", "request_id", id, "error", evt.Error)
 					out <- runner.Event{Err: fmt.Errorf("pi error: %s", evt.Error)}

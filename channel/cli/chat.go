@@ -23,6 +23,13 @@ type streamStartMsg struct {
 // streamChunkMsg carries a text delta from the agent stream.
 type streamChunkMsg string
 
+// streamToolMsg carries a tool-use event from the agent stream.
+type streamToolMsg struct {
+	tool   string
+	status string
+	input  string
+}
+
 // streamDoneMsg signals the stream has finished.
 type streamDoneMsg struct{}
 
@@ -168,6 +175,26 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamChunkMsg:
 		m.status = ""
 		m.history.WriteString(string(msg))
+		m.viewport.SetContent(m.history.String())
+		m.viewport.GotoBottom()
+		return m, waitNextChunk(m.stream)
+
+	case streamToolMsg:
+		switch msg.status {
+		case "running":
+			label := msg.tool
+			if msg.input != "" {
+				label += ": " + msg.input
+			}
+			m.status = "Running " + msg.tool + "..."
+			m.history.WriteString(toolUseStyle.Render("  ▶ "+label) + "\n")
+		case "done":
+			m.status = ""
+			m.history.WriteString(toolDoneStyle.Render("  ✓ done") + "\n")
+		case "error":
+			m.status = ""
+			m.history.WriteString(toolErrorStyle.Render("  ✗ error") + "\n")
+		}
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
 		return m, waitNextChunk(m.stream)
@@ -328,6 +355,13 @@ func waitNextChunk(stream <-chan runner.Event) tea.Cmd {
 		}
 		if evt.Err != nil {
 			return streamErrMsg{evt.Err}
+		}
+		if evt.ToolUse != nil {
+			return streamToolMsg{
+				tool:   evt.ToolUse.Tool,
+				status: evt.ToolUse.Status,
+				input:  evt.ToolUse.Input,
+			}
 		}
 		return streamChunkMsg(evt.Text)
 	}

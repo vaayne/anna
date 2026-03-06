@@ -31,11 +31,19 @@ type AssistantMessageEvent struct {
 	Delta string `json:"delta"`
 }
 
+// ToolUseEvent describes a tool invocation in progress or completed.
+type ToolUseEvent struct {
+	Tool   string // tool name, e.g. "bash", "read"
+	Status string // "running", "done", "error"
+	Input  string // short summary of the tool input
+}
+
 // Event is the consumer-facing stream event. Channels read these from the
 // stream returned by Pool.Chat().
 type Event struct {
-	Text string
-	Err  error
+	Text    string
+	ToolUse *ToolUseEvent
+	Err     error
 }
 
 // Runner runs prompts against an AI backend.

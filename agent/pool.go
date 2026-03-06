@@ -77,6 +77,12 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 				return
 			}
 
+			// Tool-use events pass through without history storage.
+			if evt.ToolUse != nil {
+				out <- evt
+				continue
+			}
+
 			// Convert to RPCEvent and append to session history.
 			rpcEvt := runner.TextDeltaToRPCEvent(evt.Text)
 			p.mu.Lock()
