@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vaayne/anna/memory"
 )
+
 
 func TestParseFrontmatter(t *testing.T) {
 	tests := []struct {
@@ -314,7 +317,8 @@ func TestBuildSystemPromptIncludesSkills(t *testing.T) {
 		[]byte("---\nname: test-skill\ndescription: A test skill for prompt integration\n---\n# Test"),
 		0o644)
 
-	prompt := BuildSystemPrompt(agentsDir, projectDir)
+	memStore := memory.NewStore(filepath.Join(agentsDir, "memory"))
+	prompt := BuildSystemPrompt(memStore, agentsDir, projectDir)
 	if !strings.Contains(prompt, "<available_skills>") {
 		t.Error("expected skills section in system prompt")
 	}

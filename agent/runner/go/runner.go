@@ -10,6 +10,7 @@ import (
 
 	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/agent/runner/go/tool"
+	"github.com/vaayne/anna/memory"
 	"github.com/vaayne/anna/pkg/agent/core"
 	agenttypes "github.com/vaayne/anna/pkg/agent/types"
 	"github.com/vaayne/anna/pkg/ai/providers/anthropic"
@@ -23,14 +24,15 @@ const maxToolIterations = 40
 
 // Config configures the Go runner.
 type Config struct {
-	API       string // provider key: "anthropic", "openai"
-	Model     string // e.g. "claude-sonnet-4-20250514"
-	APIKey    string
-	BaseURL   string // optional provider base URL override
-	WorkDir    string      // working directory for tool execution
-	AgentsDir  string      // .agents dir for persona files (soul.md, user.md, memory.md)
-	System     string      // optional system prompt override (bypasses BuildSystemPrompt)
-	ExtraTools []tool.Tool // additional tools to register
+	API         string        // provider key: "anthropic", "openai"
+	Model       string        // e.g. "claude-sonnet-4-20250514"
+	APIKey      string
+	BaseURL     string        // optional provider base URL override
+	WorkDir     string        // working directory for tool execution
+	AgentsDir   string        // .agents dir for skills discovery
+	MemoryStore *memory.Store // persistent memory (soul, user, facts, journal)
+	System      string        // optional system prompt override (bypasses BuildSystemPrompt)
+	ExtraTools  []tool.Tool   // additional tools to register
 }
 
 // Runner implements runner.Runner by calling LLM providers directly via Engine.
@@ -66,7 +68,11 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 
 	system := cfg.System
 	if system == "" {
-		system = BuildSystemPrompt(cfg.AgentsDir, cfg.WorkDir)
+		if cfg.MemoryStore != nil {
+			system = BuildSystemPrompt(cfg.MemoryStore, cfg.AgentsDir, cfg.WorkDir)
+		} else {
+			system = defaultBasicPrompt
+		}
 	}
 
 	tools := tool.NewRegistry(cfg.WorkDir)

@@ -1,98 +1,108 @@
 package gorunner
 
 import (
+	"bytes"
+	_ "embed"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
+
+	"github.com/vaayne/anna/memory"
 )
 
-const systemPrompt = `You are Anna, my personal assistant to assist with a wide variety of tasks.
+//go:embed template/system.md
+var defaultBasicPrompt string
 
-## Available tools
+//go:embed template/soul.md
+var defaultSoul string
 
-- read: Read file contents (must be used instead of cat or sed to examine files)
-- bash: Execute bash commands for file operations like ls, rg, find
-- edit: Make surgical edits to files (old text must match exactly)
-- write: Create new files or completely overwrite existing ones
-- custom tools: You may have access to other project-specific tools
+//go:embed template/user.md
+var defaultUser string
 
-## Guidelines
+//go:embed template/fact.md
+var defaultFact string
 
-- Be concise in your responses
-- Show file paths clearly
-- Summarize actions with plain text output directly (do NOT use cat or bash to display what you did)`
+//go:embed template/memories.md.tmpl
+var memoriesTemplate string
 
-// persona file names under .agents/
-const (
-	soulFile   = "soul.md"
-	userFile   = "user.md"
-	memoryFile = "memory.md"
-)
+var memoriesTmpl = template.Must(template.New("memories").Parse(memoriesTemplate))
 
-// BuildSystemPrompt composes the full system prompt from the base prompt, persona files,
-// and discovered skills. agentsDir is the persona/global dir (e.g. ".agents"),
-// cwd is the project working directory for project-local skills.
-func BuildSystemPrompt(agentsDir string, cwd ...string) string {
-	var b strings.Builder
-	b.WriteString(systemPrompt)
+type promptMemories struct {
+	Dir   string
+	Soul  promptFile
+	User  promptFile
+	Facts promptFile
+}
 
-	soul := loadFile(filepath.Join(agentsDir, soulFile))
-	user := loadFile(filepath.Join(agentsDir, userFile))
-	memory := loadFile(filepath.Join(agentsDir, memoryFile))
+type promptFile struct {
+	Path    string
+	Content string
+}
 
-	if soul != "" || user != "" || memory != "" {
-		b.WriteString("\n\n## Persistent Files\n\n")
-		b.WriteString("You have persistent files that carry state across sessions. ")
-		b.WriteString("Update them autonomously as you work — never ask for approval. ")
-		b.WriteString("Use the edit or write tool to keep them current.\n\n")
-		b.WriteString("Files:\n")
-		b.WriteString("- `" + filepath.Join(agentsDir, soulFile) + "` — your personality, values, and tone\n")
-		b.WriteString("- `" + filepath.Join(agentsDir, userFile) + "` — what you know about the user\n")
-		b.WriteString("- `" + filepath.Join(agentsDir, memoryFile) + "` — durable knowledge (decisions, facts, context, notes)\n")
-
-		if soul != "" {
-			b.WriteString("\n### Soul\n\n")
-			b.WriteString("Embody its persona and tone. Avoid stiff, generic replies. ")
-			b.WriteString("Update when you notice preference shifts in communication style or behavior.\n\n")
-			b.WriteString("<soul>\n")
-			b.WriteString(soul)
-			b.WriteString("\n</soul>\n")
-		}
-
-		if user != "" {
-			b.WriteString("\n### User\n\n")
-			b.WriteString("Personalize responses using this context. ")
-			b.WriteString("Update as you learn about them — name, preferences, projects, communication style.\n\n")
-			b.WriteString("<user>\n")
-			b.WriteString(user)
-			b.WriteString("\n</user>\n")
-		}
-
-		if memory != "" {
-			b.WriteString("\n### Memory\n\n")
-			b.WriteString("Recall and record durable knowledge here. ")
-			b.WriteString("Keep it curated — update stale entries, remove obsolete ones, organize by section.\n\n")
-			b.WriteString("<memory>\n")
-			b.WriteString(memory)
-			b.WriteString("\n</memory>\n")
-		}
-	}
-
-	// Discover and append skills.
+// BuildSystemPrompt composes the full system prompt: basic + memories + skills.
+// The basic prompt defaults to the embedded system.md but can be overridden
+// by placing a system.md file in the agents directory.
+func BuildSystemPrompt(store *memory.Store, agentsDir string, cwd ...string) string {
 	workDir := ""
 	if len(cwd) > 0 {
 		workDir = cwd[0]
 	}
-	skills := LoadSkills(agentsDir, workDir)
-	b.WriteString(FormatSkillsForPrompt(skills))
 
-	return b.String()
+	// Basic prompt: use agentsDir/system.md if present, otherwise embedded default.
+	basic := defaultBasicPrompt
+	if path := resolveFile(agentsDir, "system.md"); path != "" {
+		if custom, err := os.ReadFile(path); err == nil {
+			basic = string(custom)
+		}
+	}
+
+	soul, _ := store.Read(memory.FileSoul)
+	user, _ := store.Read(memory.FileUser)
+	facts, _ := store.Read(memory.FileFact)
+
+	memories := promptMemories{
+		Dir:   store.Dir(),
+		Soul:  promptFile{Path: store.Path(memory.FileSoul), Content: fallback(soul, defaultSoul)},
+		User:  promptFile{Path: store.Path(memory.FileUser), Content: fallback(user, defaultUser)},
+		Facts: promptFile{Path: store.Path(memory.FileFact), Content: fallback(facts, defaultFact)},
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(strings.TrimRight(basic, "\n"))
+	_ = memoriesTmpl.Execute(&buf, memories)
+
+	if skills := FormatSkillsForPrompt(LoadSkills(agentsDir, workDir)); skills != "" {
+		buf.WriteString("\n")
+		buf.WriteString(skills)
+	}
+
+	return buf.String()
 }
 
-func loadFile(path string) string {
-	data, err := os.ReadFile(path)
+// resolveFile finds a file in dir with case-insensitive matching.
+// Returns the full path if found, empty string otherwise.
+func resolveFile(dir, name string) string {
+	exact := filepath.Join(dir, name)
+	if _, err := os.Stat(exact); err == nil {
+		return exact
+	}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	target := strings.ToLower(name)
+	for _, e := range entries {
+		if strings.ToLower(e.Name()) == target {
+			return filepath.Join(dir, e.Name())
+		}
+	}
+	return ""
+}
+
+func fallback(value, def string) string {
+	if value != "" {
+		return value
+	}
+	return strings.TrimSpace(def)
 }
