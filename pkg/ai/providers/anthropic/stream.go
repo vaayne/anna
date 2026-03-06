@@ -8,15 +8,18 @@ import (
 )
 
 func consumeStream(sdkStream *ssestream.Stream[sdk.MessageStreamEventUnion], out *stream.ChannelEventStream) {
+	// Track content_block_index → tool_call_id so argument deltas carry the correct ID.
+	blockToID := make(map[int]string)
+
 	for sdkStream.Next() {
 		event := sdkStream.Current()
-		for _, e := range mapEvent(event) {
+		for _, e := range mapEvent(event, blockToID) {
 			out.Emit(e)
 		}
 	}
 }
 
-func mapEvent(event sdk.MessageStreamEventUnion) []types.AssistantEvent {
+func mapEvent(event sdk.MessageStreamEventUnion, blockToID map[int]string) []types.AssistantEvent {
 	switch event.Type {
 	case "message_start":
 		return []types.AssistantEvent{types.EventStart{}}
@@ -24,6 +27,7 @@ func mapEvent(event sdk.MessageStreamEventUnion) []types.AssistantEvent {
 	case "content_block_start":
 		cb := event.ContentBlock
 		if cb.Type == "tool_use" {
+			blockToID[int(event.Index)] = cb.ID
 			return []types.AssistantEvent{types.EventToolCallDelta{ID: cb.ID, Name: cb.Name}}
 		}
 		return nil
@@ -42,7 +46,10 @@ func mapEvent(event sdk.MessageStreamEventUnion) []types.AssistantEvent {
 			}
 		case "input_json_delta":
 			if delta.PartialJSON != "" {
-				events = append(events, types.EventToolCallDelta{Arguments: delta.PartialJSON})
+				events = append(events, types.EventToolCallDelta{
+					ID:        blockToID[int(event.Index)],
+					Arguments: delta.PartialJSON,
+				})
 			}
 		}
 		return events
