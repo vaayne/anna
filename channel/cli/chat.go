@@ -180,20 +180,19 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitNextChunk(m.stream)
 
 	case streamToolMsg:
+		label := msg.tool
+		if msg.input != "" {
+			label += ": " + msg.input
+		}
 		switch msg.status {
 		case "running":
-			label := msg.tool
-			if msg.input != "" {
-				label += ": " + msg.input
-			}
-			m.status = "Running " + msg.tool + "..."
-			m.history.WriteString(toolUseStyle.Render("  ▶ "+label) + "\n")
+			m.status = "Running " + label + "..."
 		case "done":
 			m.status = ""
-			m.history.WriteString(toolDoneStyle.Render("  ✓ done") + "\n")
+			m.history.WriteString(toolDoneStyle.Render("  ✓ "+label) + "\n")
 		case "error":
 			m.status = ""
-			m.history.WriteString(toolErrorStyle.Render("  ✗ error") + "\n")
+			m.history.WriteString(toolErrorStyle.Render("  ✗ "+label) + "\n")
 		}
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
