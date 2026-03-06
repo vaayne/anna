@@ -33,6 +33,15 @@ type Store interface {
 	// List returns all known session IDs.
 	List() ([]string, error)
 
+	// Compact replaces the session file with a compaction summary followed
+	// by the last keepTail raw JSONL message lines. Returns the events that
+	// would be loaded from the compacted file.
+	Compact(sessionID string, summary string, keepTail int) ([]runner.RPCEvent, error)
+
+	// EventCount returns the number of message entries in a session file
+	// without fully parsing them. Returns 0 if the session does not exist.
+	EventCount(sessionID string) (int, error)
+
 	// SaveInfo persists session metadata to the index.
 	SaveInfo(info SessionInfo) error
 	// LoadInfo reads metadata for a single session.
@@ -330,6 +339,136 @@ func (s *FileStore) List() ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+// EventCount returns the number of message entries in a session file.
+func (s *FileStore) EventCount(sessionID string) (int, error) {
+	p := s.resolve(sessionID)
+	if p == "" {
+		return 0, nil
+	}
+
+	f, err := os.Open(p)
+	if err != nil {
+		return 0, fmt.Errorf("open session file: %w", err)
+	}
+	defer f.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var peek struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line, &peek) == nil && peek.Type == "message" {
+			count++
+		}
+	}
+	return count, scanner.Err()
+}
+
+// Compact rewrites the session file: a header, a compaction entry with the
+// given summary, and the last keepTail message lines from the original file.
+// Returns the events that Load() would produce from the compacted file.
+func (s *FileStore) Compact(sessionID string, summary string, keepTail int) ([]runner.RPCEvent, error) {
+	p := s.resolve(sessionID)
+	if p == "" {
+		return nil, fmt.Errorf("session %q not found", sessionID)
+	}
+
+	// Read all raw lines from the original file.
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("read session file: %w", err)
+	}
+
+	rawLines := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	// Separate header and message lines.
+	var headerLine string
+	var messageLines []string
+	for _, line := range rawLines {
+		var peek struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(line), &peek) != nil {
+			continue
+		}
+		if peek.Type == "session" && headerLine == "" {
+			headerLine = line
+		} else if peek.Type == "message" {
+			messageLines = append(messageLines, line)
+		}
+	}
+
+	if headerLine == "" {
+		return nil, fmt.Errorf("session %q: no header found", sessionID)
+	}
+
+	// Build compaction entry.
+	compID := shortID()
+	comp := compactionEntry{
+		Type:    "compaction",
+		ID:      compID,
+		Summary: summary,
+	}
+	compJSON, err := json.Marshal(comp)
+	if err != nil {
+		return nil, fmt.Errorf("marshal compaction: %w", err)
+	}
+
+	// Determine which message lines to keep.
+	var keptLines []string
+	if keepTail > 0 && keepTail < len(messageLines) {
+		keptLines = messageLines[len(messageLines)-keepTail:]
+	} else if keepTail >= len(messageLines) {
+		keptLines = messageLines
+	}
+
+	// Re-chain parentId: compaction → kept[0] → kept[1] → ...
+	parentID := compID
+	var rechained []string
+	for _, line := range keptLines {
+		var entry sessionEntry
+		if json.Unmarshal([]byte(line), &entry) != nil {
+			continue
+		}
+		entry.ParentID = &parentID
+		parentID = entry.ID
+		reJSON, _ := json.Marshal(entry)
+		rechained = append(rechained, string(reJSON))
+	}
+
+	// Write the compacted file (atomic: write temp, rename).
+	var buf strings.Builder
+	buf.WriteString(headerLine)
+	buf.WriteByte('\n')
+	buf.Write(compJSON)
+	buf.WriteByte('\n')
+	for _, line := range rechained {
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+	}
+
+	tmpPath := p + ".compact.tmp"
+	if err := os.WriteFile(tmpPath, []byte(buf.String()), 0o644); err != nil {
+		return nil, fmt.Errorf("write compacted file: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("rename compacted file: %w", err)
+	}
+
+	// Update parentID chain for future appends.
+	s.lastParentID[sessionID] = parentID
+
+	// Reload events from the compacted file.
+	return s.Load(sessionID)
 }
 
 // rpcEventToEntry converts an RPCEvent to a Pi-compatible sessionEntry.

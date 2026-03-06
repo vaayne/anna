@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -485,5 +486,144 @@ func TestListTimestampedFiles(t *testing.T) {
 	}
 	if !found["alpha"] || !found["beta"] {
 		t.Errorf("expected alpha and beta, got %v", ids)
+	}
+}
+
+func TestEventCount(t *testing.T) {
+	s := tempStore(t)
+
+	// No file → 0.
+	count, err := s.EventCount("nope")
+	if err != nil {
+		t.Fatalf("EventCount: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0, got %d", count)
+	}
+
+	// Append some events.
+	events := []runner.RPCEvent{
+		{Type: "user_message", Summary: "hello"},
+		{Type: "message_update", Summary: "hi there"},
+		{Type: "user_message", Summary: "how are you"},
+		{Type: "message_update", Summary: "good"},
+	}
+	if err := s.Append("s1", events...); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	count, err = s.EventCount("s1")
+	if err != nil {
+		t.Fatalf("EventCount: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("expected 4, got %d", count)
+	}
+}
+
+func TestCompact(t *testing.T) {
+	s := tempStore(t)
+
+	// Build a conversation with 10 messages.
+	for i := 0; i < 5; i++ {
+		events := []runner.RPCEvent{
+			{Type: "user_message", Summary: fmt.Sprintf("question %d", i)},
+			{Type: "message_update", Summary: fmt.Sprintf("answer %d", i)},
+		}
+		if err := s.Append("s1", events...); err != nil {
+			t.Fatalf("Append round %d: %v", i, err)
+		}
+	}
+
+	// Verify 10 events before compaction.
+	before, err := s.Load("s1")
+	if err != nil {
+		t.Fatalf("Load before: %v", err)
+	}
+	if len(before) != 10 {
+		t.Fatalf("expected 10 events before compaction, got %d", len(before))
+	}
+
+	// Compact keeping last 4 message lines (2 user + 2 assistant).
+	summary := "We discussed questions 0-4. All were answered."
+	after, err := s.Compact("s1", summary, 4)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Compaction produces: 2 synthetic (from compaction) + events from 4 kept lines.
+	// Each kept message line produces 1 RPCEvent, so 2 + 4 = 6.
+	if len(after) != 6 {
+		t.Fatalf("expected 6 events after compaction, got %d", len(after))
+	}
+
+	// First two events are from compaction.
+	if after[0].Type != runner.RPCEventUserMessage || after[0].Summary != "[Previous conversation summary]" {
+		t.Errorf("event 0: %+v", after[0])
+	}
+	if after[1].Type != runner.RPCEventMessageUpdate || !strings.Contains(after[1].Summary, "questions 0-4") {
+		t.Errorf("event 1: %+v", after[1])
+	}
+
+	// Kept events should be the last 4 messages (question 3, answer 3, question 4, answer 4).
+	if after[2].Summary != "question 3" {
+		t.Errorf("expected 'question 3', got %q", after[2].Summary)
+	}
+	if after[5].Summary != "answer 4" {
+		t.Errorf("expected 'answer 4', got %q", after[5].Summary)
+	}
+
+	// EventCount should reflect the compacted file.
+	count, err := s.EventCount("s1")
+	if err != nil {
+		t.Fatalf("EventCount after compact: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("expected 4 message entries after compaction, got %d", count)
+	}
+
+	// Appending after compaction should still work.
+	if err := s.Append("s1", runner.RPCEvent{Type: "user_message", Summary: "follow-up"}); err != nil {
+		t.Fatalf("Append after compact: %v", err)
+	}
+	final, err := s.Load("s1")
+	if err != nil {
+		t.Fatalf("Load final: %v", err)
+	}
+	if len(final) != 7 {
+		t.Fatalf("expected 7 events after append, got %d", len(final))
+	}
+	if final[6].Summary != "follow-up" {
+		t.Errorf("expected 'follow-up', got %q", final[6].Summary)
+	}
+}
+
+func TestCompactNonexistent(t *testing.T) {
+	s := tempStore(t)
+	_, err := s.Compact("nope", "summary", 5)
+	if err == nil {
+		t.Fatal("expected error for nonexistent session")
+	}
+}
+
+func TestCompactKeepAll(t *testing.T) {
+	s := tempStore(t)
+
+	events := []runner.RPCEvent{
+		{Type: "user_message", Summary: "q1"},
+		{Type: "message_update", Summary: "a1"},
+	}
+	if err := s.Append("s1", events...); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// keepTail >= message count → keeps everything.
+	after, err := s.Compact("s1", "summary", 100)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	// 2 synthetic + 2 kept = 4
+	if len(after) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(after))
 	}
 }
