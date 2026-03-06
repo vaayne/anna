@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/vaayne/anna/agent/runner"
+	"github.com/vaayne/anna/agent/store"
 )
 
 // Pool manages a set of sessions, each with its own history and runner.
@@ -16,6 +18,7 @@ import (
 type Pool struct {
 	factory     runner.NewRunnerFunc
 	sessions    map[string]*Session
+	store       store.Store
 	mu          sync.Mutex
 	idleTimeout time.Duration
 	log         *slog.Logger
@@ -28,6 +31,13 @@ type PoolOption func(*Pool)
 func WithIdleTimeout(d time.Duration) PoolOption {
 	return func(p *Pool) {
 		p.idleTimeout = d
+	}
+}
+
+// WithStore sets the persistent store for session history.
+func WithStore(s store.Store) PoolOption {
+	return func(p *Pool) {
+		p.store = s
 	}
 }
 
@@ -63,25 +73,38 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 	p.log.Debug("chat started", "session_id", sessionID, "history_len", len(sess.Events), "message_len", len(message))
 
 	// Store user message so stateless runners can reconstruct the conversation.
+	userEvt := runner.RPCEvent{Type: "user_message", Summary: message}
 	p.mu.Lock()
-	sess.Events = append(sess.Events, runner.RPCEvent{Type: "user_message", Summary: message})
+	sess.Events = append(sess.Events, userEvt)
 	p.mu.Unlock()
+	p.persist(sessionID, userEvt)
 
 	stream := r.Chat(ctx, sess.Events, message)
 
 	go func() {
 		defer close(out)
+		var textBuf strings.Builder
 		for evt := range stream {
 			if evt.Err != nil {
+				// Persist any buffered text before returning on error.
+				if textBuf.Len() > 0 {
+					p.persist(sessionID, runner.AssistantMessageToRPCEvent(textBuf.String()))
+				}
 				out <- evt
 				return
 			}
 
 			// Store events emitted by runners (tool calls, tool results, text deltas).
 			if evt.Store != nil {
+				// Flush buffered text before storing a non-text event.
+				if textBuf.Len() > 0 {
+					p.persist(sessionID, runner.AssistantMessageToRPCEvent(textBuf.String()))
+					textBuf.Reset()
+				}
 				p.mu.Lock()
 				sess.Events = append(sess.Events, *evt.Store)
 				p.mu.Unlock()
+				p.persist(sessionID, *evt.Store)
 			}
 
 			// Tool-use events pass through without history storage.
@@ -90,15 +113,20 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 				continue
 			}
 
-			// Text delta: convert to RPCEvent and store, then forward.
+			// Text delta: store in memory for the runner, buffer for persistence.
 			if evt.Text != "" {
 				rpcEvt := runner.TextDeltaToRPCEvent(evt.Text)
 				p.mu.Lock()
 				sess.Events = append(sess.Events, rpcEvt)
 				p.mu.Unlock()
+				textBuf.WriteString(evt.Text)
 			}
 
 			out <- evt
+		}
+		// Stream ended normally — persist the complete assistant message.
+		if textBuf.Len() > 0 {
+			p.persist(sessionID, runner.AssistantMessageToRPCEvent(textBuf.String()))
 		}
 	}()
 
@@ -111,11 +139,20 @@ func (p *Pool) Reset(sessionID string) error {
 	sess, ok := p.sessions[sessionID]
 	if !ok {
 		p.mu.Unlock()
+		if p.store != nil {
+			return p.store.Delete(sessionID)
+		}
 		return nil
 	}
 	r := sess.Runner
 	delete(p.sessions, sessionID)
 	p.mu.Unlock()
+
+	if p.store != nil {
+		if err := p.store.Delete(sessionID); err != nil {
+			p.log.Warn("failed to delete persisted session", "session_id", sessionID, "error", err)
+		}
+	}
 
 	if closer, ok := r.(io.Closer); ok {
 		return closer.Close()
@@ -167,6 +204,7 @@ func (p *Pool) StartReaper(ctx context.Context) {
 }
 
 // getOrCreateRunner returns the session and its runner, creating both if needed.
+// If the session is not in memory but exists on disk, its history is restored.
 func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Session, runner.Runner, error) {
 	p.mu.Lock()
 	sess, ok := p.sessions[sessionID]
@@ -187,6 +225,19 @@ func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Sessio
 	if !ok {
 		sess = &Session{}
 		p.sessions[sessionID] = sess
+
+		// Restore history from disk if available.
+		if p.store != nil {
+			p.mu.Unlock()
+			events, err := p.store.Load(sessionID)
+			p.mu.Lock()
+			if err != nil {
+				p.log.Warn("failed to load persisted session", "session_id", sessionID, "error", err)
+			} else if len(events) > 0 {
+				sess.Events = events
+				p.log.Info("restored session from disk", "session_id", sessionID, "events", len(events))
+			}
+		}
 	}
 	p.mu.Unlock()
 
@@ -201,6 +252,16 @@ func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Sessio
 
 	p.log.Info("created runner", "session_id", sessionID)
 	return sess, r, nil
+}
+
+// persist appends events to the store if one is configured.
+func (p *Pool) persist(sessionID string, events ...runner.RPCEvent) {
+	if p.store == nil {
+		return
+	}
+	if err := p.store.Append(sessionID, events...); err != nil {
+		p.log.Warn("failed to persist event", "session_id", sessionID, "error", err)
+	}
 }
 
 // reap checks all sessions and closes runners that are idle or dead.

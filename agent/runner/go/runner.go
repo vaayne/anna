@@ -252,7 +252,9 @@ func convertHistory(events []runner.RPCEvent) []aitypes.Message {
 			messages = append(messages, aitypes.UserMessage{Content: evt.Summary})
 
 		case runner.RPCEventMessageUpdate:
-			if len(evt.AssistantMessageEvent) > 0 {
+			if evt.Summary != "" {
+				textBuf += evt.Summary
+			} else if len(evt.AssistantMessageEvent) > 0 {
 				var ame runner.AssistantMessageEvent
 				if json.Unmarshal(evt.AssistantMessageEvent, &ame) == nil && ame.Type == "text_delta" {
 					textBuf += ame.Delta

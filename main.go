@@ -13,6 +13,7 @@ import (
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
+	"github.com/vaayne/anna/agent/store"
 	gorunner "github.com/vaayne/anna/agent/runner/go"
 	"github.com/vaayne/anna/agent/runner/pi"
 	"github.com/vaayne/anna/channel"
@@ -110,7 +111,19 @@ func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create runner factory: %w", err)
 	}
-	pool := agent.NewPool(factory, agent.WithIdleTimeout(idleTimeout))
+
+	opts := []agent.PoolOption{agent.WithIdleTimeout(idleTimeout)}
+	if cfg.Sessions != "" {
+		cwd, _ := os.Getwd()
+		s, err := store.NewFileStore(cfg.Sessions, cwd)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("create session store: %w", err)
+		}
+		opts = append(opts, agent.WithStore(s))
+		slog.Info("session persistence enabled", "dir", cfg.Sessions)
+	}
+
+	pool := agent.NewPool(factory, opts...)
 	go pool.StartReaper(ctx)
 
 	return ctx, cfg, pool, nil

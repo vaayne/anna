@@ -100,6 +100,14 @@ func TextDeltaToRPCEvent(text string) RPCEvent {
 	}
 }
 
+// AssistantMessageToRPCEvent converts a complete assistant message to an RPCEvent.
+func AssistantMessageToRPCEvent(text string) RPCEvent {
+	return RPCEvent{
+		Type:    RPCEventMessageUpdate,
+		Summary: text,
+	}
+}
+
 // ToolCallToRPCEvent converts a tool call to an RPCEvent for history storage.
 func ToolCallToRPCEvent(call aitypes.ToolCall) RPCEvent {
 	argsJSON, _ := json.Marshal(call.Arguments)
