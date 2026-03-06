@@ -22,6 +22,7 @@ type Service struct {
 	scheduler gocron.Scheduler
 	onJob     OnJobFunc
 	dataPath  string // directory containing jobs.json
+	ctx       context.Context // lifecycle context from Start
 	mu        sync.Mutex
 	jobs      map[string]Job
 	gids      map[string]uuid.UUID // job ID -> gocron job UUID
@@ -58,6 +59,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
+	s.ctx = ctx
 	for _, j := range jobs {
 		s.jobs[j.ID] = j
 		if j.Enabled {
@@ -112,7 +114,7 @@ func (s *Service) AddJob(name, message string, sched Schedule) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.scheduleJob(context.Background(), job); err != nil {
+	if err := s.scheduleJob(s.ctx, job); err != nil {
 		return Job{}, fmt.Errorf("schedule job: %w", err)
 	}
 
@@ -155,10 +157,13 @@ func (s *Service) RemoveJob(id string) error {
 
 	delete(s.jobs, id)
 	if err := s.saveJobsLocked(); err != nil {
-		// Roll back: restore in-memory state so retry works.
+		// Roll back: restore in-memory state and re-schedule so retry works.
 		s.jobs[id] = job
 		if hadGID {
-			s.gids[id] = removedGID
+			if schedErr := s.scheduleJob(s.ctx, job); schedErr != nil {
+				s.log.Warn("failed to re-schedule job during rollback", "id", id, "error", schedErr)
+				s.gids[id] = removedGID // keep stale GID as best-effort
+			}
 		}
 		return fmt.Errorf("persist after remove: %w", err)
 	}
