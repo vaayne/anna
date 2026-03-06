@@ -62,6 +62,11 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 
 	p.log.Debug("chat started", "session_id", sessionID, "history_len", len(sess.Events), "message_len", len(message))
 
+	// Store user message so stateless runners can reconstruct the conversation.
+	p.mu.Lock()
+	sess.Events = append(sess.Events, runner.RPCEvent{Type: "user_message", Summary: message})
+	p.mu.Unlock()
+
 	stream := r.Chat(ctx, sess.Events, message)
 
 	go func() {

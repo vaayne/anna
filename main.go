@@ -13,6 +13,7 @@ import (
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
+	gorunner "github.com/vaayne/anna/agent/runner/go"
 	"github.com/vaayne/anna/agent/runner/pi"
 	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
@@ -99,13 +100,35 @@ func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error
 	_ = cancel // cancel is deferred via the caller's lifecycle
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
-	factory := func(ctx context.Context) (runner.Runner, error) {
-		return pi.New(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
+	factory, err := newRunnerFactory(cfg)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("create runner factory: %w", err)
 	}
 	pool := agent.NewPool(factory, agent.WithIdleTimeout(idleTimeout))
 	go pool.StartReaper(ctx)
 
 	return ctx, cfg, pool, nil
+}
+
+func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
+	switch cfg.Runner.Type {
+	case "process":
+		return func(ctx context.Context) (runner.Runner, error) {
+			return pi.New(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
+		}, nil
+	case "go":
+		return func(ctx context.Context) (runner.Runner, error) {
+			return gorunner.New(ctx, gorunner.Config{
+				API:     cfg.Runner.Go.API,
+				Model:   cfg.Runner.Go.Model,
+				APIKey:  cfg.Runner.Go.APIKey,
+				System:  cfg.Runner.Go.System,
+				BaseURL: cfg.Runner.Go.BaseURL,
+			})
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown runner type: %q", cfg.Runner.Type)
+	}
 }
 
 func setupLogFile() error {
