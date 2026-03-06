@@ -516,7 +516,7 @@ func (m chatModel) View() string {
 	}
 
 	// Help bar: commands left, status right
-	helpText := " /new · /model · /quit · ctrl+c"
+	helpText := " /new · /model · /quit · ctrl+c · pgup/pgdn scroll"
 	if m.picking {
 		helpText = " Type to filter · ↑/↓ navigate · Enter select · Esc cancel"
 	} else if m.completing {

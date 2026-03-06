@@ -51,7 +51,7 @@ func RunChat(ctx context.Context, pool *agent.Pool, provider, model string, mode
 		opts[i] = modelOption{provider: m.Provider, model: m.Model}
 	}
 	m := newChatModel(ctx, pool, provider, model, opts, switchFn)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
