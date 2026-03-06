@@ -21,6 +21,9 @@ import (
 // ModelOption re-exports channel.ModelOption for use by callers.
 type ModelOption = channel.ModelOption
 
+// ModelListFunc re-exports channel.ModelListFunc for use by callers.
+type ModelListFunc = channel.ModelListFunc
+
 // ModelSwitchFunc re-exports channel.ModelSwitchFunc for use by callers.
 
 const telegramMaxMessageLen = 4000
@@ -35,7 +38,7 @@ var log = slog.With("component", "telegram")
 
 // Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled.
-func Run(ctx context.Context, token string, pool *agent.Pool, models []ModelOption, switchFn channel.ModelSwitchFunc) error {
+func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFunc, switchFn channel.ModelSwitchFunc) error {
 	// Track per-chat active model for display purposes.
 	chatModels := make(map[int64]ModelOption)
 	bot, err := tele.NewBot(tele.Settings{
@@ -60,6 +63,7 @@ func Run(ctx context.Context, token string, pool *agent.Pool, models []ModelOpti
 
 	bot.Handle("/model", func(c tele.Context) error {
 		args := strings.TrimSpace(c.Message().Payload)
+		models := listFn()
 
 		// No argument: list available models.
 		if args == "" {

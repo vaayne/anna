@@ -57,6 +57,7 @@ type chatModel struct {
 	height      int
 	ready       bool
 	switchModel channel.ModelSwitchFunc
+	listModels  channel.ModelListFunc
 
 	// Slash command completion
 	completing     bool
@@ -79,7 +80,7 @@ type chatModel struct {
 	modelFilter    string
 }
 
-func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string, models []modelOption, switchFn channel.ModelSwitchFunc) chatModel {
+func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string, listFn channel.ModelListFunc, switchFn channel.ModelSwitchFunc) chatModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message... (Enter to send, Alt+Enter for newline)"
 	ta.Focus()
@@ -95,7 +96,7 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 		provider:    provider,
 		model:       model,
 		history:     &strings.Builder{},
-		models:      models,
+		listModels:  listFn,
 		switchModel: switchFn,
 		currentRaw:  &strings.Builder{},
 	}
@@ -365,6 +366,7 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 		m.viewport.GotoBottom()
 		return nil
 	case "/model":
+		m.models = toModelOptions(m.listModels())
 		if len(m.models) == 0 {
 			m.history.WriteString(systemStyle.Render("[no models configured]") + "\n\n")
 			m.viewport.SetContent(m.history.String())

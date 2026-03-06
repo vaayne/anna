@@ -3,12 +3,23 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/vaayne/anna/channel"
 )
 
 // modelOption represents a selectable provider/model combination.
 type modelOption struct {
 	provider string
 	model    string
+}
+
+// toModelOptions converts channel.ModelOption slice to internal modelOption slice.
+func toModelOptions(opts []channel.ModelOption) []modelOption {
+	result := make([]modelOption, len(opts))
+	for i, m := range opts {
+		result[i] = modelOption{provider: m.Provider, model: m.Model}
+	}
+	return result
 }
 
 func filterModels(models []modelOption, query string) []modelOption {

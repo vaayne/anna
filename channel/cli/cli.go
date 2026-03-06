@@ -16,6 +16,9 @@ import (
 // ModelOption re-exports channel.ModelOption for use by callers.
 type ModelOption = channel.ModelOption
 
+// ModelListFunc re-exports channel.ModelListFunc for use by callers.
+type ModelListFunc = channel.ModelListFunc
+
 // ModelSwitchFunc re-exports channel.ModelSwitchFunc for use by callers.
 type ModelSwitchFunc = channel.ModelSwitchFunc
 
@@ -45,12 +48,8 @@ func RunStream(ctx context.Context, pool *agent.Pool) error {
 }
 
 // RunChat starts an interactive terminal chat session using Bubble Tea.
-func RunChat(ctx context.Context, pool *agent.Pool, provider, model string, models []ModelOption, switchFn ModelSwitchFunc) error {
-	opts := make([]modelOption, len(models))
-	for i, m := range models {
-		opts[i] = modelOption{provider: m.Provider, model: m.Model}
-	}
-	m := newChatModel(ctx, pool, provider, model, opts, switchFn)
+func RunChat(ctx context.Context, pool *agent.Pool, provider, model string, listFn ModelListFunc, switchFn ModelSwitchFunc) error {
+	m := newChatModel(ctx, pool, provider, model, listFn, switchFn)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
