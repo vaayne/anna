@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -33,9 +34,12 @@ func TestStore_Write_Read(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
-	// No tmp file left behind.
-	if _, err := os.Stat(s.Path(FileFact) + ".tmp"); !os.IsNotExist(err) {
-		t.Fatal("tmp file should not exist after atomic write")
+	// No tmp files left behind.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("tmp file %q should not exist after atomic write", e.Name())
+		}
 	}
 }
 

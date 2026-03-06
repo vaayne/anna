@@ -67,8 +67,12 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 	reg.Register(openairesponse.New(openairesponse.Config{BaseURL: cfg.BaseURL}))
 
 	system := cfg.System
-	if system == "" && cfg.MemoryStore != nil {
-		system = BuildSystemPrompt(cfg.MemoryStore, cfg.AgentsDir, cfg.WorkDir)
+	if system == "" {
+		if cfg.MemoryStore != nil {
+			system = BuildSystemPrompt(cfg.MemoryStore, cfg.AgentsDir, cfg.WorkDir)
+		} else {
+			system = defaultBasicPrompt
+		}
 	}
 
 	tools := tool.NewRegistry(cfg.WorkDir)
