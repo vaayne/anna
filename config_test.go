@@ -14,11 +14,14 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Pi.Binary != "pi" {
-		t.Errorf("Pi.Binary = %q, want %q", cfg.Pi.Binary, "pi")
+	if cfg.Runner.Type != "process" {
+		t.Errorf("Runner.Type = %q, want %q", cfg.Runner.Type, "process")
 	}
-	if cfg.Pi.IdleTimeout != 10 {
-		t.Errorf("Pi.IdleTimeout = %d, want 10", cfg.Pi.IdleTimeout)
+	if cfg.Runner.Process.Binary != "pi" {
+		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "pi")
+	}
+	if cfg.Runner.IdleTimeout != 10 {
+		t.Errorf("Runner.IdleTimeout = %d, want 10", cfg.Runner.IdleTimeout)
 	}
 	if cfg.Sessions != filepath.Join(dir, "workspace", "sessions") {
 		t.Errorf("Sessions = %q, want %q", cfg.Sessions, filepath.Join(dir, "workspace", "sessions"))
@@ -31,8 +34,10 @@ func TestLoadConfigDefaults(t *testing.T) {
 func TestLoadConfigFromFile(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `
-pi:
-  binary: "/usr/local/bin/pi"
+runner:
+  type: process
+  process:
+    binary: "/usr/local/bin/pi"
   idle_timeout: 5
 telegram:
   token: "test-token-123"
@@ -47,11 +52,11 @@ sessions: "/tmp/sessions"
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Pi.Binary != "/usr/local/bin/pi" {
-		t.Errorf("Pi.Binary = %q, want %q", cfg.Pi.Binary, "/usr/local/bin/pi")
+	if cfg.Runner.Process.Binary != "/usr/local/bin/pi" {
+		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "/usr/local/bin/pi")
 	}
-	if cfg.Pi.IdleTimeout != 5 {
-		t.Errorf("Pi.IdleTimeout = %d, want 5", cfg.Pi.IdleTimeout)
+	if cfg.Runner.IdleTimeout != 5 {
+		t.Errorf("Runner.IdleTimeout = %d, want 5", cfg.Runner.IdleTimeout)
 	}
 	if cfg.Telegram.Token != "test-token-123" {
 		t.Errorf("Telegram.Token = %q, want %q", cfg.Telegram.Token, "test-token-123")
@@ -75,8 +80,8 @@ func TestLoadConfigEnvOverrides(t *testing.T) {
 	if cfg.Telegram.Token != "env-token" {
 		t.Errorf("Telegram.Token = %q, want %q", cfg.Telegram.Token, "env-token")
 	}
-	if cfg.Pi.Binary != "/env/pi" {
-		t.Errorf("Pi.Binary = %q, want %q", cfg.Pi.Binary, "/env/pi")
+	if cfg.Runner.Process.Binary != "/env/pi" {
+		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "/env/pi")
 	}
 }
 
@@ -85,8 +90,9 @@ func TestLoadConfigEnvOverridesFile(t *testing.T) {
 	yaml := `
 telegram:
   token: "file-token"
-pi:
-  binary: "file-pi"
+runner:
+  process:
+    binary: "file-pi"
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -105,8 +111,8 @@ pi:
 		t.Errorf("Telegram.Token = %q, want %q", cfg.Telegram.Token, "env-token")
 	}
 	// Empty env var does NOT override.
-	if cfg.Pi.Binary != "file-pi" {
-		t.Errorf("Pi.Binary = %q, want %q", cfg.Pi.Binary, "file-pi")
+	if cfg.Runner.Process.Binary != "file-pi" {
+		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "file-pi")
 	}
 }
 
@@ -154,13 +160,12 @@ func TestConfigPath(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
-	// LoadConfig uses the real .agents/ dir. Just verify it doesn't error.
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.Pi.Binary == "" {
-		t.Error("Pi.Binary should have a default")
+	if cfg.Runner.Process.Binary == "" {
+		t.Error("Runner.Process.Binary should have a default")
 	}
 }
 

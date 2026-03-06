@@ -29,7 +29,7 @@ var log = slog.With("component", "telegram")
 
 // Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled.
-func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
+func Run(ctx context.Context, token string, pool *agent.Pool) error {
 	bot, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
@@ -42,11 +42,11 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 
 	bot.Handle("/new", func(c tele.Context) error {
 		sessionID := strconv.FormatInt(c.Chat().ID, 10)
-		if err := sm.NewSession(sessionID); err != nil {
-			log.Error("new session failed", "session_id", sessionID, "error", err)
+		if err := pool.Reset(sessionID); err != nil {
+			log.Error("reset session failed", "session_id", sessionID, "error", err)
 			return c.Send(fmt.Sprintf("Error creating new session: %v", err))
 		}
-		log.Info("new session created", "session_id", sessionID)
+		log.Info("session reset", "session_id", sessionID)
 		return c.Send("New session started.")
 	})
 
@@ -59,13 +59,7 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 
 		_ = c.Notify(tele.Typing)
 
-		ag, err := sm.GetOrCreate(ctx, sessionID)
-		if err != nil {
-			log.Error("get or create agent failed", "session_id", sessionID, "error", err)
-			return c.Send(fmt.Sprintf("Error starting agent: %v", err))
-		}
-
-		response, streamErr := streamResponse(bot, c, ag, ctx, text)
+		response, streamErr := streamResponse(bot, c, pool, ctx, sessionID, text)
 
 		if streamErr != nil {
 			log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
@@ -101,13 +95,13 @@ func Run(ctx context.Context, token string, sm agent.SessionProvider) error {
 // message in place as tokens arrive. It returns the final accumulated text
 // and any stream error. The sent message (if any) is deleted before returning
 // so the caller can send the final rendered version.
-func streamResponse(bot *tele.Bot, c tele.Context, ag *agent.Agent, ctx context.Context, prompt string) (string, error) {
+func streamResponse(bot *tele.Bot, c tele.Context, pool *agent.Pool, ctx context.Context, sessionID, prompt string) (string, error) {
 	var sb strings.Builder
 	var sentMsg *tele.Message
 	var streamErr error
 	lastEdit := time.Time{}
 
-	for evt := range ag.SendPrompt(ctx, prompt) {
+	for evt := range pool.Chat(ctx, sessionID, prompt) {
 		if evt.Err != nil {
 			streamErr = evt.Err
 			break

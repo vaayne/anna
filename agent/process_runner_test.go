@@ -22,49 +22,48 @@ func writeMockBinary(t *testing.T) string {
 	return bin
 }
 
-func TestNewAgent(t *testing.T) {
-	ag := NewAgent("/usr/bin/echo", "", "/tmp/session")
-	if ag.binary != "/usr/bin/echo" {
-		t.Errorf("binary = %q, want %q", ag.binary, "/usr/bin/echo")
+func TestNewProcessRunner(t *testing.T) {
+	bin := writeMockBinary(t)
+	ctx := context.Background()
+
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	if ag.sessionFile != "/tmp/session" {
-		t.Errorf("sessionFile = %q, want %q", ag.sessionFile, "/tmp/session")
+	defer r.Close()
+
+	if r.binary != bin {
+		t.Errorf("binary = %q, want %q", r.binary, bin)
 	}
-	if !ag.Alive() {
-		t.Error("new agent should report Alive()")
+	if !r.Alive() {
+		t.Error("new runner should report Alive()")
 	}
 }
 
-func TestAgentStartWithMock(t *testing.T) {
+func TestProcessRunnerChat(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
+	ctx := context.Background()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	defer ag.Stop()
-
-	if !ag.Alive() {
-		t.Error("agent should be alive after start")
-	}
+	defer r.Close()
 
 	// Write a JSON event to stdin (cat echoes it back to stdout).
 	evt := RPCEvent{Type: "agent_end"}
 	data, _ := json.Marshal(evt)
 	data = append(data, '\n')
 
-	ag.mu.Lock()
-	_, err := ag.stdin.Write(data)
-	ag.mu.Unlock()
-	if err != nil {
-		t.Fatalf("write to stdin: %v", err)
+	r.mu.Lock()
+	_, writeErr := r.stdin.Write(data)
+	r.mu.Unlock()
+	if writeErr != nil {
+		t.Fatalf("write to stdin: %v", writeErr)
 	}
 
 	select {
-	case received := <-ag.events:
+	case received := <-r.events:
 		if received.Type != "agent_end" {
 			t.Errorf("event type = %q, want %q", received.Type, "agent_end")
 		}
@@ -73,42 +72,41 @@ func TestAgentStartWithMock(t *testing.T) {
 	}
 }
 
-func TestAgentStartInvalidBinary(t *testing.T) {
-	ag := NewAgent("/nonexistent/binary", "", t.TempDir())
-	err := ag.Start(context.Background())
+func TestProcessRunnerInvalidBinary(t *testing.T) {
+	_, err := NewProcessRunner(context.Background(), "/nonexistent/binary", "")
 	if err == nil {
 		t.Fatal("expected error for invalid binary")
 	}
 }
 
-func TestAgentStop(t *testing.T) {
+func TestProcessRunnerClose(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
 
-	if err := ag.Stop(); err != nil {
-		t.Fatalf("Stop: %v", err)
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	if ag.Alive() {
-		t.Error("agent should not be alive after stop")
+	if r.Alive() {
+		t.Error("runner should not be alive after Close")
 	}
 }
 
-func TestAgentSendPromptStreamEvents(t *testing.T) {
+func TestProcessRunnerChatStreamEvents(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	defer ag.Stop()
+	defer r.Close()
 
 	// Simulate Pi events by writing to cat's stdin (which echoes to stdout).
 	go func() {
@@ -128,15 +126,15 @@ func TestAgentSendPromptStreamEvents(t *testing.T) {
 		for _, evt := range events {
 			data, _ := json.Marshal(evt)
 			data = append(data, '\n')
-			ag.mu.Lock()
-			ag.stdin.Write(data)
-			ag.mu.Unlock()
+			r.mu.Lock()
+			r.stdin.Write(data)
+			r.mu.Unlock()
 		}
 	}()
 
 	time.Sleep(100 * time.Millisecond)
 
-	stream := ag.SendPrompt(ctx, "test")
+	stream := r.Chat(ctx, nil, "test")
 
 	var collected string
 	for evt := range stream {
@@ -151,27 +149,27 @@ func TestAgentSendPromptStreamEvents(t *testing.T) {
 	}
 }
 
-func TestAgentSendPromptErrorEvent(t *testing.T) {
+func TestProcessRunnerChatErrorEvent(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	defer ag.Stop()
+	defer r.Close()
 
 	go func() {
 		evt := RPCEvent{Type: "error", Error: "something went wrong"}
 		data, _ := json.Marshal(evt)
 		data = append(data, '\n')
-		ag.mu.Lock()
-		ag.stdin.Write(data)
-		ag.mu.Unlock()
+		r.mu.Lock()
+		r.stdin.Write(data)
+		r.mu.Unlock()
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	stream := ag.SendPrompt(ctx, "test")
+	stream := r.Chat(ctx, nil, "test")
 
 	var gotErr error
 	for evt := range stream {
@@ -189,58 +187,58 @@ func TestAgentSendPromptErrorEvent(t *testing.T) {
 	}
 }
 
-func TestAgentLastActivity(t *testing.T) {
+func TestProcessRunnerLastActivity(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
-	before := ag.LastActivity()
-
-	time.Sleep(10 * time.Millisecond)
-
 	ctx := context.Background()
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	defer ag.Stop()
+	defer r.Close()
+
+	before := r.LastActivity()
+	time.Sleep(10 * time.Millisecond)
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		evt := RPCEvent{Type: "agent_end"}
 		data, _ := json.Marshal(evt)
 		data = append(data, '\n')
-		ag.mu.Lock()
-		ag.stdin.Write(data)
-		ag.mu.Unlock()
+		r.mu.Lock()
+		r.stdin.Write(data)
+		r.mu.Unlock()
 	}()
 
-	_ = ag.SendPrompt(ctx, "test")
-	after := ag.LastActivity()
+	_ = r.Chat(ctx, nil, "test")
+	after := r.LastActivity()
 
 	if !after.After(before) {
-		t.Error("LastActivity should be updated after SendPrompt")
+		t.Error("LastActivity should be updated after Chat")
 	}
 }
 
-func TestAgentResponseRouting(t *testing.T) {
+func TestProcessRunnerResponseRouting(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	defer ag.Stop()
+	defer r.Close()
 
 	ch := make(chan *RPCEvent, 1)
-	ag.pendingMu.Lock()
-	ag.pending["42"] = ch
-	ag.pendingMu.Unlock()
+	r.pendingMu.Lock()
+	r.pending["42"] = ch
+	r.pendingMu.Unlock()
 
 	evt := RPCEvent{Type: "response", ID: "42"}
 	data, _ := json.Marshal(evt)
 	data = append(data, '\n')
-	ag.mu.Lock()
-	ag.stdin.Write(data)
-	ag.mu.Unlock()
+	r.mu.Lock()
+	r.stdin.Write(data)
+	r.mu.Unlock()
 
 	select {
 	case resp := <-ch:
@@ -252,18 +250,18 @@ func TestAgentResponseRouting(t *testing.T) {
 	}
 }
 
-func TestAgentSendPromptAfterStop(t *testing.T) {
+func TestProcessRunnerChatAfterClose(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
 	ctx := context.Background()
 
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	ag.Stop()
+	r.Close()
 	time.Sleep(100 * time.Millisecond)
 
-	stream := ag.SendPrompt(ctx, "test")
+	stream := r.Chat(ctx, nil, "test")
 	var gotErr error
 	for evt := range stream {
 		if evt.Err != nil {
@@ -272,19 +270,19 @@ func TestAgentSendPromptAfterStop(t *testing.T) {
 		}
 	}
 	if gotErr == nil {
-		t.Fatal("expected error when sending to stopped agent")
+		t.Fatal("expected error when chatting with closed runner")
 	}
 }
 
-func TestAgentSendPromptContextCancel(t *testing.T) {
+func TestProcessRunnerChatContextCancel(t *testing.T) {
 	bin := writeMockBinary(t)
-	ag := NewAgent(bin, "", t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := ag.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
+	r, err := NewProcessRunner(ctx, bin, "")
+	if err != nil {
+		t.Fatalf("NewProcessRunner: %v", err)
 	}
-	defer ag.Stop()
+	defer r.Close()
 
 	// Cancel context after starting to read.
 	go func() {
@@ -292,7 +290,7 @@ func TestAgentSendPromptContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	stream := ag.SendPrompt(ctx, "test")
+	stream := r.Chat(ctx, nil, "test")
 	var gotErr error
 	for evt := range stream {
 		if evt.Err != nil {

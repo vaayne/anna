@@ -15,7 +15,7 @@ import (
 const defaultSessionId = "session"
 
 // RunStream reads all of stdin as a prompt, sends it to the agent, and streams the response to stdout.
-func RunStream(ctx context.Context, sm agent.SessionProvider) error {
+func RunStream(ctx context.Context, pool *agent.Pool) error {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("reading stdin: %w", err)
@@ -26,12 +26,7 @@ func RunStream(ctx context.Context, sm agent.SessionProvider) error {
 		return fmt.Errorf("empty prompt")
 	}
 
-	ag, err := sm.GetOrCreate(ctx, defaultSessionId)
-	if err != nil {
-		return fmt.Errorf("failed to get agent: %w", err)
-	}
-
-	stream := ag.SendPrompt(ctx, prompt)
+	stream := pool.Chat(ctx, defaultSessionId, prompt)
 	for evt := range stream {
 		if evt.Err != nil {
 			return evt.Err
@@ -43,8 +38,8 @@ func RunStream(ctx context.Context, sm agent.SessionProvider) error {
 }
 
 // RunChat starts an interactive terminal chat session using Bubble Tea.
-func RunChat(ctx context.Context, sm agent.SessionProvider) error {
-	m := newChatModel(ctx, sm)
+func RunChat(ctx context.Context, pool *agent.Pool) error {
+	m := newChatModel(ctx, pool)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
