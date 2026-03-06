@@ -28,5 +28,23 @@ func buildParams(model types.Model, ctx types.Context, opts types.StreamOptions)
 		params.MaxOutputTokens = param.NewOpt(int64(*opts.MaxTokens))
 	}
 
+	if len(ctx.Tools) > 0 {
+		params.Tools = convertTools(ctx.Tools)
+	}
+
 	return params
+}
+
+func convertTools(tools []types.ToolDefinition) []responses.ToolUnionParam {
+	out := make([]responses.ToolUnionParam, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, responses.ToolUnionParam{
+			OfFunction: &responses.FunctionToolParam{
+				Name:        t.Name,
+				Description: param.NewOpt(t.Description),
+				Parameters:  t.InputSchema,
+			},
+		})
+	}
+	return out
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -360,6 +361,103 @@ func TestLastActivityUpdatesOnChat(t *testing.T) {
 
 	if r.LastActivity().Before(before) {
 		t.Errorf("LastActivity %v should be after %v", r.LastActivity(), before)
+	}
+}
+
+// sequentialFakeProvider returns different event sequences on successive Stream calls.
+type sequentialFakeProvider struct {
+	api    string
+	rounds [][]aitypes.AssistantEvent
+	call   int
+	mu     sync.Mutex
+}
+
+func (f *sequentialFakeProvider) API() string { return f.api }
+
+func (f *sequentialFakeProvider) Stream(_ aitypes.Model, _ aitypes.Context, _ aitypes.StreamOptions) (aistream.AssistantEventStream, error) {
+	f.mu.Lock()
+	idx := f.call
+	f.call++
+	f.mu.Unlock()
+
+	events := f.rounds[idx]
+	out := aistream.NewChannelEventStream(len(events) + 1)
+	go func() {
+		for _, evt := range events {
+			out.Emit(evt)
+		}
+		out.Finish(nil)
+	}()
+	return out, nil
+}
+
+func (f *sequentialFakeProvider) StreamSimple(_ aitypes.Model, _ aitypes.Context, opts aitypes.SimpleStreamOptions) (aistream.AssistantEventStream, error) {
+	return f.Stream(aitypes.Model{}, aitypes.Context{}, opts.StreamOptions)
+}
+
+func TestChatToolUseLoop(t *testing.T) {
+	// Round 1: model calls "read" tool.
+	// Round 2: model responds with text.
+	dir := t.TempDir()
+	fp := &sequentialFakeProvider{
+		api: "anthropic",
+		rounds: [][]aitypes.AssistantEvent{
+			{
+				aitypes.EventToolCallDelta{ID: "tc_1", Name: "bash"},
+				aitypes.EventToolCallDelta{Arguments: `{"command": "echo hello"}`},
+				aitypes.EventStop{Reason: aitypes.StopReasonToolUse},
+			},
+			{
+				aitypes.EventTextDelta{Text: "The result is hello"},
+				aitypes.EventStop{Reason: aitypes.StopReasonStop},
+			},
+		},
+	}
+
+	r, err := New(context.Background(), Config{
+		API:     fp.api,
+		Model:   "test-model",
+		APIKey:  "test-key",
+		WorkDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	r.reg.Register(fp)
+
+	ch := r.Chat(context.Background(), nil, "run echo hello")
+
+	var collected string
+	for evt := range ch {
+		if evt.Err != nil {
+			t.Fatalf("unexpected error: %v", evt.Err)
+		}
+		collected += evt.Text
+	}
+
+	if collected != "The result is hello" {
+		t.Errorf("collected = %q, want %q", collected, "The result is hello")
+	}
+}
+
+func TestChatToolCallAccumulation(t *testing.T) {
+	acc := newToolCallAccumulator()
+
+	// Simulate Anthropic-style: ID+Name first, then argument deltas.
+	acc.addDelta(aitypes.EventToolCallDelta{ID: "tc_1", Name: "read"})
+	acc.addDelta(aitypes.EventToolCallDelta{Arguments: `{"file_`})
+	acc.addDelta(aitypes.EventToolCallDelta{Arguments: `path": "test.txt"}`})
+
+	calls := acc.finalize()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Name != "read" {
+		t.Errorf("name = %q, want %q", calls[0].Name, "read")
+	}
+	path, ok := calls[0].Arguments["file_path"].(string)
+	if !ok || path != "test.txt" {
+		t.Errorf("file_path = %v, want %q", calls[0].Arguments["file_path"], "test.txt")
 	}
 }
 

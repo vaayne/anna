@@ -1,6 +1,7 @@
 package openairesponse
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -24,14 +25,7 @@ func convertMessages(ctx types.Context) responses.ResponseInputParam {
 				},
 			})
 		case types.AssistantMessage:
-			items = append(items, responses.ResponseInputItemUnionParam{
-				OfMessage: &responses.EasyInputMessageParam{
-					Role: responses.EasyInputMessageRoleAssistant,
-					Content: responses.EasyInputMessageContentUnionParam{
-						OfString: param.NewOpt(flattenAssistantContent(m.Content)),
-					},
-				},
-			})
+			items = append(items, convertAssistantMessage(m)...)
 		case types.ToolResultMessage:
 			items = append(items, responses.ResponseInputItemUnionParam{
 				OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
@@ -41,6 +35,40 @@ func convertMessages(ctx types.Context) responses.ResponseInputParam {
 			})
 		}
 	}
+	return items
+}
+
+func convertAssistantMessage(m types.AssistantMessage) responses.ResponseInputParam {
+	var items responses.ResponseInputParam
+	var textParts []string
+
+	for _, block := range m.Content {
+		switch b := block.(type) {
+		case types.TextContent:
+			textParts = append(textParts, b.Text)
+		case types.ToolCall:
+			argsJSON, _ := json.Marshal(b.Arguments)
+			items = append(items, responses.ResponseInputItemUnionParam{
+				OfFunctionCall: &responses.ResponseFunctionToolCallParam{
+					Arguments: string(argsJSON),
+					CallID:    b.ID,
+					Name:      b.Name,
+				},
+			})
+		}
+	}
+
+	if text := strings.Join(textParts, " "); text != "" {
+		items = append([]responses.ResponseInputItemUnionParam{{
+			OfMessage: &responses.EasyInputMessageParam{
+				Role: responses.EasyInputMessageRoleAssistant,
+				Content: responses.EasyInputMessageContentUnionParam{
+					OfString: param.NewOpt(text),
+				},
+			},
+		}}, items...)
+	}
+
 	return items
 }
 
@@ -59,21 +87,6 @@ func userContent(content any) string {
 	default:
 		return fmt.Sprintf("%v", content)
 	}
-}
-
-func flattenAssistantContent(blocks []types.ContentBlock) string {
-	parts := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		switch b := block.(type) {
-		case types.TextContent:
-			parts = append(parts, b.Text)
-		case types.ThinkingContent:
-			// omit thinking from messages
-		case types.ToolCall:
-			parts = append(parts, fmt.Sprintf("[tool_call:%s]", b.Name))
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 func flattenToolResult(content []types.ContentBlock) string {
