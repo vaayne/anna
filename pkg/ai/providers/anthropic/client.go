@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -52,6 +53,27 @@ func (p *Provider) Stream(model types.Model, ctx types.Context, opts types.Strea
 func (p *Provider) StreamSimple(model types.Model, ctx types.Context, opts types.SimpleStreamOptions) (stream.AssistantEventStream, error) {
 	return p.Stream(model, ctx, opts.StreamOptions)
 }
+
+// ListModels fetches available models from the Anthropic API.
+func (p *Provider) ListModels(ctx context.Context) ([]types.Model, error) {
+	page, err := p.client.Models.List(ctx, anthropic.ModelListParams{})
+	if err != nil {
+		return nil, fmt.Errorf("anthropic list models: %w", err)
+	}
+
+	var models []types.Model
+	for _, m := range page.Data {
+		models = append(models, types.Model{
+			ID:       m.ID,
+			Name:     m.ID,
+			API:      "anthropic",
+			Provider: "anthropic",
+		})
+	}
+	return models, nil
+}
+
+var _ stream.ModelLister = (*Provider)(nil)
 
 func buildRequestOptions(opts types.StreamOptions) []option.RequestOption {
 	var reqOpts []option.RequestOption

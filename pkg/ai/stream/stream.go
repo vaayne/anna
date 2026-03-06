@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"errors"
 
 	"github.com/vaayne/anna/pkg/ai/types"
@@ -11,6 +12,11 @@ type Provider interface {
 	API() string
 	Stream(model types.Model, ctx types.Context, opts types.StreamOptions) (AssistantEventStream, error)
 	StreamSimple(model types.Model, ctx types.Context, opts types.SimpleStreamOptions) (AssistantEventStream, error)
+}
+
+// ModelLister is an optional interface providers can implement to list available models.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]types.Model, error)
 }
 
 // ProviderGetter provides provider lookup.

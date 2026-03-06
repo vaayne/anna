@@ -117,13 +117,14 @@ func newRunnerFactory(cfg *Config) (runner.NewRunnerFunc, error) {
 			return pi.New(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
 		}, nil
 	case "go":
+		providerCfg := cfg.Providers[cfg.Provider]
 		return func(ctx context.Context) (runner.Runner, error) {
 			return gorunner.New(ctx, gorunner.Config{
-				API:     cfg.Runner.Go.API,
-				Model:   cfg.Runner.Go.Model,
-				APIKey:  cfg.Runner.Go.APIKey,
-				System:  cfg.Runner.Go.System,
-				BaseURL: cfg.Runner.Go.BaseURL,
+				API:     cfg.Provider,
+				Model:   cfg.Model,
+				APIKey:  providerCfg.APIKey,
+				System:  cfg.Runner.System,
+				BaseURL: providerCfg.BaseURL,
 			})
 		}, nil
 	default:
