@@ -16,6 +16,12 @@ type Config struct {
 	Runner    RunnerConfig              `yaml:"runner"`
 	Telegram  TelegramConfig            `yaml:"telegram"`
 	Sessions  string                    `yaml:"sessions"`
+	Cron      CronConfig                `yaml:"cron"`
+}
+
+type CronConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	DataDir string `yaml:"data_dir"`
 }
 
 type ProviderConfig struct {
@@ -138,6 +144,9 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 	if cfg.Sessions == "" {
 		cfg.Sessions = filepath.Join(dir, "workspace", "sessions")
+	}
+	if cfg.Cron.DataDir == "" {
+		cfg.Cron.DataDir = filepath.Join(dir, "cron")
 	}
 
 	return cfg, nil

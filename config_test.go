@@ -309,7 +309,7 @@ func TestNewRunnerFactoryGo(t *testing.T) {
 		Runner: RunnerConfig{Type: "go"},
 	}
 
-	factory, err := newRunnerFactory(cfg)
+	factory, err := newRunnerFactory(cfg, nil)
 	if err != nil {
 		t.Fatalf("newRunnerFactory: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestNewRunnerFactoryUnknown(t *testing.T) {
 		Runner: RunnerConfig{Type: "invalid"},
 	}
 
-	_, err := newRunnerFactory(cfg)
+	_, err := newRunnerFactory(cfg, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown runner type")
 	}
