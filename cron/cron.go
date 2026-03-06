@@ -118,6 +118,12 @@ func (s *Service) AddJob(name, message string, sched Schedule) (Job, error) {
 
 	s.jobs[job.ID] = job
 	if err := s.saveJobsLocked(); err != nil {
+		// Roll back: remove from memory and unschedule.
+		delete(s.jobs, job.ID)
+		if gid, ok := s.gids[job.ID]; ok {
+			_ = s.scheduler.RemoveJob(gid)
+			delete(s.gids, job.ID)
+		}
 		return Job{}, fmt.Errorf("persist job: %w", err)
 	}
 
@@ -130,19 +136,30 @@ func (s *Service) RemoveJob(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.jobs[id]; !ok {
+	job, ok := s.jobs[id]
+	if !ok {
 		return fmt.Errorf("job %q not found", id)
 	}
 
+	// Remove from scheduler first.
+	var removedGID uuid.UUID
+	var hadGID bool
 	if gid, ok := s.gids[id]; ok {
 		if err := s.scheduler.RemoveJob(gid); err != nil {
 			s.log.Warn("failed to remove gocron job", "id", id, "error", err)
 		}
+		removedGID = gid
+		hadGID = true
 		delete(s.gids, id)
 	}
 
 	delete(s.jobs, id)
 	if err := s.saveJobsLocked(); err != nil {
+		// Roll back: restore in-memory state so retry works.
+		s.jobs[id] = job
+		if hadGID {
+			s.gids[id] = removedGID
+		}
 		return fmt.Errorf("persist after remove: %w", err)
 	}
 
