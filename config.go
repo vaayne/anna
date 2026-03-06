@@ -20,8 +20,13 @@ type Config struct {
 }
 
 type CronConfig struct {
-	Enabled bool   `yaml:"enabled"`
+	Enabled *bool  `yaml:"enabled"`
 	DataDir string `yaml:"data_dir"`
+}
+
+// CronEnabled returns whether cron is enabled (defaults to true).
+func (c CronConfig) CronEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 type ProviderConfig struct {

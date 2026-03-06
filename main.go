@@ -134,7 +134,7 @@ func setup(parent context.Context) (*setupResult, error) {
 	// can be injected into the Go runner.
 	var cronSvc *cron.Service
 	var extraTools []tool.Tool
-	if cfg.Cron.Enabled && cfg.Runner.Type == "go" {
+	if cfg.Cron.CronEnabled() && cfg.Runner.Type == "go" {
 		cronSvc, err = cron.New(cfg.Cron.DataDir)
 		if err != nil {
 			return nil, fmt.Errorf("create cron service: %w", err)
