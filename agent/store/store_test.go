@@ -156,6 +156,33 @@ func TestPathSanitization(t *testing.T) {
 	}
 }
 
+func TestTimestampedFilename(t *testing.T) {
+	s := tempStore(t)
+
+	if err := s.Append("my-session", runner.RPCEvent{Type: "user_message", Summary: "hello"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// File should be created with timestamp prefix.
+	entries, _ := os.ReadDir(s.dir)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(entries))
+	}
+	name := entries[0].Name()
+	if !strings.HasSuffix(name, "_my-session.jsonl") {
+		t.Errorf("expected timestamped filename, got %q", name)
+	}
+	if !strings.Contains(name, "T") {
+		t.Errorf("expected ISO timestamp in filename, got %q", name)
+	}
+
+	// resolve should find it.
+	p := s.resolve("my-session")
+	if p == "" {
+		t.Fatal("resolve failed to find timestamped file")
+	}
+}
+
 func TestPiFormatSessionHeader(t *testing.T) {
 	s := tempStore(t)
 
@@ -164,7 +191,11 @@ func TestPiFormatSessionHeader(t *testing.T) {
 	}
 
 	// Read raw file and verify Pi format.
-	data, err := os.ReadFile(s.path("test-session"))
+	p := s.resolve("test-session")
+	if p == "" {
+		t.Fatal("session file not found")
+	}
+	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -198,13 +229,21 @@ func TestPiFormatSessionHeader(t *testing.T) {
 		t.Error("entry ID should not be empty")
 	}
 
-	// Verify it's a user message in Pi format.
+	// Verify it's a user message in Pi format (content block array).
 	var msg piUserMessage
 	if err := json.Unmarshal(entry.Message, &msg); err != nil {
 		t.Fatalf("unmarshal message: %v", err)
 	}
 	if msg.Role != "user" {
 		t.Errorf("message role: expected 'user', got %q", msg.Role)
+	}
+	// Verify content is written as content block array (issue #5).
+	var blocks []piTextContent
+	if err := json.Unmarshal(msg.Content, &blocks); err != nil {
+		t.Fatalf("user content should be array: %v", err)
+	}
+	if len(blocks) != 1 || blocks[0].Text != "hi" {
+		t.Errorf("user content blocks: %+v", blocks)
 	}
 }
 
@@ -284,7 +323,11 @@ func TestPiFormatParentChain(t *testing.T) {
 	}
 
 	// Read raw file and verify parentId chain.
-	data, err := os.ReadFile(s.path("s1"))
+	p := s.resolve("s1")
+	if p == "" {
+		t.Fatal("session file not found")
+	}
+	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -339,9 +382,10 @@ func TestLoadPiSessionFile(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	// Should skip session header and thinking_level_change, load 4 messages.
-	if len(events) != 4 {
-		t.Fatalf("expected 4 events, got %d", len(events))
+	// Should skip session header and thinking_level_change, load 5 messages.
+	// The mixed text+toolCall assistant message produces 2 events (text + tool call).
+	if len(events) != 5 {
+		t.Fatalf("expected 5 events, got %d", len(events))
 	}
 
 	// User message (from content block array).
@@ -349,18 +393,97 @@ func TestLoadPiSessionFile(t *testing.T) {
 		t.Errorf("event 0: %+v", events[0])
 	}
 
-	// Assistant with tool call — should load as tool_call since it has toolCall content.
-	if events[1].Type != runner.RPCEventToolCall || events[1].Tool != "bash" || events[1].ID != "tool1" {
+	// Assistant text from mixed message.
+	if events[1].Type != runner.RPCEventMessageUpdate || events[1].Summary != "Hi! How can I help?" {
 		t.Errorf("event 1: %+v", events[1])
 	}
 
-	// Tool result.
-	if events[2].Type != runner.RPCEventToolResult || events[2].Tool != "bash" {
+	// Tool call from mixed message.
+	if events[2].Type != runner.RPCEventToolCall || events[2].Tool != "bash" || events[2].ID != "tool1" {
 		t.Errorf("event 2: %+v", events[2])
 	}
 
-	// Final assistant text.
-	if events[3].Type != runner.RPCEventMessageUpdate || events[3].Summary != "I found file1.txt." {
+	// Tool result.
+	if events[3].Type != runner.RPCEventToolResult || events[3].Tool != "bash" {
 		t.Errorf("event 3: %+v", events[3])
+	}
+
+	// Final assistant text.
+	if events[4].Type != runner.RPCEventMessageUpdate || events[4].Summary != "I found file1.txt." {
+		t.Errorf("event 4: %+v", events[4])
+	}
+}
+
+func TestLoadCompaction(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewFileStore(dir, "/tmp/test")
+
+	content := `{"type":"session","version":3,"id":"compact-test","timestamp":"2026-03-06T09:24:57.725Z","cwd":"/tmp/test"}
+{"type":"compaction","id":"aaa","parentId":null,"timestamp":"2026-03-06T09:24:57.725Z","summary":"The user asked about Go testing. We discussed table-driven tests and benchmarks."}
+{"type":"message","id":"bbb","parentId":"aaa","timestamp":"2026-03-06T09:25:00.000Z","message":{"role":"user","content":[{"type":"text","text":"what about fuzzing?"}],"timestamp":1772789100000}}
+{"type":"message","id":"ccc","parentId":"bbb","timestamp":"2026-03-06T09:25:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Go supports fuzzing natively since 1.18."}],"stopReason":"stop","timestamp":1772789105000}}
+`
+
+	if err := os.WriteFile(filepath.Join(dir, "compact-test.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	events, err := s.Load("compact-test")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Compaction produces 2 synthetic events + 2 real messages = 4 total.
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(events))
+	}
+
+	// Synthetic user from compaction.
+	if events[0].Type != runner.RPCEventUserMessage || events[0].Summary != "[Previous conversation summary]" {
+		t.Errorf("event 0: %+v", events[0])
+	}
+
+	// Compaction summary as assistant message.
+	if events[1].Type != runner.RPCEventMessageUpdate || !strings.Contains(events[1].Summary, "Go testing") {
+		t.Errorf("event 1: %+v", events[1])
+	}
+
+	// Real user message.
+	if events[2].Type != runner.RPCEventUserMessage || events[2].Summary != "what about fuzzing?" {
+		t.Errorf("event 2: %+v", events[2])
+	}
+
+	// Real assistant message.
+	if events[3].Type != runner.RPCEventMessageUpdate || !strings.Contains(events[3].Summary, "fuzzing") {
+		t.Errorf("event 3: %+v", events[3])
+	}
+}
+
+func TestListTimestampedFiles(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := NewFileStore(dir, "/tmp/test")
+
+	// Create timestamped files.
+	if err := s.Append("alpha", runner.RPCEvent{Type: "user_message", Summary: "a"}); err != nil {
+		t.Fatalf("Append alpha: %v", err)
+	}
+	if err := s.Append("beta", runner.RPCEvent{Type: "user_message", Summary: "b"}); err != nil {
+		t.Fatalf("Append beta: %v", err)
+	}
+
+	ids, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected 2, got %d", len(ids))
+	}
+
+	found := map[string]bool{}
+	for _, id := range ids {
+		found[id] = true
+	}
+	if !found["alpha"] || !found["beta"] {
+		t.Errorf("expected alpha and beta, got %v", ids)
 	}
 }

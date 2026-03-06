@@ -115,9 +115,35 @@ func NewFileStore(dir string, cwd string) (*FileStore, error) {
 }
 
 func (s *FileStore) path(sessionID string) string {
-	// Sanitize to prevent path traversal.
+	// Use Pi's naming convention: {ISO-timestamp}_{sessionID}.jsonl
 	safe := strings.ReplaceAll(sessionID, string(os.PathSeparator), "_")
-	return filepath.Join(s.dir, safe+".jsonl")
+	ts := time.Now().UTC().Format("2006-01-02T15-04-05.000Z")
+	return filepath.Join(s.dir, ts+"_"+safe+".jsonl")
+}
+
+// resolve finds the session file on disk by sessionID suffix.
+// Returns the full path if found, or empty string if not found.
+func (s *FileStore) resolve(sessionID string) string {
+	safe := strings.ReplaceAll(sessionID, string(os.PathSeparator), "_")
+	suffix := "_" + safe + ".jsonl"
+
+	// Also check legacy format (just sessionID.jsonl).
+	legacy := filepath.Join(s.dir, safe+".jsonl")
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+
+	// Search for timestamped files.
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), suffix) {
+			return filepath.Join(s.dir, e.Name())
+		}
+	}
+	return ""
 }
 
 func shortID() string {
@@ -125,11 +151,14 @@ func shortID() string {
 }
 
 // ensureHeader creates the session file with a header if it doesn't exist.
-func (s *FileStore) ensureHeader(sessionID string) error {
-	p := s.path(sessionID)
-	if _, err := os.Stat(p); err == nil {
-		return nil // file exists
+// Stores the resolved path for future appends.
+func (s *FileStore) ensureHeader(sessionID string) (string, error) {
+	// Check if file already exists.
+	if p := s.resolve(sessionID); p != "" {
+		return p, nil
 	}
+	// Create new file with timestamped name.
+	p := s.path(sessionID)
 	header := sessionHeader{
 		Type:      "session",
 		Version:   currentSessionVersion,
@@ -139,18 +168,22 @@ func (s *FileStore) ensureHeader(sessionID string) error {
 	}
 	data, err := json.Marshal(header)
 	if err != nil {
-		return fmt.Errorf("marshal header: %w", err)
+		return "", fmt.Errorf("marshal header: %w", err)
 	}
-	return os.WriteFile(p, append(data, '\n'), 0o644)
+	if err := os.WriteFile(p, append(data, '\n'), 0o644); err != nil {
+		return "", fmt.Errorf("write header: %w", err)
+	}
+	return p, nil
 }
 
 // Append appends events to the session file in Pi JSONL format.
 func (s *FileStore) Append(sessionID string, events ...runner.RPCEvent) error {
-	if err := s.ensureHeader(sessionID); err != nil {
+	p, err := s.ensureHeader(sessionID)
+	if err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(s.path(sessionID), os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}
@@ -176,10 +209,12 @@ func (s *FileStore) Append(sessionID string, events ...runner.RPCEvent) error {
 // Load reads all events from the session file and converts to RPCEvents.
 // Returns nil, nil if the session does not exist.
 func (s *FileStore) Load(sessionID string) ([]runner.RPCEvent, error) {
-	f, err := os.Open(s.path(sessionID))
-	if os.IsNotExist(err) {
+	p := s.resolve(sessionID)
+	if p == "" {
 		return nil, nil
 	}
+
+	f, err := os.Open(p)
 	if err != nil {
 		return nil, fmt.Errorf("open session file: %w", err)
 	}
@@ -204,6 +239,13 @@ func (s *FileStore) Load(sessionID string) ([]runner.RPCEvent, error) {
 			continue
 		}
 
+		// Handle compaction entries — inject summary as synthetic context.
+		if peek.Type == "compaction" {
+			compEvts := parseCompaction(line)
+			events = append(events, compEvts...)
+			continue
+		}
+
 		// Skip non-message entries (session header, thinking_level_change, model_change, etc.)
 		if peek.Type != "message" {
 			continue
@@ -216,10 +258,8 @@ func (s *FileStore) Load(sessionID string) ([]runner.RPCEvent, error) {
 
 		lastEntryID = entry.ID
 
-		evt, ok := entryToRPCEvent(entry)
-		if ok {
-			events = append(events, evt)
-		}
+		evts := entryToRPCEvents(entry)
+		events = append(events, evts...)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read session file: %w", err)
@@ -235,11 +275,11 @@ func (s *FileStore) Load(sessionID string) ([]runner.RPCEvent, error) {
 
 // Delete removes the session file.
 func (s *FileStore) Delete(sessionID string) error {
-	err := os.Remove(s.path(sessionID))
-	if os.IsNotExist(err) {
+	p := s.resolve(sessionID)
+	if p == "" {
 		return nil
 	}
-	return err
+	return os.Remove(p)
 }
 
 // List returns session IDs for all stored sessions.
@@ -254,8 +294,16 @@ func (s *FileStore) List() ([]string, error) {
 			continue
 		}
 		name := e.Name()
-		if strings.HasSuffix(name, ".jsonl") {
-			ids = append(ids, strings.TrimSuffix(name, ".jsonl"))
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		base := strings.TrimSuffix(name, ".jsonl")
+		// Try timestamped format: {timestamp}_{sessionID}
+		if idx := strings.Index(base, "_"); idx > 0 {
+			ids = append(ids, base[idx+1:])
+		} else {
+			// Legacy format: just {sessionID}
+			ids = append(ids, base)
 		}
 	}
 	return ids, nil
@@ -279,7 +327,7 @@ func rpcEventToEntry(evt runner.RPCEvent, parentID string) (sessionEntry, bool) 
 	switch evt.Type {
 	case runner.RPCEventUserMessage:
 		content := evt.Summary
-		contentJSON, _ := json.Marshal(content)
+		contentJSON, _ := json.Marshal([]piTextContent{{Type: "text", Text: content}})
 		msg := piUserMessage{
 			Role:      "user",
 			Content:   contentJSON,
@@ -350,64 +398,61 @@ func rpcEventToEntry(evt runner.RPCEvent, parentID string) (sessionEntry, bool) 
 	}
 }
 
-// entryToRPCEvent converts a Pi sessionEntry back to an RPCEvent.
-func entryToRPCEvent(entry sessionEntry) (runner.RPCEvent, bool) {
+// entryToRPCEvents converts a Pi sessionEntry to one or more RPCEvents.
+// Assistant messages with mixed text+toolCall content produce multiple events.
+func entryToRPCEvents(entry sessionEntry) []runner.RPCEvent {
 	if entry.Type != "message" || len(entry.Message) == 0 {
-		return runner.RPCEvent{}, false
+		return nil
 	}
 
 	var peek struct {
 		Role string `json:"role"`
 	}
 	if err := json.Unmarshal(entry.Message, &peek); err != nil {
-		return runner.RPCEvent{}, false
+		return nil
 	}
 
 	switch peek.Role {
 	case "user":
 		var msg piUserMessage
 		if err := json.Unmarshal(entry.Message, &msg); err != nil {
-			return runner.RPCEvent{}, false
+			return nil
 		}
-		// Content can be string or array of content blocks.
 		text := extractUserText(msg.Content)
-		return runner.RPCEvent{
+		return []runner.RPCEvent{{
 			Type:    runner.RPCEventUserMessage,
 			Summary: text,
-		}, true
+		}}
 
 	case "assistant":
 		var msg piAssistantMessage
 		if err := json.Unmarshal(entry.Message, &msg); err != nil {
-			return runner.RPCEvent{}, false
+			return nil
 		}
-		// Parse content blocks to find text and tool calls.
 		text, toolCalls := parseAssistantContent(msg.Content)
 
-		// If there are tool calls, emit them as separate events? No — return the
-		// first tool call as a tool_call event, or text as message_update.
-		// For simplicity: if it has text, return as message_update; tool calls
-		// will be loaded as tool_call events.
-		if len(toolCalls) > 0 {
-			tc := toolCalls[0]
+		var events []runner.RPCEvent
+		if text != "" {
+			events = append(events, runner.RPCEvent{
+				Type:    runner.RPCEventMessageUpdate,
+				Summary: text,
+			})
+		}
+		for _, tc := range toolCalls {
 			argsJSON, _ := json.Marshal(tc.Arguments)
-			return runner.RPCEvent{
+			events = append(events, runner.RPCEvent{
 				Type:   runner.RPCEventToolCall,
 				ID:     tc.ID,
 				Tool:   tc.Name,
 				Result: argsJSON,
-			}, true
+			})
 		}
-
-		return runner.RPCEvent{
-			Type:    runner.RPCEventMessageUpdate,
-			Summary: text,
-		}, true
+		return events
 
 	case "toolResult":
 		var msg piToolResultMessage
 		if err := json.Unmarshal(entry.Message, &msg); err != nil {
-			return runner.RPCEvent{}, false
+			return nil
 		}
 		resultText := extractTextFromContent(msg.Content)
 		contentJSON, _ := json.Marshal(resultText)
@@ -420,10 +465,10 @@ func entryToRPCEvent(entry sessionEntry) (runner.RPCEvent, bool) {
 		if msg.IsError {
 			evt.Error = resultText
 		}
-		return evt, true
+		return []runner.RPCEvent{evt}
 
 	default:
-		return runner.RPCEvent{}, false
+		return nil
 	}
 }
 
@@ -451,6 +496,26 @@ func extractTextFromContent(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "")
+}
+
+// compactionEntry represents a Pi compaction entry that summarizes old history.
+type compactionEntry struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Summary string `json:"summary"`
+}
+
+// parseCompaction converts a compaction JSONL line into synthetic RPCEvents
+// (user question + assistant summary) so runners get the compacted context.
+func parseCompaction(line []byte) []runner.RPCEvent {
+	var c compactionEntry
+	if err := json.Unmarshal(line, &c); err != nil || c.Summary == "" {
+		return nil
+	}
+	return []runner.RPCEvent{
+		{Type: runner.RPCEventUserMessage, Summary: "[Previous conversation summary]"},
+		{Type: runner.RPCEventMessageUpdate, Summary: c.Summary},
+	}
 }
 
 // parseAssistantContent parses assistant content blocks into text and tool calls.

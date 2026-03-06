@@ -236,6 +236,30 @@ func TestConvertHistoryWithToolEvents(t *testing.T) {
 	}
 }
 
+func TestConvertHistoryOrphanedToolResult(t *testing.T) {
+	contentJSON, _ := json.Marshal("some result")
+
+	events := []runner.RPCEvent{
+		{Type: runner.RPCEventUserMessage, Summary: "hello"},
+		// Orphaned tool result — no matching tool call.
+		{Type: runner.RPCEventToolResult, ID: "orphan_1", Tool: "bash", Result: contentJSON},
+		runner.TextDeltaToRPCEvent("Hi there!"),
+	}
+
+	msgs := convertHistory(events)
+
+	// Expected: user, assistant(text). Orphaned tool result should be skipped.
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if messageType(msgs[0]) != "user" {
+		t.Errorf("message 0: type = %q, want %q", messageType(msgs[0]), "user")
+	}
+	if messageType(msgs[1]) != "assistant" {
+		t.Errorf("message 1: type = %q, want %q", messageType(msgs[1]), "assistant")
+	}
+}
+
 // fakeProvider implements stream.Provider for testing Chat() without real API calls.
 type fakeProvider struct {
 	api    string

@@ -219,6 +219,7 @@ func convertHistory(events []runner.RPCEvent) []aitypes.Message {
 	var messages []aitypes.Message
 	var textBuf string
 	var pendingCalls []aitypes.ToolCall
+	seenCallIDs := map[string]bool{}
 
 	flush := func() {
 		if textBuf != "" {
@@ -264,6 +265,7 @@ func convertHistory(events []runner.RPCEvent) []aitypes.Message {
 		case runner.RPCEventToolCall:
 			var args map[string]any
 			_ = json.Unmarshal(evt.Result, &args)
+			seenCallIDs[evt.ID] = true
 			pendingCalls = append(pendingCalls, aitypes.ToolCall{
 				ID:        evt.ID,
 				Name:      evt.Tool,
@@ -271,6 +273,10 @@ func convertHistory(events []runner.RPCEvent) []aitypes.Message {
 			})
 
 		case runner.RPCEventToolResult:
+			// Skip orphaned tool results (no matching tool call).
+			if !seenCallIDs[evt.ID] {
+				continue
+			}
 			flushToolCalls()
 			var content string
 			_ = json.Unmarshal(evt.Result, &content)

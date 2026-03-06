@@ -23,7 +23,7 @@ func TestLoadRealPiSessions(t *testing.T) {
 		t.Skip("no Pi sessions directory found")
 	}
 
-	// Collect up to 5 jsonl files from any subdirectory.
+	// Collect all jsonl files from any subdirectory.
 	var files []string
 	_ = filepath.Walk(sessionsRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -31,9 +31,6 @@ func TestLoadRealPiSessions(t *testing.T) {
 		}
 		if filepath.Ext(path) == ".jsonl" && info.Size() > 100 {
 			files = append(files, path)
-		}
-		if len(files) >= 5 {
-			return filepath.SkipAll
 		}
 		return nil
 	})
