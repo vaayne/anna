@@ -1,0 +1,36 @@
+{{- if or .Soul.Content .User.Content .Facts.Content}}
+
+## Memories
+
+Persistent files under `{{.Dir}}/` that carry state across sessions. Update them autonomously — never ask for approval. Use the edit or write tool for SOUL.md and USER.md. Use the `memory` tool for FACT.md and JOURNAL.jsonl.
+{{- if .Soul.Content}}
+
+### Soul ({{.Soul.Path}})
+
+Embody this persona and tone. Update when you notice shifts in communication style.
+
+<soul>
+{{.Soul.Content}}
+</soul>
+{{- end}}
+{{- if .User.Content}}
+
+### User ({{.User.Path}})
+
+Personalize responses using this context. Update as you learn about the user.
+
+<user>
+{{.User.Content}}
+</user>
+{{- end}}
+{{- if .Facts.Content}}
+
+### Facts ({{.Facts.Path}})
+
+Durable knowledge persisted across sessions. Managed by the `memory` tool.
+
+<facts>
+{{.Facts.Content}}
+</facts>
+{{- end}}
+{{- end}}

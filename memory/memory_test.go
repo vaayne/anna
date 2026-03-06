@@ -7,53 +7,53 @@ import (
 	"time"
 )
 
-func TestStore_WriteFacts_ReadFacts(t *testing.T) {
+func TestStore_Write_Read(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
 	// Read non-existent file returns empty.
-	got, err := s.ReadFacts()
+	got, err := s.Read(FileFact)
 	if err != nil {
-		t.Fatalf("ReadFacts on empty: %v", err)
+		t.Fatalf("Read on empty: %v", err)
 	}
 	if got != "" {
 		t.Fatalf("expected empty, got %q", got)
 	}
 
 	// Write and read back.
-	want := "# Facts\n\n- User prefers Go.\n"
-	if err := s.WriteFacts(want); err != nil {
-		t.Fatalf("WriteFacts: %v", err)
+	want := "# Facts\n\n- User prefers Go."
+	if err := s.Write(FileFact, want); err != nil {
+		t.Fatalf("Write: %v", err)
 	}
-	got, err = s.ReadFacts()
+	got, err = s.Read(FileFact)
 	if err != nil {
-		t.Fatalf("ReadFacts: %v", err)
+		t.Fatalf("Read: %v", err)
 	}
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
 	// No tmp file left behind.
-	if _, err := os.Stat(s.factsPath + ".tmp"); !os.IsNotExist(err) {
+	if _, err := os.Stat(s.Path(FileFact) + ".tmp"); !os.IsNotExist(err) {
 		t.Fatal("tmp file should not exist after atomic write")
 	}
 }
 
-func TestStore_WriteFacts_Atomic(t *testing.T) {
+func TestStore_Write_Atomic(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
 	original := "original content"
-	if err := s.WriteFacts(original); err != nil {
-		t.Fatalf("WriteFacts: %v", err)
+	if err := s.Write(FileFact, original); err != nil {
+		t.Fatalf("Write: %v", err)
 	}
 
 	// Overwrite with new content.
 	updated := "updated content"
-	if err := s.WriteFacts(updated); err != nil {
-		t.Fatalf("WriteFacts: %v", err)
+	if err := s.Write(FileFact, updated); err != nil {
+		t.Fatalf("Write: %v", err)
 	}
-	got, _ := s.ReadFacts()
+	got, _ := s.Read(FileFact)
 	if got != updated {
 		t.Fatalf("got %q, want %q", got, updated)
 	}
@@ -150,7 +150,7 @@ func TestStore_JournalFileCreated(t *testing.T) {
 
 	_ = s.Append(JournalEntry{Timestamp: time.Now(), Text: "test"})
 
-	if _, err := os.Stat(filepath.Join(dir, "journal.jsonl")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "JOURNAL.jsonl")); err != nil {
 		t.Fatalf("journal file should exist: %v", err)
 	}
 }

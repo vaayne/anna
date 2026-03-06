@@ -83,7 +83,7 @@ func chatCommand() *ucli.Command {
 				return clicmd.RunStream(s.ctx, s.pool)
 			}
 			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
-			switchFn := modelSwitcher(s.cfg, s.pool, s.extraTools)
+			switchFn := modelSwitcher(s.cfg, s.pool, s.memStore, s.extraTools)
 			return clicmd.RunChat(s.ctx, s.pool, s.cfg.Provider, s.cfg.Model, listFn, switchFn)
 		},
 	}
@@ -108,7 +108,7 @@ func gatewayCommand() *ucli.Command {
 			}
 
 			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
-			switchFn := modelSwitcher(s.cfg, s.pool, s.extraTools)
+			switchFn := modelSwitcher(s.cfg, s.pool, s.memStore, s.extraTools)
 			return runGateway(s.ctx, s.cfg, s.pool, listFn, switchFn)
 		},
 	}
@@ -119,6 +119,7 @@ type setupResult struct {
 	cfg        *Config
 	pool       *agent.Pool
 	cronSvc    *cron.Service
+	memStore   *memory.Store
 	extraTools []tool.Tool
 }
 
@@ -143,14 +144,15 @@ func setup(parent context.Context) (*setupResult, error) {
 		extraTools = append(extraTools, cron.NewTool(cronSvc))
 	}
 
-	// Memory tool — always available for Go runner.
+	// Memory store + tool — always available for Go runner.
+	var memStore *memory.Store
 	if cfg.Runner.Type == "go" {
-		memStore := memory.NewStore(configDir())
+		memStore = memory.NewStore(filepath.Join(configDir(), "memory"))
 		extraTools = append(extraTools, memory.NewTool(memStore))
 	}
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
-	factory, err := newRunnerFactory(cfg, extraTools)
+	factory, err := newRunnerFactory(cfg, memStore, extraTools)
 	if err != nil {
 		return nil, fmt.Errorf("create runner factory: %w", err)
 	}
@@ -188,11 +190,12 @@ func setup(parent context.Context) (*setupResult, error) {
 		cfg:        cfg,
 		pool:       pool,
 		cronSvc:    cronSvc,
+		memStore:   memStore,
 		extraTools: extraTools,
 	}, nil
 }
 
-func newRunnerFactory(cfg *Config, extraTools []tool.Tool) (runner.NewRunnerFunc, error) {
+func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Tool) (runner.NewRunnerFunc, error) {
 	switch cfg.Runner.Type {
 	case "process":
 		return func(ctx context.Context) (runner.Runner, error) {
@@ -202,12 +205,13 @@ func newRunnerFactory(cfg *Config, extraTools []tool.Tool) (runner.NewRunnerFunc
 		providerCfg := cfg.Providers[cfg.Provider]
 		return func(ctx context.Context) (runner.Runner, error) {
 			return gorunner.New(ctx, gorunner.Config{
-				API:        cfg.Provider,
-				Model:      cfg.Model,
-				APIKey:     providerCfg.APIKey,
-				AgentsDir:  configDir(),
-				BaseURL:    providerCfg.BaseURL,
-				ExtraTools: extraTools,
+				API:         cfg.Provider,
+				Model:       cfg.Model,
+				APIKey:      providerCfg.APIKey,
+				AgentsDir:   configDir(),
+				MemoryStore: memStore,
+				BaseURL:     providerCfg.BaseURL,
+				ExtraTools:  extraTools,
 			})
 		}, nil
 	default:
@@ -217,11 +221,11 @@ func newRunnerFactory(cfg *Config, extraTools []tool.Tool) (runner.NewRunnerFunc
 
 // modelSwitcher returns a function that switches the pool's runner factory
 // to use a different provider/model combination.
-func modelSwitcher(cfg *Config, pool *agent.Pool, extraTools []tool.Tool) channel.ModelSwitchFunc {
+func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraTools []tool.Tool) channel.ModelSwitchFunc {
 	return func(provider, model string) error {
 		cfg.Provider = provider
 		cfg.Model = model
-		factory, err := newRunnerFactory(cfg, extraTools)
+		factory, err := newRunnerFactory(cfg, memStore, extraTools)
 		if err != nil {
 			return err
 		}

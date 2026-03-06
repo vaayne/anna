@@ -89,7 +89,7 @@ func (t *MemoryTool) update(args map[string]any) (string, error) {
 	if content == "" {
 		return "", fmt.Errorf("content is required for update action")
 	}
-	if err := t.store.WriteFacts(content); err != nil {
+	if err := t.store.Write(FileFact, content); err != nil {
 		return "", fmt.Errorf("write facts: %w", err)
 	}
 	return "Memory updated.", nil

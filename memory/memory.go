@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+// File identifies a persistent markdown file managed by the Store.
+type File string
+
+const (
+	FileSoul File = "SOUL.md"
+	FileUser File = "USER.md"
+	FileFact File = "FACT.md"
+)
+
 // JournalEntry is a single entry in the append-only journal.
 type JournalEntry struct {
 	Timestamp time.Time `json:"ts"`
@@ -16,40 +25,74 @@ type JournalEntry struct {
 	Text      string    `json:"text"`
 }
 
-// Store manages persistent memory: a facts file (markdown, always in system
-// prompt) and a journal (JSONL, searchable via tool).
+// Store manages persistent memory: markdown files (soul, user, facts) and
+// an append-only journal (JSONL, searchable via tool).
 type Store struct {
-	factsPath   string // .agents/memory.md
-	journalPath string // .agents/journal.jsonl
+	dir         string
+	journalPath string
 }
 
-// NewStore creates a Store rooted at the given agents directory.
-func NewStore(agentsDir string) *Store {
+// NewStore creates a Store rooted at the given memory directory.
+func NewStore(dir string) *Store {
 	return &Store{
-		factsPath:   filepath.Join(agentsDir, "memory.md"),
-		journalPath: filepath.Join(agentsDir, "journal.jsonl"),
+		dir:         dir,
+		journalPath: filepath.Join(dir, "JOURNAL.jsonl"),
 	}
 }
 
-// ReadFacts returns the current contents of memory.md.
-func (s *Store) ReadFacts() (string, error) {
-	data, err := os.ReadFile(s.factsPath)
+// Read returns the current contents of the given file. Returns empty string
+// if the file does not exist. File lookup is case-insensitive.
+func (s *Store) Read(f File) (string, error) {
+	path := s.resolve(f)
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return "", nil
 	}
-	return string(data), err
+	return strings.TrimSpace(string(data)), err
 }
 
-// WriteFacts atomically overwrites memory.md.
-func (s *Store) WriteFacts(content string) error {
-	if err := os.MkdirAll(filepath.Dir(s.factsPath), 0o755); err != nil {
+// Write atomically overwrites the given file using its canonical name.
+func (s *Store) Write(f File, content string) error {
+	path := filepath.Join(s.dir, string(f))
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return err
 	}
-	tmp := s.factsPath + ".tmp"
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.factsPath)
+	return os.Rename(tmp, path)
+}
+
+// Dir returns the memory directory path.
+func (s *Store) Dir() string {
+	return s.dir
+}
+
+// Path returns the full path to the given file, resolving case-insensitively
+// if an existing file matches. Falls back to the canonical name.
+func (s *Store) Path(f File) string {
+	return s.resolve(f)
+}
+
+// resolve finds the actual file path with case-insensitive matching.
+// If no existing file matches, returns the canonical path.
+func (s *Store) resolve(f File) string {
+	canonical := filepath.Join(s.dir, string(f))
+	if _, err := os.Stat(canonical); err == nil {
+		return canonical
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return canonical
+	}
+	target := strings.ToLower(string(f))
+	for _, e := range entries {
+		if strings.ToLower(e.Name()) == target {
+			return filepath.Join(s.dir, e.Name())
+		}
+	}
+	return canonical
 }
 
 // Append adds an entry to the journal.
