@@ -8,7 +8,8 @@ import (
 	aitypes "github.com/vaayne/anna/pkg/ai/types"
 )
 
-// Continue validates transcript tail and performs one additional loop.
+// Continue validates that the transcript tail is a user or tool-result message
+// and resumes the agent loop from the existing history.
 func (e *Engine) Continue(ctx context.Context, cfg agenttypes.Config, history []aitypes.Message, emit func(agenttypes.Event)) ([]aitypes.Message, error) {
 	if len(history) == 0 {
 		return nil, errors.New("cannot continue empty history")

@@ -12,12 +12,41 @@ type AgentStarted struct{}
 
 func (AgentStarted) kind() string { return "agentStarted" }
 
-// AssistantEmitted is emitted when assistant output is available.
-type AssistantEmitted struct {
+// AssistantStarted is emitted when assistant streaming begins.
+type AssistantStarted struct {
 	Message aitypes.AssistantMessage
 }
 
-func (AssistantEmitted) kind() string { return "assistantEmitted" }
+func (AssistantStarted) kind() string { return "assistantStarted" }
+
+// AssistantDelta forwards an incremental provider event with the current partial message.
+type AssistantDelta struct {
+	Event   aitypes.AssistantEvent
+	Message aitypes.AssistantMessage
+}
+
+func (AssistantDelta) kind() string { return "assistantDelta" }
+
+// AssistantFinished is emitted when the final assistant message is assembled.
+type AssistantFinished struct {
+	Message aitypes.AssistantMessage
+}
+
+func (AssistantFinished) kind() string { return "assistantFinished" }
+
+// TurnStarted is emitted at the start of each loop turn.
+type TurnStarted struct {
+	Turn int
+}
+
+func (TurnStarted) kind() string { return "turnStarted" }
+
+// TurnFinished is emitted at the end of each loop turn.
+type TurnFinished struct {
+	Turn int
+}
+
+func (TurnFinished) kind() string { return "turnFinished" }
 
 // ToolStarted is emitted for each tool invocation.
 type ToolStarted struct {
