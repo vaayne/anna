@@ -36,6 +36,7 @@ type ToolUseEvent struct {
 	Tool   string // tool name, e.g. "bash", "read"
 	Status string // "running", "done", "error"
 	Input  string // short summary of the tool input
+	Detail string // error detail or result summary (for "error" status)
 }
 
 // Event is the consumer-facing stream event. Channels read these from the

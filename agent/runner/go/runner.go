@@ -162,13 +162,16 @@ func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message st
 				}
 
 				status := "done"
+				detail := ""
 				if isError {
 					status = "error"
+					detail = execErr.Error()
 				}
 				out <- runner.Event{ToolUse: &runner.ToolUseEvent{
 					Tool:   tc.Name,
 					Status: status,
 					Input:  summarizeToolInput(tc.Name, tc.Arguments),
+					Detail: detail,
 				}}
 
 				r.log.Debug("tool result", "tool", tc.Name, "is_error", isError, "result_len", len(content))

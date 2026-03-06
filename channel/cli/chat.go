@@ -29,6 +29,7 @@ type streamToolMsg struct {
 	tool   string
 	status string
 	input  string
+	detail string
 }
 
 // streamDoneMsg signals the stream has finished.
@@ -199,7 +200,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "error":
 			elapsed := formatDuration(time.Since(m.toolStartTime))
 			m.status = ""
-			m.history.WriteString(toolErrorStyle.Render(fmt.Sprintf("    ✗ %s (%s)", label, elapsed)) + "\n")
+			line := fmt.Sprintf("    ✗ %s (%s)", label, elapsed)
+			if msg.detail != "" {
+				line += " — " + msg.detail
+			}
+			m.history.WriteString(toolErrorStyle.Render(line) + "\n")
 		}
 		m.viewport.SetContent(m.history.String())
 		m.viewport.GotoBottom()
@@ -367,6 +372,7 @@ func waitNextChunk(stream <-chan runner.Event) tea.Cmd {
 				tool:   evt.ToolUse.Tool,
 				status: evt.ToolUse.Status,
 				input:  evt.ToolUse.Input,
+				detail: evt.ToolUse.Detail,
 			}
 		}
 		return streamChunkMsg(evt.Text)
