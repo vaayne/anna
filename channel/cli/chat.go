@@ -48,6 +48,7 @@ type chatModel struct {
 	viewport viewport.Model
 	stream   <-chan runner.Event
 
+	sessionID   string
 	provider    string
 	model       string
 	history     *strings.Builder
@@ -89,10 +90,14 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 	ta.Prompt = ""
 	ta.SetHeight(1)
 
+	// Resolve session: resume the most recent active session, or create a new one.
+	sessionID := resolveSession(pool)
+
 	return chatModel{
 		ctx:         ctx,
 		pool:        pool,
 		textarea:    ta,
+		sessionID:   sessionID,
 		provider:    provider,
 		model:       model,
 		history:     &strings.Builder{},
@@ -100,6 +105,29 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 		switchModel: switchFn,
 		currentRaw:  &strings.Builder{},
 	}
+}
+
+// resolveSession returns the most recently active non-archived session ID,
+// or creates a new session if none exist.
+func resolveSession(pool *agent.Pool) string {
+	sessions, err := pool.ListSessions(false)
+	if err == nil && len(sessions) > 0 {
+		// Find the most recently active session.
+		best := sessions[0]
+		for _, s := range sessions[1:] {
+			if s.LastActive.After(best.LastActive) {
+				best = s
+			}
+		}
+		return best.ID
+	}
+
+	info, err := pool.CreateSession()
+	if err != nil {
+		// Fallback: generate a simple ID so the app can still start.
+		return "session"
+	}
+	return info.ID
 }
 
 func (m chatModel) Init() tea.Cmd {
@@ -357,9 +385,15 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 	case "/quit", "/exit":
 		return tea.Quit
 	case "/new":
-		if err := m.pool.Reset(defaultSessionId); err != nil {
+		// Archive current session and create a fresh one.
+		_ = m.pool.ArchiveSession(m.sessionID)
+		info, err := m.pool.CreateSession()
+		if err != nil {
 			m.history.WriteString(errorStyle.Render("error: "+err.Error()) + "\n\n")
 		} else {
+			m.sessionID = info.ID
+			m.history.Reset()
+			m.historyPrefix = ""
 			m.history.WriteString(systemStyle.Render("[new session started]") + "\n\n")
 		}
 		m.viewport.SetContent(m.history.String())
@@ -395,8 +429,9 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 	m.textarea.Blur()
 
 	ctx := m.ctx
+	sessionID := m.sessionID
 	return func() tea.Msg {
-		stream := m.pool.Chat(ctx, defaultSessionId, input)
+		stream := m.pool.Chat(ctx, sessionID, input)
 		return streamStartMsg{stream: stream}
 	}
 }
@@ -519,7 +554,7 @@ func (m chatModel) handlePickingKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if err := m.pool.Reset(defaultSessionId); err != nil {
+		if err := m.pool.Reset(m.sessionID); err != nil {
 			m.history.WriteString(errorStyle.Render("error resetting session: "+err.Error()) + "\n\n")
 		}
 

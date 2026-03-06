@@ -22,7 +22,7 @@ type ModelListFunc = channel.ModelListFunc
 // ModelSwitchFunc re-exports channel.ModelSwitchFunc for use by callers.
 type ModelSwitchFunc = channel.ModelSwitchFunc
 
-const defaultSessionId = "session"
+const defaultStreamSessionId = "stream"
 
 // RunStream reads all of stdin as a prompt, sends it to the agent, and streams the response to stdout.
 func RunStream(ctx context.Context, pool *agent.Pool) error {
@@ -36,7 +36,7 @@ func RunStream(ctx context.Context, pool *agent.Pool) error {
 		return fmt.Errorf("empty prompt")
 	}
 
-	stream := pool.Chat(ctx, defaultSessionId, prompt)
+	stream := pool.Chat(ctx, defaultStreamSessionId, prompt)
 	for evt := range stream {
 		if evt.Err != nil {
 			return evt.Err

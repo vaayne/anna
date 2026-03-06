@@ -439,3 +439,141 @@ func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
 		t.Error("dead runner should be replaced with a new one")
 	}
 }
+
+func TestPoolCreateSession(t *testing.T) {
+	factory, _ := mockRunnerFactory(nil)
+	pool := NewPool(factory)
+	defer pool.Close()
+
+	info, err := pool.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if info.ID == "" {
+		t.Error("session ID should not be empty")
+	}
+	if info.Archived {
+		t.Error("new session should not be archived")
+	}
+	if info.CreatedAt.IsZero() {
+		t.Error("CreatedAt should be set")
+	}
+}
+
+func TestPoolCreateAndListSessions(t *testing.T) {
+	factory, _ := mockRunnerFactory(nil)
+	pool := NewPool(factory)
+	defer pool.Close()
+
+	pool.CreateSession()
+	pool.CreateSession()
+
+	sessions, err := pool.ListSessions(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Errorf("expected 2 sessions, got %d", len(sessions))
+	}
+}
+
+func TestPoolArchiveSession(t *testing.T) {
+	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
+	pool := NewPool(factory)
+	defer pool.Close()
+
+	info, _ := pool.CreateSession()
+
+	// Chat to create a runner
+	stream := pool.Chat(context.Background(), info.ID, "test")
+	for range stream {
+	}
+
+	if err := pool.ArchiveSession(info.ID); err != nil {
+		t.Fatalf("ArchiveSession: %v", err)
+	}
+
+	// Runner should be closed
+	if !(*runners)[0].closed {
+		t.Error("runner should be closed after archive")
+	}
+
+	// Session should be removed from memory
+	pool.mu.Lock()
+	_, exists := pool.sessions[info.ID]
+	pool.mu.Unlock()
+	if exists {
+		t.Error("session should be removed from memory after archive")
+	}
+}
+
+func TestPoolGetSession(t *testing.T) {
+	factory, _ := mockRunnerFactory(nil)
+	pool := NewPool(factory)
+	defer pool.Close()
+
+	info, _ := pool.CreateSession()
+
+	got, err := pool.GetSession(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != info.ID {
+		t.Errorf("got ID %q, want %q", got.ID, info.ID)
+	}
+}
+
+func TestPoolGetSessionNotFound(t *testing.T) {
+	factory, _ := mockRunnerFactory(nil)
+	pool := NewPool(factory)
+
+	_, err := pool.GetSession("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent session")
+	}
+}
+
+func TestPoolChatAutoTitles(t *testing.T) {
+	factory, _ := mockRunnerFactory([]runner.Event{{Text: "response"}})
+	pool := NewPool(factory)
+	defer pool.Close()
+
+	info, _ := pool.CreateSession()
+
+	stream := pool.Chat(context.Background(), info.ID, "How do I fix the bug in pool.go?")
+	for range stream {
+	}
+
+	pool.mu.Lock()
+	sess := pool.sessions[info.ID]
+	title := sess.Info.Title
+	pool.mu.Unlock()
+
+	if title == "" {
+		t.Error("session should have auto-generated title")
+	}
+	if title != "How do I fix the bug in pool.go?" {
+		t.Errorf("unexpected title: %q", title)
+	}
+}
+
+func TestPoolChatAutoTitleTruncates(t *testing.T) {
+	factory, _ := mockRunnerFactory([]runner.Event{{Text: "ok"}})
+	pool := NewPool(factory)
+	defer pool.Close()
+
+	info, _ := pool.CreateSession()
+
+	longMsg := "This is a very long message that should be truncated at a word boundary to keep the title reasonable and readable"
+	stream := pool.Chat(context.Background(), info.ID, longMsg)
+	for range stream {
+	}
+
+	pool.mu.Lock()
+	title := pool.sessions[info.ID].Info.Title
+	pool.mu.Unlock()
+
+	if len(title) > 65 { // 60 + "…"
+		t.Errorf("title too long (%d chars): %q", len(title), title)
+	}
+}

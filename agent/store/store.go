@@ -13,6 +13,15 @@ import (
 	"github.com/vaayne/anna/agent/runner"
 )
 
+// SessionInfo holds metadata about a session, persisted in the index file.
+type SessionInfo struct {
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastActive time.Time `json:"last_active"`
+	Archived   bool      `json:"archived"`
+}
+
 // Store persists session event history across restarts.
 type Store interface {
 	// Append writes events to the session log.
@@ -23,6 +32,13 @@ type Store interface {
 	Delete(sessionID string) error
 	// List returns all known session IDs.
 	List() ([]string, error)
+
+	// SaveInfo persists session metadata to the index.
+	SaveInfo(info SessionInfo) error
+	// LoadInfo reads metadata for a single session.
+	LoadInfo(sessionID string) (SessionInfo, error)
+	// ListInfo returns metadata for all sessions, optionally including archived.
+	ListInfo(includeArchived bool) ([]SessionInfo, error)
 }
 
 // Pi session file format (JSONL, compatible with pi-mono SessionManager).
@@ -103,6 +119,8 @@ type FileStore struct {
 	cwd string
 	// lastParentID tracks the last entry ID per session for parentId chaining.
 	lastParentID map[string]string
+	// index manages the _index.jsonl metadata file.
+	index *indexCache
 }
 
 // NewFileStore creates a FileStore rooted at dir.
@@ -111,7 +129,12 @@ func NewFileStore(dir string, cwd string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
-	return &FileStore{dir: dir, cwd: cwd, lastParentID: make(map[string]string)}, nil
+	return &FileStore{
+		dir:          dir,
+		cwd:          cwd,
+		lastParentID: make(map[string]string),
+		index:        newIndexCache(dir),
+	}, nil
 }
 
 func (s *FileStore) path(sessionID string) string {

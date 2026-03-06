@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/agent/store"
 )
@@ -55,6 +56,105 @@ func NewPool(factory runner.NewRunnerFunc, opts ...PoolOption) *Pool {
 	return p
 }
 
+// CreateSession creates a new session with a generated ID and persists its metadata.
+func (p *Pool) CreateSession() (SessionInfo, error) {
+	now := time.Now()
+	info := SessionInfo{
+		ID:         uuid.New().String()[:8],
+		CreatedAt:  now,
+		LastActive: now,
+	}
+
+	p.mu.Lock()
+	p.sessions[info.ID] = &Session{Info: info}
+	p.mu.Unlock()
+
+	if p.store != nil {
+		if err := p.store.SaveInfo(info); err != nil {
+			return info, fmt.Errorf("persist session info: %w", err)
+		}
+	}
+
+	p.log.Info("session created", "session_id", info.ID)
+	return info, nil
+}
+
+// GetSession returns metadata for a session.
+func (p *Pool) GetSession(sessionID string) (SessionInfo, error) {
+	p.mu.Lock()
+	sess, ok := p.sessions[sessionID]
+	p.mu.Unlock()
+	if ok {
+		return sess.Info, nil
+	}
+
+	if p.store != nil {
+		si, err := p.store.LoadInfo(sessionID)
+		if err == nil {
+			return si, nil
+		}
+	}
+	return SessionInfo{}, fmt.Errorf("session %q not found", sessionID)
+}
+
+// ListSessions returns metadata for all sessions.
+func (p *Pool) ListSessions(includeArchived bool) ([]SessionInfo, error) {
+	if p.store == nil {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		result := make([]SessionInfo, 0, len(p.sessions))
+		for _, sess := range p.sessions {
+			if !includeArchived && sess.Info.Archived {
+				continue
+			}
+			result = append(result, sess.Info)
+		}
+		return result, nil
+	}
+
+	items, err := p.store.ListInfo(includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]SessionInfo, len(items))
+	for i, si := range items {
+		result[i] = si
+	}
+	return result, nil
+}
+
+// ArchiveSession marks a session as archived, closes its runner, but keeps history on disk.
+// The session is removed from the in-memory map; its metadata persists in the index.
+func (p *Pool) ArchiveSession(sessionID string) error {
+	p.mu.Lock()
+	sess, ok := p.sessions[sessionID]
+	var r runner.Runner
+	if ok {
+		r = sess.Runner
+		delete(p.sessions, sessionID)
+	}
+	p.mu.Unlock()
+
+	if p.store != nil {
+		info, err := p.store.LoadInfo(sessionID)
+		if err == nil {
+			info.Archived = true
+			if err := p.store.SaveInfo(info); err != nil {
+				p.log.Warn("failed to persist archive", "session_id", sessionID, "error", err)
+			}
+		}
+	}
+
+	if r != nil {
+		if closer, ok := r.(io.Closer); ok {
+			return closer.Close()
+		}
+	}
+
+	p.log.Info("session archived", "session_id", sessionID)
+	return nil
+}
+
 // Chat sends a message in a session and streams back events.
 // Internally: gets/creates runner, passes history, collects events,
 // appends to session log, streams to caller.
@@ -72,10 +172,31 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 
 	p.log.Debug("chat started", "session_id", sessionID, "history_len", len(sess.Events), "message_len", len(message))
 
+	// Update last active timestamp.
+	now := time.Now()
+	p.mu.Lock()
+	sess.Info.LastActive = now
+	p.mu.Unlock()
+	p.touchLastActive(sessionID, now)
+
 	// Store user message so stateless runners can reconstruct the conversation.
 	userEvt := runner.RPCEvent{Type: "user_message", Summary: message}
 	p.mu.Lock()
 	sess.Events = append(sess.Events, userEvt)
+	// Auto-title: use the first user message as the session title.
+	if sess.Info.Title == "" && len(message) > 0 {
+		title := message
+		if len(title) > 60 {
+			// Truncate at word boundary.
+			if idx := strings.LastIndex(title[:60], " "); idx > 20 {
+				title = title[:idx] + "…"
+			} else {
+				title = title[:60] + "…"
+			}
+		}
+		sess.Info.Title = title
+		p.saveInfo(sess.Info)
+	}
 	p.mu.Unlock()
 	p.persist(sessionID, userEvt)
 
@@ -133,31 +254,10 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 	return out
 }
 
-// Reset clears session history and closes the current runner.
+// Reset archives the session and removes it from memory.
+// For backward compatibility — prefer ArchiveSession for new code.
 func (p *Pool) Reset(sessionID string) error {
-	p.mu.Lock()
-	sess, ok := p.sessions[sessionID]
-	if !ok {
-		p.mu.Unlock()
-		if p.store != nil {
-			return p.store.Delete(sessionID)
-		}
-		return nil
-	}
-	r := sess.Runner
-	delete(p.sessions, sessionID)
-	p.mu.Unlock()
-
-	if p.store != nil {
-		if err := p.store.Delete(sessionID); err != nil {
-			p.log.Warn("failed to delete persisted session", "session_id", sessionID, "error", err)
-		}
-	}
-
-	if closer, ok := r.(io.Closer); ok {
-		return closer.Close()
-	}
-	return nil
+	return p.ArchiveSession(sessionID)
 }
 
 // SetFactory replaces the runner factory used for new runners.
@@ -226,6 +326,17 @@ func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Sessio
 		sess = &Session{}
 		p.sessions[sessionID] = sess
 
+		// Restore metadata from index if available.
+		if p.store != nil {
+			if info, err := p.store.LoadInfo(sessionID); err == nil {
+				sess.Info = SessionInfo(info)
+			} else {
+				sess.Info = SessionInfo{ID: sessionID, CreatedAt: time.Now(), LastActive: time.Now()}
+			}
+		} else {
+			sess.Info = SessionInfo{ID: sessionID, CreatedAt: time.Now(), LastActive: time.Now()}
+		}
+
 		// Restore history from disk if available.
 		if p.store != nil {
 			p.mu.Unlock()
@@ -261,6 +372,31 @@ func (p *Pool) persist(sessionID string, events ...runner.RPCEvent) {
 	}
 	if err := p.store.Append(sessionID, events...); err != nil {
 		p.log.Warn("failed to persist event", "session_id", sessionID, "error", err)
+	}
+}
+
+// saveInfo persists session metadata. Caller must hold p.mu.
+func (p *Pool) saveInfo(info SessionInfo) {
+	if p.store == nil {
+		return
+	}
+	if err := p.store.SaveInfo(info); err != nil {
+		p.log.Warn("failed to persist session info", "session_id", info.ID, "error", err)
+	}
+}
+
+// touchLastActive updates the last active timestamp in the index.
+func (p *Pool) touchLastActive(sessionID string, t time.Time) {
+	if p.store == nil {
+		return
+	}
+	info, err := p.store.LoadInfo(sessionID)
+	if err != nil {
+		return
+	}
+	info.LastActive = t
+	if err := p.store.SaveInfo(info); err != nil {
+		p.log.Warn("failed to update last active", "session_id", sessionID, "error", err)
 	}
 }
 
