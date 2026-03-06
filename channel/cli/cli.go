@@ -10,7 +10,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/channel"
 )
+
+// ModelOption re-exports channel.ModelOption for use by callers.
+type ModelOption = channel.ModelOption
+
+// ModelSwitchFunc re-exports channel.ModelSwitchFunc for use by callers.
+type ModelSwitchFunc = channel.ModelSwitchFunc
 
 const defaultSessionId = "session"
 
@@ -38,8 +45,12 @@ func RunStream(ctx context.Context, pool *agent.Pool) error {
 }
 
 // RunChat starts an interactive terminal chat session using Bubble Tea.
-func RunChat(ctx context.Context, pool *agent.Pool) error {
-	m := newChatModel(ctx, pool)
+func RunChat(ctx context.Context, pool *agent.Pool, provider, model string, models []ModelOption, switchFn ModelSwitchFunc) error {
+	opts := make([]modelOption, len(models))
+	for i, m := range models {
+		opts[i] = modelOption{provider: m.Provider, model: m.Model}
+	}
+	m := newChatModel(ctx, pool, provider, model, opts, switchFn)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

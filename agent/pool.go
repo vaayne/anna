@@ -62,6 +62,11 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 
 	p.log.Debug("chat started", "session_id", sessionID, "history_len", len(sess.Events), "message_len", len(message))
 
+	// Store user message so stateless runners can reconstruct the conversation.
+	p.mu.Lock()
+	sess.Events = append(sess.Events, runner.RPCEvent{Type: "user_message", Summary: message})
+	p.mu.Unlock()
+
 	stream := r.Chat(ctx, sess.Events, message)
 
 	go func() {
@@ -101,6 +106,14 @@ func (p *Pool) Reset(sessionID string) error {
 		return closer.Close()
 	}
 	return nil
+}
+
+// SetFactory replaces the runner factory used for new runners.
+// Existing runners are not affected until their session is reset.
+func (p *Pool) SetFactory(factory runner.NewRunnerFunc) {
+	p.mu.Lock()
+	p.factory = factory
+	p.mu.Unlock()
 }
 
 // Close shuts down all sessions and runners.

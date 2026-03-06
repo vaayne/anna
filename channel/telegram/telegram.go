@@ -14,8 +14,14 @@ import (
 	"github.com/yuin/goldmark/parser"
 
 	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/channel"
 	tele "gopkg.in/telebot.v4"
 )
+
+// ModelOption re-exports channel.ModelOption for use by callers.
+type ModelOption = channel.ModelOption
+
+// ModelSwitchFunc re-exports channel.ModelSwitchFunc for use by callers.
 
 const telegramMaxMessageLen = 4000
 
@@ -29,7 +35,9 @@ var log = slog.With("component", "telegram")
 
 // Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled.
-func Run(ctx context.Context, token string, pool *agent.Pool) error {
+func Run(ctx context.Context, token string, pool *agent.Pool, models []ModelOption, switchFn channel.ModelSwitchFunc) error {
+	// Track per-chat active model for display purposes.
+	chatModels := make(map[int64]ModelOption)
 	bot, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
@@ -48,6 +56,48 @@ func Run(ctx context.Context, token string, pool *agent.Pool) error {
 		}
 		log.Info("session reset", "session_id", sessionID)
 		return c.Send("New session started.")
+	})
+
+	bot.Handle("/model", func(c tele.Context) error {
+		args := strings.TrimSpace(c.Message().Payload)
+
+		// No argument: list available models.
+		if args == "" {
+			if len(models) == 0 {
+				return c.Send("No models configured.")
+			}
+			active, ok := chatModels[c.Chat().ID]
+			var sb strings.Builder
+			sb.WriteString("Available models:\n\n")
+			for i, m := range models {
+				label := fmt.Sprintf("%s/%s", m.Provider, m.Model)
+				if ok && m.Provider == active.Provider && m.Model == active.Model {
+					label += " (current)"
+				}
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, label))
+			}
+			sb.WriteString("\nUse /model <number> to switch.")
+			return c.Send(sb.String())
+		}
+
+		// Argument provided: switch to that model.
+		idx, err := strconv.Atoi(args)
+		if err != nil || idx < 1 || idx > len(models) {
+			return c.Send(fmt.Sprintf("Invalid selection. Use a number between 1 and %d.", len(models)))
+		}
+		selected := models[idx-1]
+		if switchFn != nil {
+			if err := switchFn(selected.Provider, selected.Model); err != nil {
+				return c.Send(fmt.Sprintf("Error switching model: %v", err))
+			}
+		}
+		sessionID := strconv.FormatInt(c.Chat().ID, 10)
+		if err := pool.Reset(sessionID); err != nil {
+			log.Error("reset session after model switch failed", "session_id", sessionID, "error", err)
+		}
+		chatModels[c.Chat().ID] = selected
+		log.Info("model switched", "session_id", sessionID, "provider", selected.Provider, "model", selected.Model)
+		return c.Send(fmt.Sprintf("Switched to %s/%s. Session reset.", selected.Provider, selected.Model))
 	})
 
 	bot.Handle(tele.OnText, func(c tele.Context) error {

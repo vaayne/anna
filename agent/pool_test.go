@@ -177,8 +177,9 @@ func TestPoolChatAccumulatesHistory(t *testing.T) {
 	histLen := len(sess.Events)
 	pool.mu.Unlock()
 
-	if histLen != 2 {
-		t.Errorf("history length = %d, want 2", histLen)
+	// 1 user_message + 2 text deltas = 3 events.
+	if histLen != 3 {
+		t.Errorf("history length = %d, want 3", histLen)
 	}
 }
 
