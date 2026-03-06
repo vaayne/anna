@@ -8,15 +8,18 @@ import (
 )
 
 func consumeStream(sdkStream *ssestream.Stream[responses.ResponseStreamEventUnion], out *stream.ChannelEventStream) {
+	// Track item_id → call_id so argument deltas use the correct call ID.
+	itemToCall := make(map[string]string)
+
 	for sdkStream.Next() {
 		event := sdkStream.Current()
-		for _, e := range mapEvent(event) {
+		for _, e := range mapEvent(event, itemToCall) {
 			out.Emit(e)
 		}
 	}
 }
 
-func mapEvent(event responses.ResponseStreamEventUnion) []types.AssistantEvent {
+func mapEvent(event responses.ResponseStreamEventUnion, itemToCall map[string]string) []types.AssistantEvent {
 	var events []types.AssistantEvent
 
 	switch event.Type {
@@ -25,22 +28,28 @@ func mapEvent(event responses.ResponseStreamEventUnion) []types.AssistantEvent {
 			events = append(events, types.EventTextDelta{Text: event.Delta.OfString})
 		}
 
-	case "response.function_call_arguments.delta":
-		events = append(events, types.EventToolCallDelta{
-			ID:        event.ItemID,
-			Arguments: event.Delta.OfString,
-		})
-
-	case "response.function_call_arguments.done":
-		// name is available on the output item added event, not here
-
 	case "response.output_item.added":
 		if event.Item.Type == "function_call" {
+			// Record item_id → call_id so argument deltas can resolve the call ID.
+			itemToCall[event.Item.ID] = event.Item.CallID
 			events = append(events, types.EventToolCallDelta{
 				ID:   event.Item.CallID,
 				Name: event.Item.Name,
 			})
 		}
+
+	case "response.function_call_arguments.delta":
+		callID := event.ItemID
+		if mapped, ok := itemToCall[event.ItemID]; ok {
+			callID = mapped
+		}
+		events = append(events, types.EventToolCallDelta{
+			ID:        callID,
+			Arguments: event.Delta.OfString,
+		})
+
+	case "response.function_call_arguments.done":
+		// Arguments fully accumulated via deltas; nothing extra needed.
 
 	case "response.completed":
 		usage := event.Response.Usage

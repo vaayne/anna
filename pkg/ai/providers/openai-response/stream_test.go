@@ -7,6 +7,8 @@ import (
 	"github.com/vaayne/anna/pkg/ai/types"
 )
 
+func newItemToCall() map[string]string { return make(map[string]string) }
+
 func TestMapEventTextDelta(t *testing.T) {
 	event := responses.ResponseStreamEventUnion{
 		Type: "response.output_text.delta",
@@ -14,7 +16,7 @@ func TestMapEventTextDelta(t *testing.T) {
 			OfString: "hello",
 		},
 	}
-	events := mapEvent(event)
+	events := mapEvent(event, newItemToCall())
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
@@ -28,14 +30,19 @@ func TestMapEventTextDelta(t *testing.T) {
 }
 
 func TestMapEventFunctionCallArgumentsDelta(t *testing.T) {
+	// Simulate the real flow: output_item.added registers the item_id → call_id mapping,
+	// then arguments.delta uses item_id which gets resolved to call_id.
+	m := newItemToCall()
+	m["fc_0"] = "call_0"
+
 	event := responses.ResponseStreamEventUnion{
 		Type:   "response.function_call_arguments.delta",
-		ItemID: "call_0",
+		ItemID: "fc_0",
 		Delta: responses.ResponseStreamEventUnionDelta{
 			OfString: `{"q":"test"}`,
 		},
 	}
-	events := mapEvent(event)
+	events := mapEvent(event, m)
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
@@ -49,15 +56,17 @@ func TestMapEventFunctionCallArgumentsDelta(t *testing.T) {
 }
 
 func TestMapEventOutputItemAddedFunctionCall(t *testing.T) {
+	m := newItemToCall()
 	event := responses.ResponseStreamEventUnion{
 		Type: "response.output_item.added",
 		Item: responses.ResponseOutputItemUnion{
+			ID:     "fc_1",
 			Type:   "function_call",
 			CallID: "call_1",
 			Name:   "lookup",
 		},
 	}
-	events := mapEvent(event)
+	events := mapEvent(event, m)
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
@@ -67,6 +76,10 @@ func TestMapEventOutputItemAddedFunctionCall(t *testing.T) {
 	}
 	if tc.ID != "call_1" || tc.Name != "lookup" {
 		t.Fatalf("unexpected tool call: %+v", tc)
+	}
+	// Verify the item_id → call_id mapping was recorded.
+	if m["fc_1"] != "call_1" {
+		t.Fatalf("expected item_id mapping fc_1→call_1, got %q", m["fc_1"])
 	}
 }
 
@@ -82,7 +95,7 @@ func TestMapEventCompleted(t *testing.T) {
 			},
 		},
 	}
-	events := mapEvent(event)
+	events := mapEvent(event, newItemToCall())
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
 	}
@@ -106,7 +119,7 @@ func TestMapEventFailed(t *testing.T) {
 	event := responses.ResponseStreamEventUnion{
 		Type: "response.failed",
 	}
-	events := mapEvent(event)
+	events := mapEvent(event, newItemToCall())
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
@@ -119,11 +132,57 @@ func TestMapEventFailed(t *testing.T) {
 	}
 }
 
+func TestMapEventFunctionCallFlow(t *testing.T) {
+	// Simulate the full function call streaming sequence:
+	// 1. output_item.added (registers item_id → call_id)
+	// 2. function_call_arguments.delta (uses item_id, resolved to call_id)
+	m := newItemToCall()
+
+	// Step 1: output_item.added
+	added := responses.ResponseStreamEventUnion{
+		Type: "response.output_item.added",
+		Item: responses.ResponseOutputItemUnion{
+			ID:     "fc_abc",
+			Type:   "function_call",
+			CallID: "call_abc",
+			Name:   "bash",
+		},
+	}
+	events := mapEvent(added, m)
+	if len(events) != 1 {
+		t.Fatalf("step 1: expected 1 event, got %d", len(events))
+	}
+	tc := events[0].(types.EventToolCallDelta)
+	if tc.ID != "call_abc" || tc.Name != "bash" {
+		t.Fatalf("step 1: unexpected: %+v", tc)
+	}
+
+	// Step 2: arguments delta (item_id=fc_abc should resolve to call_abc)
+	delta := responses.ResponseStreamEventUnion{
+		Type:   "response.function_call_arguments.delta",
+		ItemID: "fc_abc",
+		Delta: responses.ResponseStreamEventUnionDelta{
+			OfString: `{"command":"ls"}`,
+		},
+	}
+	events = mapEvent(delta, m)
+	if len(events) != 1 {
+		t.Fatalf("step 2: expected 1 event, got %d", len(events))
+	}
+	tc = events[0].(types.EventToolCallDelta)
+	if tc.ID != "call_abc" {
+		t.Fatalf("step 2: expected ID call_abc, got %q", tc.ID)
+	}
+	if tc.Arguments != `{"command":"ls"}` {
+		t.Fatalf("step 2: unexpected arguments: %q", tc.Arguments)
+	}
+}
+
 func TestMapEventIncomplete(t *testing.T) {
 	event := responses.ResponseStreamEventUnion{
 		Type: "response.incomplete",
 	}
-	events := mapEvent(event)
+	events := mapEvent(event, newItemToCall())
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
