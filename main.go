@@ -21,6 +21,7 @@ import (
 	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
 	"github.com/vaayne/anna/cron"
+	"github.com/vaayne/anna/memory"
 )
 
 func main() {
@@ -140,6 +141,12 @@ func setup(parent context.Context) (*setupResult, error) {
 			return nil, fmt.Errorf("create cron service: %w", err)
 		}
 		extraTools = append(extraTools, cron.NewTool(cronSvc))
+	}
+
+	// Memory tool — always available for Go runner.
+	if cfg.Runner.Type == "go" {
+		memStore := memory.NewStore(configDir())
+		extraTools = append(extraTools, memory.NewTool(memStore))
 	}
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute

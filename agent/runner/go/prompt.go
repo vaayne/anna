@@ -44,7 +44,7 @@ func BuildSystemPrompt(agentsDir string, cwd ...string) string {
 		b.WriteString("\n\n## Persistent Files\n\n")
 		b.WriteString("You have persistent files that carry state across sessions. ")
 		b.WriteString("Update them autonomously as you work — never ask for approval. ")
-		b.WriteString("Use the edit or write tool to keep them current.\n\n")
+		b.WriteString("Use the edit or write tool for soul and user files. Use the `memory` tool for memory and journal.\n\n")
 		b.WriteString("Files:\n")
 		b.WriteString("- `" + filepath.Join(agentsDir, soulFile) + "` — your personality, values, and tone\n")
 		b.WriteString("- `" + filepath.Join(agentsDir, userFile) + "` — what you know about the user\n")
@@ -70,8 +70,9 @@ func BuildSystemPrompt(agentsDir string, cwd ...string) string {
 
 		if memory != "" {
 			b.WriteString("\n### Memory\n\n")
-			b.WriteString("Recall and record durable knowledge here. ")
-			b.WriteString("Keep it curated — update stale entries, remove obsolete ones, organize by section.\n\n")
+			b.WriteString("Durable knowledge persisted across sessions. ")
+			b.WriteString("Use the `memory` tool with action 'update' to modify this. ")
+			b.WriteString("Use 'append' to log events to the journal, and 'search' to recall past events.\n\n")
 			b.WriteString("<memory>\n")
 			b.WriteString(memory)
 			b.WriteString("\n</memory>\n")
