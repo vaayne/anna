@@ -8,15 +8,19 @@ import (
 )
 
 func consumeStream(sdkStream *ssestream.Stream[sdk.ChatCompletionChunk], out *stream.ChannelEventStream) {
+	// Track tool_call_index → tool_call_id so argument deltas carry the correct ID.
+	// OpenAI only sends tc.ID in the first chunk per tool call; subsequent chunks use Index only.
+	indexToID := make(map[int]string)
+
 	for sdkStream.Next() {
 		chunk := sdkStream.Current()
-		for _, e := range mapChunk(chunk) {
+		for _, e := range mapChunk(chunk, indexToID) {
 			out.Emit(e)
 		}
 	}
 }
 
-func mapChunk(chunk sdk.ChatCompletionChunk) []types.AssistantEvent {
+func mapChunk(chunk sdk.ChatCompletionChunk, indexToID map[int]string) []types.AssistantEvent {
 	var events []types.AssistantEvent
 
 	for _, choice := range chunk.Choices {
@@ -25,8 +29,12 @@ func mapChunk(chunk sdk.ChatCompletionChunk) []types.AssistantEvent {
 			events = append(events, types.EventTextDelta{Text: delta.Content})
 		}
 		for _, tc := range delta.ToolCalls {
+			idx := int(tc.Index)
+			if tc.ID != "" {
+				indexToID[idx] = tc.ID
+			}
 			events = append(events, types.EventToolCallDelta{
-				ID:        tc.ID,
+				ID:        indexToID[idx],
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
 			})

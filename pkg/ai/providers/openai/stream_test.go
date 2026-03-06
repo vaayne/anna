@@ -8,6 +8,7 @@ import (
 )
 
 func TestMapChunkTextAndStop(t *testing.T) {
+	indexToID := make(map[int]string)
 	chunk := sdk.ChatCompletionChunk{
 		Choices: []sdk.ChatCompletionChunkChoice{
 			{
@@ -21,7 +22,7 @@ func TestMapChunkTextAndStop(t *testing.T) {
 			TotalTokens:      6,
 		},
 	}
-	events := mapChunk(chunk)
+	events := mapChunk(chunk, indexToID)
 	if len(events) != 3 {
 		t.Fatalf("expected 3 events, got %d", len(events))
 	}
@@ -37,12 +38,14 @@ func TestMapChunkTextAndStop(t *testing.T) {
 }
 
 func TestMapChunkToolCalls(t *testing.T) {
+	indexToID := make(map[int]string)
 	chunk := sdk.ChatCompletionChunk{
 		Choices: []sdk.ChatCompletionChunkChoice{
 			{
 				Delta: sdk.ChatCompletionChunkChoiceDelta{
 					ToolCalls: []sdk.ChatCompletionChunkChoiceDeltaToolCall{
 						{
+							Index:    0,
 							ID:       "call_0",
 							Function: sdk.ChatCompletionChunkChoiceDeltaToolCallFunction{Name: "lookup", Arguments: `{"q":"test"}`},
 						},
@@ -52,7 +55,7 @@ func TestMapChunkToolCalls(t *testing.T) {
 			},
 		},
 	}
-	events := mapChunk(chunk)
+	events := mapChunk(chunk, indexToID)
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
 	}
@@ -65,5 +68,54 @@ func TestMapChunkToolCalls(t *testing.T) {
 	}
 	if _, ok := events[1].(types.EventStop); !ok {
 		t.Fatalf("expected stop event")
+	}
+}
+
+func TestMapChunkToolCallIDCarriedForward(t *testing.T) {
+	indexToID := make(map[int]string)
+
+	// First chunk: carries the tool call ID and name.
+	chunk1 := sdk.ChatCompletionChunk{
+		Choices: []sdk.ChatCompletionChunkChoice{
+			{
+				Delta: sdk.ChatCompletionChunkChoiceDelta{
+					ToolCalls: []sdk.ChatCompletionChunkChoiceDeltaToolCall{
+						{Index: 0, ID: "call_abc", Function: sdk.ChatCompletionChunkChoiceDeltaToolCallFunction{Name: "read_file"}},
+					},
+				},
+			},
+		},
+	}
+	events := mapChunk(chunk1, indexToID)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	tc := events[0].(types.EventToolCallDelta)
+	if tc.ID != "call_abc" || tc.Name != "read_file" {
+		t.Fatalf("unexpected first delta: %+v", tc)
+	}
+
+	// Second chunk: no ID, only arguments at the same index.
+	chunk2 := sdk.ChatCompletionChunk{
+		Choices: []sdk.ChatCompletionChunkChoice{
+			{
+				Delta: sdk.ChatCompletionChunkChoiceDelta{
+					ToolCalls: []sdk.ChatCompletionChunkChoiceDeltaToolCall{
+						{Index: 0, Function: sdk.ChatCompletionChunkChoiceDeltaToolCallFunction{Arguments: `{"path":"/tmp"}`}},
+					},
+				},
+			},
+		},
+	}
+	events = mapChunk(chunk2, indexToID)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	tc = events[0].(types.EventToolCallDelta)
+	if tc.ID != "call_abc" {
+		t.Fatalf("expected ID 'call_abc' on argument delta, got %q", tc.ID)
+	}
+	if tc.Arguments != `{"path":"/tmp"}` {
+		t.Fatalf("unexpected arguments: %q", tc.Arguments)
 	}
 }
