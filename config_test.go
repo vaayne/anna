@@ -33,8 +33,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Provider != "anthropic" {
 		t.Errorf("Provider = %q, want %q", cfg.Provider, "anthropic")
 	}
-	if cfg.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("Model = %q, want %q", cfg.Model, "claude-sonnet-4-20250514")
+	if cfg.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want %q", cfg.Model, "claude-sonnet-4-6")
 	}
 }
 
@@ -261,8 +261,8 @@ func TestProviderDefaultValues(t *testing.T) {
 	if cfg.Provider != "anthropic" {
 		t.Errorf("Provider = %q, want default %q", cfg.Provider, "anthropic")
 	}
-	if cfg.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("Model = %q, want default %q", cfg.Model, "claude-sonnet-4-20250514")
+	if cfg.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want default %q", cfg.Model, "claude-sonnet-4-6")
 	}
 }
 
@@ -356,13 +356,13 @@ func TestProvidersFromYAML(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `
 provider: anthropic
-model: claude-sonnet-4-20250514
+model: claude-sonnet-4-6
 providers:
   anthropic:
     api_key: "yaml-key"
     base_url: "https://yaml-proxy.example.com"
     models:
-      - id: claude-sonnet-4-20250514
+      - id: claude-sonnet-4-6
         name: Claude Sonnet 4
         api: anthropic-messages
         reasoning: false
@@ -401,8 +401,8 @@ providers:
 	if len(ant.Models) != 1 {
 		t.Fatalf("Providers[anthropic].Models len = %d, want 1", len(ant.Models))
 	}
-	if ant.Models[0].ID != "claude-sonnet-4-20250514" {
-		t.Errorf("model ID = %q, want %q", ant.Models[0].ID, "claude-sonnet-4-20250514")
+	if ant.Models[0].ID != "claude-sonnet-4-6" {
+		t.Errorf("model ID = %q, want %q", ant.Models[0].ID, "claude-sonnet-4-6")
 	}
 	if ant.Models[0].ContextWindow != 200000 {
 		t.Errorf("model ContextWindow = %d, want 200000", ant.Models[0].ContextWindow)
@@ -423,13 +423,13 @@ providers:
 func TestResolveModelFromConfig(t *testing.T) {
 	cfg := &Config{
 		Provider: "anthropic",
-		Model:    "claude-sonnet-4-20250514",
+		Model:    "claude-sonnet-4-6",
 		Providers: map[string]ProviderConfig{
 			"anthropic": {
 				APIKey: "key",
 				Models: []ModelConfig{
 					{
-						ID:            "claude-sonnet-4-20250514",
+						ID:            "claude-sonnet-4-6",
 						Name:          "Claude Sonnet 4",
 						API:           "anthropic-messages",
 						ContextWindow: 200000,
@@ -441,8 +441,8 @@ func TestResolveModelFromConfig(t *testing.T) {
 	}
 
 	model := cfg.ResolveModel()
-	if model.ID != "claude-sonnet-4-20250514" {
-		t.Errorf("model.ID = %q, want %q", model.ID, "claude-sonnet-4-20250514")
+	if model.ID != "claude-sonnet-4-6" {
+		t.Errorf("model.ID = %q, want %q", model.ID, "claude-sonnet-4-6")
 	}
 	if model.API != "anthropic-messages" {
 		t.Errorf("model.API = %q, want %q", model.API, "anthropic-messages")
@@ -455,13 +455,13 @@ func TestResolveModelFromConfig(t *testing.T) {
 func TestResolveModelFallback(t *testing.T) {
 	cfg := &Config{
 		Provider:  "anthropic",
-		Model:     "claude-sonnet-4-20250514",
+		Model:     "claude-sonnet-4-6",
 		Providers: map[string]ProviderConfig{"anthropic": {APIKey: "key"}},
 	}
 
 	model := cfg.ResolveModel()
-	if model.ID != "claude-sonnet-4-20250514" {
-		t.Errorf("model.ID = %q, want %q", model.ID, "claude-sonnet-4-20250514")
+	if model.ID != "claude-sonnet-4-6" {
+		t.Errorf("model.ID = %q, want %q", model.ID, "claude-sonnet-4-6")
 	}
 	if model.API != "anthropic" {
 		t.Errorf("model.API = %q, want %q (fallback to provider name)", model.API, "anthropic")

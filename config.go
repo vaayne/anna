@@ -124,7 +124,7 @@ func loadConfigFrom(dir string) (*Config, error) {
 		cfg.Provider = "anthropic"
 	}
 	if cfg.Model == "" {
-		cfg.Model = "claude-sonnet-4-20250514"
+		cfg.Model = "claude-sonnet-4-6"
 	}
 	if cfg.Runner.Type == "" {
 		cfg.Runner.Type = "process"
