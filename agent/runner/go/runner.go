@@ -10,11 +10,12 @@ import (
 
 	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/agent/runner/go/tool"
+	"github.com/vaayne/anna/pkg/agent/core"
+	agenttypes "github.com/vaayne/anna/pkg/agent/types"
 	"github.com/vaayne/anna/pkg/ai/providers/anthropic"
 	"github.com/vaayne/anna/pkg/ai/providers/openai"
 	openairesponse "github.com/vaayne/anna/pkg/ai/providers/openai-response"
 	"github.com/vaayne/anna/pkg/ai/registry"
-	"github.com/vaayne/anna/pkg/ai/stream"
 	aitypes "github.com/vaayne/anna/pkg/ai/types"
 )
 
@@ -30,8 +31,9 @@ type Config struct {
 	WorkDir string // working directory for tool execution
 }
 
-// Runner implements runner.Runner by calling LLM providers directly.
+// Runner implements runner.Runner by calling LLM providers directly via Engine.
 type Runner struct {
+	engine *core.Engine
 	reg    *registry.Registry
 	tools  *tool.Registry
 	model  aitypes.Model
@@ -61,6 +63,7 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 	reg.Register(openairesponse.New(openairesponse.Config{BaseURL: cfg.BaseURL}))
 
 	return &Runner{
+		engine:       &core.Engine{Providers: reg},
 		reg:          reg,
 		tools:        tool.NewRegistry(cfg.WorkDir),
 		model:        aitypes.Model{API: cfg.API, Name: cfg.Model},
@@ -71,45 +74,7 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 	}, nil
 }
 
-// toolCallAccumulator collects streamed tool call deltas into complete calls.
-type toolCallAccumulator struct {
-	calls []aitypes.ToolCall
-	args  map[string]string // id → accumulated argument JSON
-}
-
-func newToolCallAccumulator() *toolCallAccumulator {
-	return &toolCallAccumulator{args: make(map[string]string)}
-}
-
-func (a *toolCallAccumulator) addDelta(d aitypes.EventToolCallDelta) {
-	if d.ID != "" && d.Name != "" {
-		a.calls = append(a.calls, aitypes.ToolCall{ID: d.ID, Name: d.Name})
-		a.args[d.ID] = ""
-	}
-	if d.Arguments != "" {
-		id := d.ID
-		if id == "" && len(a.calls) > 0 {
-			id = a.calls[len(a.calls)-1].ID
-		}
-		a.args[id] += d.Arguments
-	}
-}
-
-func (a *toolCallAccumulator) finalize() []aitypes.ToolCall {
-	for i := range a.calls {
-		raw := a.args[a.calls[i].ID]
-		if raw != "" {
-			var parsed map[string]any
-			if json.Unmarshal([]byte(raw), &parsed) == nil {
-				a.calls[i].Arguments = parsed
-			}
-		}
-	}
-	return a.calls
-}
-
-// Chat converts history, streams from the LLM provider, executes tool calls
-// in a loop, and forwards text deltas to the returned channel.
+// Chat converts history, runs the Engine agent loop, and forwards events to the returned channel.
 func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message string) <-chan runner.Event {
 	out := make(chan runner.Event, 100)
 
@@ -123,111 +88,23 @@ func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message st
 		messages := convertHistory(history)
 		messages = append(messages, aitypes.UserMessage{Content: message})
 
-		for i := range maxToolIterations {
-			toolCalls, err := r.streamOnce(ctx, messages, out)
-			if err != nil {
-				out <- runner.Event{Err: err}
-				return
-			}
-
-			if len(toolCalls) == 0 {
-				return
-			}
-
-			r.log.Debug("executing tool calls", "iteration", i, "count", len(toolCalls))
-
-			// Build assistant message with tool calls.
-			assistantBlocks := make([]aitypes.ContentBlock, 0, len(toolCalls))
-			for _, tc := range toolCalls {
-				assistantBlocks = append(assistantBlocks, tc)
-			}
-			messages = append(messages, aitypes.AssistantMessage{Content: assistantBlocks})
-
-			// Execute each tool and append results.
-			for _, tc := range toolCalls {
-				out <- runner.Event{ToolUse: &runner.ToolUseEvent{
-					Tool:   tc.Name,
-					Status: "running",
-					Input:  summarizeToolInput(tc.Name, tc.Arguments),
-				}}
-
-				result, execErr := r.tools.Execute(ctx, tc.Name, tc.Arguments)
-				isError := execErr != nil
-				content := result
-				if isError {
-					content = execErr.Error()
-					if result != "" {
-						content = result + "\n" + content
-					}
-				}
-
-				status := "done"
-				detail := ""
-				if isError {
-					status = "error"
-					detail = execErr.Error()
-				}
-				out <- runner.Event{ToolUse: &runner.ToolUseEvent{
-					Tool:   tc.Name,
-					Status: status,
-					Input:  summarizeToolInput(tc.Name, tc.Arguments),
-					Detail: detail,
-				}}
-
-				r.log.Debug("tool result", "tool", tc.Name, "is_error", isError, "result_len", len(content))
-
-				messages = append(messages, aitypes.ToolResultMessage{
-					ToolCallID: tc.ID,
-					ToolName:   tc.Name,
-					Content:    []aitypes.ContentBlock{aitypes.TextContent{Text: content}},
-					IsError:    isError,
-				})
-			}
+		cfg := agenttypes.Config{
+			Model:           r.model,
+			StreamOptions:   aitypes.StreamOptions{APIKey: r.apiKey},
+			MaxTurns:        maxToolIterations,
+			Tools:           r.buildToolSet(),
+			ToolDefinitions: r.tools.Definitions(),
+			System:          r.system,
 		}
 
-		out <- runner.Event{Err: fmt.Errorf("max tool iterations (%d) reached", maxToolIterations)}
+		r.engine.Run(ctx, cfg, messages, func(e agenttypes.Event) {
+			for _, evt := range convertEvent(e) {
+				out <- evt
+			}
+		})
 	}()
 
 	return out
-}
-
-// streamOnce runs a single LLM streaming request, forwarding text deltas to
-// out and returning any accumulated tool calls.
-func (r *Runner) streamOnce(ctx context.Context, messages []aitypes.Message, out chan<- runner.Event) ([]aitypes.ToolCall, error) {
-	opts := aitypes.StreamOptions{APIKey: r.apiKey}
-	aiCtx := aitypes.Context{
-		System:   r.system,
-		Messages: messages,
-		Tools:    r.tools.Definitions(),
-	}
-
-	eventStream, err := stream.Stream(r.model, aiCtx, opts, r.reg)
-	if err != nil {
-		return nil, fmt.Errorf("stream: %w", err)
-	}
-
-	acc := newToolCallAccumulator()
-
-	for event := range eventStream.Events() {
-		switch e := event.(type) {
-		case aitypes.EventTextDelta:
-			if e.Text != "" {
-				out <- runner.Event{Text: e.Text}
-			}
-		case aitypes.EventToolCallDelta:
-			acc.addDelta(e)
-		case aitypes.EventError:
-			if e.Err != nil {
-				return nil, e.Err
-			}
-		}
-	}
-
-	if err := eventStream.Wait(); err != nil {
-		return nil, err
-	}
-
-	return acc.finalize(), nil
 }
 
 // Alive always returns true — the Go runner has no subprocess to die.
@@ -242,6 +119,74 @@ func (r *Runner) LastActivity() time.Time {
 
 // Close is a no-op for the Go runner.
 func (r *Runner) Close() error { return nil }
+
+// buildToolSet adapts tool.Registry to agenttypes.ToolSet for Engine.
+func (r *Runner) buildToolSet() agenttypes.ToolSet {
+	set := agenttypes.ToolSet{}
+	for _, def := range r.tools.Definitions() {
+		name := def.Name
+		set[name] = func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error) {
+			result, err := r.tools.Execute(ctx, name, call.Arguments)
+			return aitypes.TextContent{Text: result}, err
+		}
+	}
+	return set
+}
+
+// convertEvent bridges agenttypes.Event to runner.Event(s).
+func convertEvent(e agenttypes.Event) []runner.Event {
+	switch e := e.(type) {
+	case agenttypes.AssistantDelta:
+		if d, ok := e.Event.(aitypes.EventTextDelta); ok && d.Text != "" {
+			return []runner.Event{{Text: d.Text}}
+		}
+
+	case agenttypes.AssistantFinished:
+		// Emit Store events for tool calls in the final message.
+		var events []runner.Event
+		for _, block := range e.Message.Content {
+			if call, ok := block.(aitypes.ToolCall); ok {
+				rpc := runner.ToolCallToRPCEvent(call)
+				events = append(events, runner.Event{Store: &rpc})
+			}
+		}
+		return events
+
+	case agenttypes.ToolStarted:
+		return []runner.Event{{ToolUse: &runner.ToolUseEvent{
+			Tool:   e.ToolCall.Name,
+			Status: "running",
+			Input:  summarizeToolInput(e.ToolCall.Name, e.ToolCall.Arguments),
+		}}}
+
+	case agenttypes.ToolFinished:
+		status := "done"
+		detail := ""
+		if e.Result.IsError {
+			status = "error"
+			for _, block := range e.Result.Content {
+				if tc, ok := block.(aitypes.TextContent); ok {
+					detail = tc.Text
+				}
+			}
+		}
+		rpc := runner.ToolResultToRPCEvent(e.Result)
+		return []runner.Event{
+			{ToolUse: &runner.ToolUseEvent{
+				Tool:   e.Result.ToolName,
+				Status: status,
+				Input:  summarizeToolInput(e.Result.ToolName, nil),
+				Detail: detail,
+			}},
+			{Store: &rpc},
+		}
+
+	case agenttypes.AgentErrored:
+		return []runner.Event{{Err: e.Err}}
+	}
+
+	return nil
+}
 
 // summarizeToolInput returns a short human-readable summary of tool arguments.
 func summarizeToolInput(toolName string, args map[string]any) string {
@@ -270,11 +215,10 @@ func summarizeToolInput(toolName string, args map[string]any) string {
 }
 
 // convertHistory rebuilds []aitypes.Message from RPCEvent history.
-// User messages (type "user_message") become UserMessage.
-// Consecutive text_delta events are merged into a single AssistantMessage.
 func convertHistory(events []runner.RPCEvent) []aitypes.Message {
 	var messages []aitypes.Message
 	var textBuf string
+	var pendingCalls []aitypes.ToolCall
 
 	flush := func() {
 		if textBuf != "" {
@@ -285,22 +229,59 @@ func convertHistory(events []runner.RPCEvent) []aitypes.Message {
 		}
 	}
 
+	flushToolCalls := func() {
+		if len(pendingCalls) > 0 {
+			blocks := make([]aitypes.ContentBlock, 0, len(pendingCalls)+1)
+			if textBuf != "" {
+				blocks = append(blocks, aitypes.TextContent{Text: textBuf})
+				textBuf = ""
+			}
+			for _, c := range pendingCalls {
+				blocks = append(blocks, c)
+			}
+			messages = append(messages, aitypes.AssistantMessage{Content: blocks})
+			pendingCalls = nil
+		}
+	}
+
 	for _, evt := range events {
 		switch evt.Type {
-		case "user_message":
+		case runner.RPCEventUserMessage:
+			flushToolCalls()
 			flush()
 			messages = append(messages, aitypes.UserMessage{Content: evt.Summary})
 
-		case "message_update":
+		case runner.RPCEventMessageUpdate:
 			if len(evt.AssistantMessageEvent) > 0 {
 				var ame runner.AssistantMessageEvent
 				if json.Unmarshal(evt.AssistantMessageEvent, &ame) == nil && ame.Type == "text_delta" {
 					textBuf += ame.Delta
 				}
 			}
+
+		case runner.RPCEventToolCall:
+			var args map[string]any
+			_ = json.Unmarshal(evt.Result, &args)
+			pendingCalls = append(pendingCalls, aitypes.ToolCall{
+				ID:        evt.ID,
+				Name:      evt.Tool,
+				Arguments: args,
+			})
+
+		case runner.RPCEventToolResult:
+			flushToolCalls()
+			var content string
+			_ = json.Unmarshal(evt.Result, &content)
+			messages = append(messages, aitypes.ToolResultMessage{
+				ToolCallID: evt.ID,
+				ToolName:   evt.Tool,
+				Content:    []aitypes.ContentBlock{aitypes.TextContent{Text: content}},
+				IsError:    evt.Error != "",
+			})
 		}
 	}
 
+	flushToolCalls()
 	flush()
 	return messages
 }

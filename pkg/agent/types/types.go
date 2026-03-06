@@ -14,9 +14,11 @@ type ToolSet map[string]ToolFunc
 
 // Config configures the agent loop behavior.
 type Config struct {
-	Model         aitypes.Model
-	StreamOptions aitypes.StreamOptions
-	MaxTurns      int
-	Tools         ToolSet
-	Interrupt     <-chan struct{}
+	Model           aitypes.Model
+	StreamOptions   aitypes.StreamOptions
+	MaxTurns        int
+	Tools           ToolSet
+	ToolDefinitions []aitypes.ToolDefinition
+	System          string
+	Interrupt       <-chan struct{}
 }

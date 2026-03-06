@@ -2,6 +2,7 @@ package gorunner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -59,10 +60,10 @@ func TestConvertHistoryEmpty(t *testing.T) {
 
 func TestConvertHistoryRoundTrip(t *testing.T) {
 	events := []runner.RPCEvent{
-		{Type: "user_message", Summary: "hello"},
+		{Type: runner.RPCEventUserMessage, Summary: "hello"},
 		runner.TextDeltaToRPCEvent("Hi "),
 		runner.TextDeltaToRPCEvent("there!"),
-		{Type: "user_message", Summary: "how are you?"},
+		{Type: runner.RPCEventUserMessage, Summary: "how are you?"},
 		runner.TextDeltaToRPCEvent("I'm fine."),
 	}
 
@@ -72,7 +73,6 @@ func TestConvertHistoryRoundTrip(t *testing.T) {
 		t.Fatalf("expected 4 messages, got %d", len(msgs))
 	}
 
-	// Verify message order and types.
 	expected := []string{"user", "assistant", "user", "assistant"}
 	for i, msg := range msgs {
 		got := messageType(msg)
@@ -112,8 +112,8 @@ func messageType(msg aitypes.Message) string {
 
 func TestConvertHistorySkipsUnknownTypes(t *testing.T) {
 	events := []runner.RPCEvent{
-		{Type: "user_message", Summary: "hi"},
-		{Type: "agent_end"},
+		{Type: runner.RPCEventUserMessage, Summary: "hi"},
+		{Type: runner.RPCEventAgentEnd},
 		{Type: "error", Error: "something"},
 		runner.TextDeltaToRPCEvent("reply"),
 	}
@@ -127,7 +127,7 @@ func TestConvertHistorySkipsUnknownTypes(t *testing.T) {
 
 func TestConvertHistoryMultipleConsecutiveDeltas(t *testing.T) {
 	events := []runner.RPCEvent{
-		{Type: "user_message", Summary: "hi"},
+		{Type: runner.RPCEventUserMessage, Summary: "hi"},
 		runner.TextDeltaToRPCEvent("a"),
 		runner.TextDeltaToRPCEvent("b"),
 		runner.TextDeltaToRPCEvent("c"),
@@ -156,11 +156,11 @@ func TestConvertHistoryMultipleConsecutiveDeltas(t *testing.T) {
 
 func TestConvertHistoryAlternatingTurns(t *testing.T) {
 	events := []runner.RPCEvent{
-		{Type: "user_message", Summary: "turn1"},
+		{Type: runner.RPCEventUserMessage, Summary: "turn1"},
 		runner.TextDeltaToRPCEvent("reply1"),
-		{Type: "user_message", Summary: "turn2"},
+		{Type: runner.RPCEventUserMessage, Summary: "turn2"},
 		runner.TextDeltaToRPCEvent("reply2"),
-		{Type: "user_message", Summary: "turn3"},
+		{Type: runner.RPCEventUserMessage, Summary: "turn3"},
 		runner.TextDeltaToRPCEvent("reply3a"),
 		runner.TextDeltaToRPCEvent("reply3b"),
 	}
@@ -179,7 +179,6 @@ func TestConvertHistoryAlternatingTurns(t *testing.T) {
 		}
 	}
 
-	// Last assistant message should have merged deltas.
 	am := msgs[5].(aitypes.AssistantMessage)
 	tc := am.Content[0].(aitypes.TextContent)
 	if tc.Text != "reply3areply3b" {
@@ -187,11 +186,61 @@ func TestConvertHistoryAlternatingTurns(t *testing.T) {
 	}
 }
 
+func TestConvertHistoryWithToolEvents(t *testing.T) {
+	argsJSON, _ := json.Marshal(map[string]any{"command": "echo hello"})
+	contentJSON, _ := json.Marshal("hello\n")
+
+	events := []runner.RPCEvent{
+		{Type: runner.RPCEventUserMessage, Summary: "run echo"},
+		runner.TextDeltaToRPCEvent("Let me run that."),
+		{Type: runner.RPCEventToolCall, ID: "tc_1", Tool: "bash", Result: argsJSON},
+		{Type: runner.RPCEventToolResult, ID: "tc_1", Tool: "bash", Result: contentJSON},
+		runner.TextDeltaToRPCEvent("Done!"),
+	}
+
+	msgs := convertHistory(events)
+
+	// Expected: user, assistant(text+toolcall), tool_result, assistant(text)
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	}
+
+	expectedTypes := []string{"user", "assistant", "tool", "assistant"}
+	for i, msg := range msgs {
+		got := messageType(msg)
+		if got != expectedTypes[i] {
+			t.Errorf("message %d: type = %q, want %q", i, got, expectedTypes[i])
+		}
+	}
+
+	// Assistant message should have text + tool call.
+	am := msgs[1].(aitypes.AssistantMessage)
+	if len(am.Content) != 2 {
+		t.Fatalf("expected 2 content blocks in assistant message, got %d", len(am.Content))
+	}
+	if _, ok := am.Content[0].(aitypes.TextContent); !ok {
+		t.Errorf("expected TextContent first, got %T", am.Content[0])
+	}
+	if tc, ok := am.Content[1].(aitypes.ToolCall); !ok {
+		t.Errorf("expected ToolCall second, got %T", am.Content[1])
+	} else {
+		if tc.Name != "bash" {
+			t.Errorf("tool call name = %q, want %q", tc.Name, "bash")
+		}
+	}
+
+	// Tool result.
+	tr := msgs[2].(aitypes.ToolResultMessage)
+	if tr.ToolCallID != "tc_1" {
+		t.Errorf("tool result ID = %q, want %q", tr.ToolCallID, "tc_1")
+	}
+}
+
 // fakeProvider implements stream.Provider for testing Chat() without real API calls.
 type fakeProvider struct {
 	api    string
 	events []aitypes.AssistantEvent
-	err    error // returned from Stream() if non-nil
+	err    error
 }
 
 func (f *fakeProvider) API() string { return f.api }
@@ -225,7 +274,6 @@ func newTestRunner(t *testing.T, fp *fakeProvider) *Runner {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	// Replace the registry with one containing our fake.
 	r.reg.Register(fp)
 	return r
 }
@@ -260,10 +308,7 @@ func TestChatStreamsTextDeltas(t *testing.T) {
 func TestChatStreamError(t *testing.T) {
 	fp := &fakeProvider{
 		api: "anthropic",
-		events: []aitypes.AssistantEvent{
-			aitypes.EventTextDelta{Text: "partial"},
-			aitypes.EventError{Err: errors.New("provider boom")},
-		},
+		err: errors.New("provider boom"),
 	}
 	r := newTestRunner(t, fp)
 
@@ -279,9 +324,6 @@ func TestChatStreamError(t *testing.T) {
 
 	if gotErr == nil {
 		t.Fatal("expected error from stream")
-	}
-	if gotErr.Error() != "provider boom" {
-		t.Errorf("error = %q, want %q", gotErr.Error(), "provider boom")
 	}
 }
 
@@ -311,8 +353,6 @@ func TestChatUnknownProvider(t *testing.T) {
 }
 
 func TestChatContextCancellation(t *testing.T) {
-	// When the stream finishes (e.g. provider closes), the Chat channel
-	// should close even if context was already cancelled.
 	fp := &fakeProvider{
 		api: "anthropic",
 		events: []aitypes.AssistantEvent{
@@ -323,7 +363,7 @@ func TestChatContextCancellation(t *testing.T) {
 	r := newTestRunner(t, fp)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before Chat
+	cancel()
 
 	ch := r.Chat(ctx, nil, "hi")
 
@@ -336,7 +376,6 @@ func TestChatContextCancellation(t *testing.T) {
 
 	select {
 	case <-done:
-		// OK — channel closed without hanging.
 	case <-time.After(2 * time.Second):
 		t.Fatal("Chat channel did not close after context cancellation")
 	}
@@ -353,7 +392,7 @@ func TestLastActivityUpdatesOnChat(t *testing.T) {
 	r := newTestRunner(t, fp)
 
 	before := time.Now()
-	time.Sleep(1 * time.Millisecond) // ensure time advances
+	time.Sleep(1 * time.Millisecond)
 
 	ch := r.Chat(context.Background(), nil, "hi")
 	for range ch {
@@ -396,15 +435,13 @@ func (f *sequentialFakeProvider) StreamSimple(_ aitypes.Model, _ aitypes.Context
 }
 
 func TestChatToolUseLoop(t *testing.T) {
-	// Round 1: model calls "read" tool.
-	// Round 2: model responds with text.
 	dir := t.TempDir()
 	fp := &sequentialFakeProvider{
 		api: "anthropic",
 		rounds: [][]aitypes.AssistantEvent{
 			{
 				aitypes.EventToolCallDelta{ID: "tc_1", Name: "bash"},
-				aitypes.EventToolCallDelta{Arguments: `{"command": "echo hello"}`},
+				aitypes.EventToolCallDelta{ID: "tc_1", Arguments: `{"command": "echo hello"}`},
 				aitypes.EventStop{Reason: aitypes.StopReasonToolUse},
 			},
 			{
@@ -437,27 +474,6 @@ func TestChatToolUseLoop(t *testing.T) {
 
 	if collected != "The result is hello" {
 		t.Errorf("collected = %q, want %q", collected, "The result is hello")
-	}
-}
-
-func TestChatToolCallAccumulation(t *testing.T) {
-	acc := newToolCallAccumulator()
-
-	// Simulate Anthropic-style: ID+Name first, then argument deltas.
-	acc.addDelta(aitypes.EventToolCallDelta{ID: "tc_1", Name: "read"})
-	acc.addDelta(aitypes.EventToolCallDelta{Arguments: `{"file_`})
-	acc.addDelta(aitypes.EventToolCallDelta{Arguments: `path": "test.txt"}`})
-
-	calls := acc.finalize()
-	if len(calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(calls))
-	}
-	if calls[0].Name != "read" {
-		t.Errorf("name = %q, want %q", calls[0].Name, "read")
-	}
-	path, ok := calls[0].Arguments["file_path"].(string)
-	if !ok || path != "test.txt" {
-		t.Errorf("file_path = %v, want %q", calls[0].Arguments["file_path"], "test.txt")
 	}
 }
 

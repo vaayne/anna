@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	aitypes "github.com/vaayne/anna/pkg/ai/types"
 )
 
 // RPCCommand is sent to Pi's stdin as NDJSON.
@@ -12,6 +14,17 @@ type RPCCommand struct {
 	Type    string `json:"type"`
 	Message string `json:"message,omitempty"`
 }
+
+// RPCEvent type constants.
+const (
+	RPCEventUserMessage   = "user_message"
+	RPCEventMessageUpdate = "message_update"
+	RPCEventToolCall      = "tool_call"
+	RPCEventToolResult    = "tool_result"
+	RPCEventToolStart     = "tool_start"
+	RPCEventToolEnd       = "tool_end"
+	RPCEventAgentEnd      = "agent_end"
+)
 
 // RPCEvent is received from Pi's stdout as NDJSON.
 // Pool stores these verbatim as the session history.
@@ -44,6 +57,7 @@ type ToolUseEvent struct {
 type Event struct {
 	Text    string
 	ToolUse *ToolUseEvent
+	Store   *RPCEvent // if set, Pool appends to session history
 	Err     error
 }
 
@@ -81,7 +95,39 @@ type ActivityTracker interface {
 func TextDeltaToRPCEvent(text string) RPCEvent {
 	inner, _ := json.Marshal(AssistantMessageEvent{Type: "text_delta", Delta: text})
 	return RPCEvent{
-		Type:                  "message_update",
+		Type:                  RPCEventMessageUpdate,
 		AssistantMessageEvent: inner,
 	}
+}
+
+// ToolCallToRPCEvent converts a tool call to an RPCEvent for history storage.
+func ToolCallToRPCEvent(call aitypes.ToolCall) RPCEvent {
+	argsJSON, _ := json.Marshal(call.Arguments)
+	return RPCEvent{
+		Type:   RPCEventToolCall,
+		ID:     call.ID,
+		Tool:   call.Name,
+		Result: argsJSON,
+	}
+}
+
+// ToolResultToRPCEvent converts a tool result to an RPCEvent for history storage.
+func ToolResultToRPCEvent(result aitypes.ToolResultMessage) RPCEvent {
+	var text string
+	for _, block := range result.Content {
+		if tc, ok := block.(aitypes.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	contentJSON, _ := json.Marshal(text)
+	evt := RPCEvent{
+		Type:   RPCEventToolResult,
+		ID:     result.ToolCallID,
+		Tool:   result.ToolName,
+		Result: contentJSON,
+	}
+	if result.IsError {
+		evt.Error = text
+	}
+	return evt
 }

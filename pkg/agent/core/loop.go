@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -123,7 +124,7 @@ func (e *Engine) runLoop(ctx context.Context, cfg agenttypes.Config, history []a
 func streamAssistant(messages []aitypes.Message, cfg agenttypes.Config, providers stream.ProviderGetter, emit func(agenttypes.Event)) (aitypes.AssistantMessage, error) {
 	eventStream, err := stream.Stream(
 		cfg.Model,
-		aitypes.Context{Messages: messages},
+		aitypes.Context{System: cfg.System, Messages: messages, Tools: cfg.ToolDefinitions},
 		cfg.StreamOptions,
 		providers,
 	)
@@ -135,6 +136,7 @@ func streamAssistant(messages []aitypes.Message, cfg agenttypes.Config, provider
 	var text string
 	var thinking string
 	toolCalls := map[string]aitypes.ToolCall{}
+	toolArgs := map[string]string{} // accumulated raw JSON per tool call ID
 	started := false
 
 	for event := range eventStream.Events() {
@@ -149,11 +151,8 @@ func streamAssistant(messages []aitypes.Message, cfg agenttypes.Config, provider
 			if e.Name != "" {
 				call.Name = e.Name
 			}
-			if call.Arguments == nil {
-				call.Arguments = map[string]any{}
-			}
 			if e.Arguments != "" {
-				call.Arguments["raw"] = e.Arguments
+				toolArgs[e.ID] += e.Arguments
 			}
 			toolCalls[e.ID] = call
 		case aitypes.EventUsage:
@@ -194,7 +193,13 @@ func streamAssistant(messages []aitypes.Message, cfg agenttypes.Config, provider
 	if thinking != "" {
 		msg.Content = append(msg.Content, aitypes.ThinkingContent{Thinking: thinking})
 	}
-	for _, call := range toolCalls {
+	for id, call := range toolCalls {
+		if raw, ok := toolArgs[id]; ok && raw != "" {
+			var parsed map[string]any
+			if json.Unmarshal([]byte(raw), &parsed) == nil {
+				call.Arguments = parsed
+			}
+		}
 		msg.Content = append(msg.Content, call)
 	}
 

@@ -77,17 +77,26 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 				return
 			}
 
+			// Store events emitted by runners (tool calls, tool results, text deltas).
+			if evt.Store != nil {
+				p.mu.Lock()
+				sess.Events = append(sess.Events, *evt.Store)
+				p.mu.Unlock()
+			}
+
 			// Tool-use events pass through without history storage.
 			if evt.ToolUse != nil {
 				out <- evt
 				continue
 			}
 
-			// Convert to RPCEvent and append to session history.
-			rpcEvt := runner.TextDeltaToRPCEvent(evt.Text)
-			p.mu.Lock()
-			sess.Events = append(sess.Events, rpcEvt)
-			p.mu.Unlock()
+			// Text delta: convert to RPCEvent and store, then forward.
+			if evt.Text != "" {
+				rpcEvt := runner.TextDeltaToRPCEvent(evt.Text)
+				p.mu.Lock()
+				sess.Events = append(sess.Events, rpcEvt)
+				p.mu.Unlock()
+			}
 
 			out <- evt
 		}
