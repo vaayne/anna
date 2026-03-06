@@ -1,46 +1,31 @@
 package anthropic
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/vaayne/anna/pkg/ai/stream"
 	"github.com/vaayne/anna/pkg/ai/types"
 )
 
-// HTTPDoer abstracts outbound requests.
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 // Config configures the Anthropic provider.
 type Config struct {
-	HTTPClient HTTPDoer
-	BaseURL    string
+	BaseURL string
 }
 
 // Provider implements stream.Provider for Anthropic messages.
 type Provider struct {
-	httpClient HTTPDoer
-	baseURL    string
+	client anthropic.Client
 }
 
 // New returns an Anthropic provider.
 func New(cfg Config) *Provider {
-	client := cfg.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
+	opts := []option.RequestOption{}
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
-	baseURL := cfg.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
-	}
-	return &Provider{httpClient: client, baseURL: strings.TrimRight(baseURL, "/")}
+	return &Provider{client: anthropic.NewClient(opts...)}
 }
 
 // API returns provider key.
@@ -48,9 +33,19 @@ func (p *Provider) API() string { return "anthropic" }
 
 // Stream starts Anthropic message stream.
 func (p *Provider) Stream(model types.Model, ctx types.Context, opts types.StreamOptions) (stream.AssistantEventStream, error) {
-	messages := ConvertMessages(ctx)
-	body := mapOptions(model, ctx, opts, messages)
-	return p.streamRequest(opts, body)
+	params := buildParams(model, ctx, opts)
+	reqOpts := buildRequestOptions(opts)
+	sdkStream := p.client.Messages.NewStreaming(context.Background(), params, reqOpts...)
+
+	out := stream.NewChannelEventStream(32)
+	go func() {
+		defer out.Finish(nil)
+		consumeStream(sdkStream, out)
+		if err := sdkStream.Err(); err != nil {
+			out.Emit(types.EventError{Err: err})
+		}
+	}()
+	return out, nil
 }
 
 // StreamSimple delegates to Stream with mapped options.
@@ -58,40 +53,16 @@ func (p *Provider) StreamSimple(model types.Model, ctx types.Context, opts types
 	return p.Stream(model, ctx, opts.StreamOptions)
 }
 
-func (p *Provider) streamRequest(opts types.StreamOptions, body RequestOptions) (stream.AssistantEventStream, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, p.baseURL+"/v1/messages", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("anthropic-version", "2023-06-01")
+func buildRequestOptions(opts types.StreamOptions) []option.RequestOption {
+	var reqOpts []option.RequestOption
 	if opts.APIKey != "" {
-		req.Header.Set("x-api-key", opts.APIKey)
+		reqOpts = append(reqOpts, option.WithAPIKey(opts.APIKey))
 	}
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, err
+	if opts.BaseURL != "" {
+		reqOpts = append(reqOpts, option.WithBaseURL(opts.BaseURL))
 	}
-	if resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("anthropic request failed: %s: %s", resp.Status, string(body))
+	for k, v := range opts.Headers {
+		reqOpts = append(reqOpts, option.WithHeader(k, v))
 	}
-
-	out := stream.NewChannelEventStream(32)
-	go func() {
-		defer resp.Body.Close()
-		defer out.Finish(nil)
-		if parseErr := parseSSEReader(resp.Body, out); parseErr != nil {
-			out.Emit(types.EventError{Err: parseErr})
-			out.Finish(parseErr)
-		}
-	}()
-	return out, nil
+	return reqOpts
 }

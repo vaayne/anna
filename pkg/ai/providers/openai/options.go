@@ -1,22 +1,24 @@
 package openai
 
-import "github.com/vaayne/anna/pkg/ai/types"
+import (
+	sdk "github.com/openai/openai-go"
+	"github.com/vaayne/anna/pkg/ai/types"
+)
 
-// RequestOptions contains mapped request configuration for OpenAI completions.
-type RequestOptions struct {
-	Model       string   `json:"model"`
-	Prompt      string   `json:"prompt"`
-	Temperature *float64 `json:"temperature,omitempty"`
-	MaxTokens   *int     `json:"max_tokens,omitempty"`
-	Stream      bool     `json:"stream"`
-}
+func buildParams(model types.Model, ctx types.Context, opts types.StreamOptions) sdk.ChatCompletionNewParams {
+	messages := convertMessages(ctx)
 
-func mapOptions(model types.Model, prompt string, opts types.StreamOptions, stream bool) RequestOptions {
-	return RequestOptions{
-		Model:       model.Name,
-		Prompt:      prompt,
-		Temperature: opts.Temperature,
-		MaxTokens:   opts.MaxTokens,
-		Stream:      stream,
+	params := sdk.ChatCompletionNewParams{
+		Model:    model.Name,
+		Messages: messages,
 	}
+
+	if opts.Temperature != nil {
+		params.Temperature = sdk.Float(*opts.Temperature)
+	}
+	if opts.MaxTokens != nil {
+		params.MaxCompletionTokens = sdk.Int(int64(*opts.MaxTokens))
+	}
+
+	return params
 }

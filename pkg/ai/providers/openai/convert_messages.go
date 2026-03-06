@@ -4,28 +4,45 @@ import (
 	"fmt"
 	"strings"
 
+	sdk "github.com/openai/openai-go"
 	"github.com/vaayne/anna/pkg/ai/types"
 )
 
-// ConvertMessagesToPrompt flattens normalized messages into a completions prompt.
-func ConvertMessagesToPrompt(ctx types.Context) string {
-	parts := make([]string, 0, len(ctx.Messages)+1)
+func convertMessages(ctx types.Context) []sdk.ChatCompletionMessageParamUnion {
+	messages := make([]sdk.ChatCompletionMessageParamUnion, 0, len(ctx.Messages)+1)
+
 	if ctx.System != "" {
-		parts = append(parts, fmt.Sprintf("system: %s", ctx.System))
+		messages = append(messages, sdk.SystemMessage(ctx.System))
 	}
 
 	for _, msg := range ctx.Messages {
 		switch m := msg.(type) {
 		case types.UserMessage:
-			parts = append(parts, fmt.Sprintf("user: %v", m.Content))
+			messages = append(messages, sdk.UserMessage(userContent(m.Content)))
 		case types.AssistantMessage:
-			parts = append(parts, fmt.Sprintf("assistant: %s", flattenAssistantContent(m.Content)))
+			messages = append(messages, sdk.AssistantMessage(flattenAssistantContent(m.Content)))
 		case types.ToolResultMessage:
-			parts = append(parts, fmt.Sprintf("tool[%s]: %s", m.ToolName, flattenToolResult(m.Content)))
+			messages = append(messages, sdk.ToolMessage(flattenToolResult(m.Content), m.ToolCallID))
 		}
 	}
+	return messages
+}
 
-	return strings.Join(parts, "\n")
+func userContent(content any) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []types.ContentBlock:
+		parts := make([]string, 0, len(c))
+		for _, block := range c {
+			if t, ok := block.(types.TextContent); ok && t.Text != "" {
+				parts = append(parts, t.Text)
+			}
+		}
+		return strings.Join(parts, " ")
+	default:
+		return fmt.Sprintf("%v", content)
+	}
 }
 
 func flattenAssistantContent(blocks []types.ContentBlock) string {
@@ -35,7 +52,7 @@ func flattenAssistantContent(blocks []types.ContentBlock) string {
 		case types.TextContent:
 			parts = append(parts, b.Text)
 		case types.ThinkingContent:
-			parts = append(parts, "[thinking omitted]")
+			// omit thinking from OpenAI messages
 		case types.ToolCall:
 			parts = append(parts, fmt.Sprintf("[tool_call:%s]", b.Name))
 		}

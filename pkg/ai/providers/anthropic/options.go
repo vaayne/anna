@@ -1,29 +1,29 @@
 package anthropic
 
-import "github.com/vaayne/anna/pkg/ai/types"
+import (
+	sdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/vaayne/anna/pkg/ai/types"
+)
 
-// RequestOptions contains mapped request fields for Anthropic messages.
-type RequestOptions struct {
-	Model       string   `json:"model"`
-	System      string   `json:"system,omitempty"`
-	Messages    []any    `json:"messages"`
-	Temperature *float64 `json:"temperature,omitempty"`
-	MaxTokens   int      `json:"max_tokens"`
-	Stream      bool     `json:"stream"`
-}
-
-func mapOptions(model types.Model, ctx types.Context, opts types.StreamOptions, messages []any) RequestOptions {
-	maxTokens := 1024
+func buildParams(model types.Model, ctx types.Context, opts types.StreamOptions) sdk.MessageNewParams {
+	maxTokens := int64(1024)
 	if opts.MaxTokens != nil {
-		maxTokens = *opts.MaxTokens
+		maxTokens = int64(*opts.MaxTokens)
 	}
 
-	return RequestOptions{
-		Model:       model.Name,
-		System:      ctx.System,
-		Messages:    messages,
-		Temperature: opts.Temperature,
-		MaxTokens:   maxTokens,
-		Stream:      true,
+	params := sdk.MessageNewParams{
+		Model:     sdk.Model(model.Name),
+		MaxTokens: maxTokens,
+		Messages:  convertMessages(ctx),
 	}
+
+	if ctx.System != "" {
+		params.System = []sdk.TextBlockParam{{Text: ctx.System}}
+	}
+
+	if opts.Temperature != nil {
+		params.Temperature = sdk.Float(*opts.Temperature)
+	}
+
+	return params
 }

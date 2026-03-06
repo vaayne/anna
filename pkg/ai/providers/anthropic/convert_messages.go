@@ -1,42 +1,67 @@
 package anthropic
 
-import "github.com/vaayne/anna/pkg/ai/types"
+import (
+	"fmt"
 
-// ConvertMessages maps normalized transcript to Anthropic message format.
-func ConvertMessages(ctx types.Context) []any {
-	messages := make([]any, 0, len(ctx.Messages))
+	sdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/vaayne/anna/pkg/ai/types"
+)
+
+func convertMessages(ctx types.Context) []sdk.MessageParam {
+	messages := make([]sdk.MessageParam, 0, len(ctx.Messages))
 	for _, msg := range ctx.Messages {
 		switch m := msg.(type) {
 		case types.UserMessage:
-			messages = append(messages, map[string]any{"role": "user", "content": m.Content})
+			messages = append(messages, sdk.NewUserMessage(userContentBlocks(m.Content)...))
 		case types.AssistantMessage:
-			messages = append(messages, map[string]any{"role": "assistant", "content": flattenContentBlocks(m.Content)})
+			messages = append(messages, sdk.NewAssistantMessage(assistantContentBlocks(m.Content)...))
 		case types.ToolResultMessage:
-			messages = append(messages, map[string]any{
-				"role": "user",
-				"content": []any{map[string]any{
-					"type":        "tool_result",
-					"tool_use_id": m.ToolCallID,
-					"content":     flattenContentBlocks(m.Content),
-					"is_error":    m.IsError,
-				}},
-			})
+			messages = append(messages, sdk.NewUserMessage(toolResultBlock(m)))
 		}
 	}
 	return messages
 }
 
-func flattenContentBlocks(blocks []types.ContentBlock) []any {
-	out := make([]any, 0, len(blocks))
+func userContentBlocks(content any) []sdk.ContentBlockParamUnion {
+	switch c := content.(type) {
+	case string:
+		return []sdk.ContentBlockParamUnion{sdk.NewTextBlock(c)}
+	case []types.ContentBlock:
+		blocks := make([]sdk.ContentBlockParamUnion, 0, len(c))
+		for _, block := range c {
+			switch b := block.(type) {
+			case types.TextContent:
+				blocks = append(blocks, sdk.NewTextBlock(b.Text))
+			}
+		}
+		return blocks
+	default:
+		return []sdk.ContentBlockParamUnion{sdk.NewTextBlock(fmt.Sprintf("%v", content))}
+	}
+}
+
+func assistantContentBlocks(blocks []types.ContentBlock) []sdk.ContentBlockParamUnion {
+	out := make([]sdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, block := range blocks {
 		switch b := block.(type) {
 		case types.TextContent:
-			out = append(out, map[string]any{"type": "text", "text": b.Text})
+			out = append(out, sdk.NewTextBlock(b.Text))
 		case types.ThinkingContent:
-			out = append(out, map[string]any{"type": "thinking", "thinking": b.Thinking})
+			out = append(out, sdk.NewThinkingBlock(b.Signature, b.Thinking))
 		case types.ToolCall:
-			out = append(out, map[string]any{"type": "tool_use", "id": b.ID, "name": b.Name, "input": b.Arguments})
+			out = append(out, sdk.NewToolUseBlock(b.ID, b.Arguments, b.Name))
 		}
 	}
 	return out
+}
+
+func toolResultBlock(m types.ToolResultMessage) sdk.ContentBlockParamUnion {
+	text := ""
+	for _, block := range m.Content {
+		if t, ok := block.(types.TextContent); ok && t.Text != "" {
+			text = t.Text
+			break
+		}
+	}
+	return sdk.NewToolResultBlock(m.ToolCallID, text, m.IsError)
 }
