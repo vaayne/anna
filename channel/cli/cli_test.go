@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // mockRunner implements runner.Runner for testing.
 type mockRunner struct {
@@ -148,7 +151,8 @@ func TestChatModelStreaming(t *testing.T) {
 	if m.streaming {
 		t.Error("expected streaming to be false after stream done")
 	}
-	if !strings.Contains(m.history.String(), "Hello world") {
+	plain := ansiRe.ReplaceAllString(m.history.String(), "")
+	if !strings.Contains(plain, "Hello world") {
 		t.Errorf("expected 'Hello world' in history, got: %s", m.history.String())
 	}
 }

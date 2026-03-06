@@ -2,84 +2,120 @@ package cli
 
 import "github.com/charmbracelet/lipgloss"
 
+// Color palette — two accents + neutral chrome tones.
+const (
+	colorChatText    = lipgloss.Color("#d4d4d4") // 252 — brightest, main content
+	colorUserAccent  = lipgloss.Color("#5fafaf") // 73  — teal
+	colorAgentAccent = lipgloss.Color("#af87d7") // 140 — purple
+	colorChrome      = lipgloss.Color("#585858") // 240 — borders, separators
+	colorDimMeta     = lipgloss.Color("#4e4e4e") // 239 — footer hints, model info
+	colorPlaceholder = lipgloss.Color("#6c6c6c") // 242 — input placeholder
+	colorStatus      = lipgloss.Color("#d7af5f") // 179 — warm yellow, status text
+	colorError       = lipgloss.Color("#d75f5f") // 167 — softer red
+	colorSystem      = lipgloss.Color("#6c6c6c") // 242 — system messages
+)
+
 var (
+	// Speaker labels — medium brightness, not the brightest element.
 	userStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+			Foreground(colorUserAccent).
 			Bold(true)
 
 	agentStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("5")).
+			Foreground(colorAgentAccent).
 			Bold(true)
 
+	// Message left borders for turn grouping.
+	userBorderStyle = lipgloss.NewStyle().
+			Border(lipgloss.Border{Left: "│"}, false, false, false, true).
+			BorderForeground(colorUserAccent).
+			PaddingLeft(1)
+
+	agentBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.Border{Left: "│"}, false, false, false, true).
+				BorderForeground(colorAgentAccent).
+				PaddingLeft(1)
+
+	// Chat text — explicit bright foreground, not terminal default.
+	chatTextStyle = lipgloss.NewStyle().
+			Foreground(colorChatText)
+
 	systemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
+			Foreground(colorSystem).
 			Italic(true)
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1"))
+			Foreground(colorError)
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+			Foreground(colorDimMeta)
+
+	helpAccentStyle = lipgloss.NewStyle().
+			Foreground(colorChrome)
 
 	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("3")).
+			Foreground(colorStatus).
 			Italic(true)
 
+	// Header
 	titleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("5")).
+			Foreground(colorAgentAccent).
 			Bold(true)
 
 	modelInfoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+			Foreground(colorDimMeta)
 
-	separatorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	// Composer — no box border
+	inputSeparator = lipgloss.NewStyle().
+			Foreground(colorChrome)
 
-	viewportBorder = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("8"))
+	inputPromptStyle = lipgloss.NewStyle().
+				Foreground(colorChrome)
 
+	// Tool use
+	toolDoneStyle = lipgloss.NewStyle().
+			Foreground(colorDimMeta)
+
+	toolErrorStyle = lipgloss.NewStyle().
+			Foreground(colorError).
+			Faint(true)
+
+	// Model picker
 	modelCursorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("5")).
+				Foreground(colorAgentAccent).
 				Bold(true)
 
 	modelActiveStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("3")).
+				Foreground(colorStatus).
 				Bold(true)
 
 	modelItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("7"))
+			Foreground(colorChatText)
 
 	modelHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("6")).
+				Foreground(colorUserAccent).
 				Bold(true)
 
+	// Command completion
 	completionItemStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("8"))
+				Foreground(colorChrome)
 
 	completionSelectedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("5")).
+				Foreground(colorAgentAccent).
 				Bold(true)
 
 	completionDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("8"))
+				Foreground(colorDimMeta)
 
 	completionSelectedDescStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("8")).
+					Foreground(colorChrome).
 					Italic(true)
 
+	// Model picker filter
 	filterLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("6"))
+				Foreground(colorUserAccent)
 
 	filterTextStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("7")).
+			Foreground(colorChatText).
 			Bold(true)
-
-	toolDoneStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
-			Faint(true)
-
-	toolErrorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1")).
-			Faint(true)
 )

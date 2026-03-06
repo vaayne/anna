@@ -10,7 +10,9 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
@@ -83,7 +85,8 @@ func newChatModel(ctx context.Context, pool *agent.Pool, provider, model string,
 	ta.Focus()
 	ta.CharLimit = 0
 	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
+	ta.Prompt = ""
+	ta.SetHeight(1)
 
 	return chatModel{
 		ctx:         ctx,
@@ -202,7 +205,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "done":
 			// Flush current markdown segment into prefix before tool line
 			if m.currentRaw.Len() > 0 {
-				m.historyPrefix += m.renderMarkdown(m.currentRaw.String()) + "\n"
+				m.historyPrefix += agentBorderStyle.Render(m.renderMarkdown(m.currentRaw.String())) + "\n"
 				m.currentRaw.Reset()
 			}
 			elapsed := formatDuration(time.Since(m.toolStartTime))
@@ -210,7 +213,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyPrefix += toolDoneStyle.Render(fmt.Sprintf("    ✓ %s (%s)", label, elapsed)) + "\n"
 		case "error":
 			if m.currentRaw.Len() > 0 {
-				m.historyPrefix += m.renderMarkdown(m.currentRaw.String()) + "\n"
+				m.historyPrefix += agentBorderStyle.Render(m.renderMarkdown(m.currentRaw.String())) + "\n"
 				m.currentRaw.Reset()
 			}
 			elapsed := formatDuration(time.Since(m.toolStartTime))
@@ -228,9 +231,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.status = ""
 		m.stream = nil
-		// Finalize: flush remaining markdown into history
+		// Finalize: flush remaining markdown into history with agent border
 		if m.currentRaw.Len() > 0 {
-			m.historyPrefix += m.renderMarkdown(m.currentRaw.String())
+			m.historyPrefix += agentBorderStyle.Render(m.renderMarkdown(m.currentRaw.String()))
 			m.currentRaw.Reset()
 		}
 		m.historyPrefix += "\n\n"
@@ -246,7 +249,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		m.stream = nil
 		if m.currentRaw.Len() > 0 {
-			m.historyPrefix += m.renderMarkdown(m.currentRaw.String())
+			m.historyPrefix += agentBorderStyle.Render(m.renderMarkdown(m.currentRaw.String()))
 			m.currentRaw.Reset()
 		}
 		m.historyPrefix += "\n" + errorStyle.Render("error: "+msg.err.Error()) + "\n\n"
@@ -296,48 +299,55 @@ func (m *chatModel) updateCompletions() {
 	}
 }
 
+// horizontal padding on each side of the content area
+const padX = 1
+
 func (m *chatModel) resize() {
-	// Layout height budget:
-	// - Title bar: 1 line
-	// - Separator: 1 line
-	// - Viewport border: 2 lines (top + bottom)
-	// - Input (textarea height + 2 for border)
-	// - Completion popup: variable
-	// - Help bar: 1 line
-	titleHeight := 1
-	separatorHeight := 1
-	vpBorderHeight := 2
-	inputHeight := m.textarea.Height() + 2 // textarea + border
-	helpHeight := 1
+	// Layout height budget (count actual rendered lines):
+	//   header (title):             1 line
+	//   blank line (\n\n):          1 line
+	//   viewport:                   vpHeight lines
+	//   input separator top:        1 line
+	//   prompt + textarea:          ta.Height lines
+	//   input separator bottom:     1 line
+	//   help bar:                   1 line
+	//   completion popup:           variable
+	const chrome = 1 + 1 + 1 + 1 + 1 + 1 // header + blank + sep top + sep bottom + newline + help
 
 	completionHeight := 0
 	if m.completing && len(m.completions) > 0 {
 		completionHeight = len(m.completions)
 	}
 
-	vpHeight := m.height - titleHeight - separatorHeight - vpBorderHeight - inputHeight - helpHeight - completionHeight
+	vpHeight := m.height - chrome - m.textarea.Height() - completionHeight
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
 
-	// Viewport inner width (minus border padding)
-	vpInnerWidth := m.width - 2
+	innerWidth := m.width - padX*2
 
 	if !m.ready {
-		m.viewport = viewport.New(vpInnerWidth, vpHeight)
+		m.viewport = viewport.New(innerWidth, vpHeight)
 		m.viewport.SetContent(m.history.String())
 		m.ready = true
 	} else {
-		m.viewport.Width = vpInnerWidth
+		m.viewport.Width = innerWidth
 		m.viewport.Height = vpHeight
 	}
 
-	m.textarea.SetWidth(m.width - 2) // match viewport inner width
+	m.textarea.SetWidth(innerWidth - 2) // subtract prompt "> " width
 
-	// Recreate markdown renderer with updated word wrap width
+	// Recreate markdown renderer with no document margin for flush-left alignment
+	style := styles.DarkStyleConfig
+	if !termenv.HasDarkBackground() {
+		style = styles.LightStyleConfig
+	}
+	style.Document.Margin = uintPtr(0)
+	style.Document.BlockPrefix = ""
+	style.Document.BlockSuffix = ""
 	m.mdRenderer, _ = glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(vpInnerWidth),
+		glamour.WithStyles(style),
+		glamour.WithWordWrap(innerWidth),
 	)
 }
 
@@ -371,7 +381,7 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 		return nil
 	}
 
-	m.history.WriteString(userStyle.Render("You") + "\n" + input + "\n\n")
+	m.history.WriteString(userStyle.Render("You") + "\n" + userBorderStyle.Render(chatTextStyle.Render(input)) + "\n\n")
 	m.history.WriteString(agentStyle.Render("Anna") + "\n")
 	m.historyPrefix = m.history.String()
 	m.currentRaw.Reset()
@@ -428,9 +438,21 @@ func (m *chatModel) renderMarkdown(raw string) string {
 
 // refreshViewport rebuilds viewport content from historyPrefix + rendered current response.
 func (m *chatModel) refreshViewport() {
-	content := m.historyPrefix + m.renderMarkdown(m.currentRaw.String())
+	rendered := m.renderMarkdown(m.currentRaw.String())
+	content := m.historyPrefix + agentBorderStyle.Render(rendered)
 	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
+}
+
+func uintPtr(v uint) *uint { return &v }
+
+// padLines prepends padding to each line of text.
+func padLines(text, pad string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = pad + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // formatDuration returns a human-friendly duration string.
@@ -543,52 +565,51 @@ func (m chatModel) View() string {
 		return "Initializing..."
 	}
 
+	pad := strings.Repeat(" ", padX)
+
 	// Title bar: "Anna" left, "provider/model" right
-	title := titleStyle.Render(" Anna")
-	modelInfo := modelInfoStyle.Render(fmt.Sprintf("%s/%s ", m.provider, m.model))
-	titleGap := m.width - lipgloss.Width(title) - lipgloss.Width(modelInfo)
+	title := titleStyle.Render("Anna")
+	modelInfo := modelInfoStyle.Render(m.provider + "/" + m.model)
+	titleGap := m.width - padX*2 - lipgloss.Width(title) - lipgloss.Width(modelInfo)
 	if titleGap < 0 {
 		titleGap = 0
 	}
-	titleBar := title + strings.Repeat(" ", titleGap) + modelInfo
+	header := pad + title + strings.Repeat(" ", titleGap) + modelInfo + pad
 
-	// Separator
-	separator := separatorStyle.Render(strings.Repeat("─", m.width))
+	// Input area — two thin separator lines with > prompt
+	sepLine := pad + inputSeparator.Render(strings.Repeat("─", m.width-padX*2))
+	prompt := inputPromptStyle.Render(">")
+	input := sepLine + "\n" + pad + prompt + " " + m.textarea.View() + "\n" + sepLine
 
-	// Viewport with rounded border
-	vpBorder := viewportBorder.Width(m.width - 2)
-	chatPanel := vpBorder.Render(m.viewport.View())
-
-	// Input area with matching border
-	inputBorder := viewportBorder.Width(m.width - 2)
-	input := inputBorder.Render(m.textarea.View())
-
-	// Completion popup (between input and help bar)
+	// Completion popup
 	completionView := ""
 	if m.completing && len(m.completions) > 0 {
-		completionView = renderCompletions(m.completions, m.completeCursor)
+		completionView = "\n" + renderCompletions(m.completions, m.completeCursor)
 	}
 
-	// Help bar: commands left, status right
-	helpText := " /new · /model · /quit · ctrl+c · pgup/pgdn scroll"
+	// Help bar below input
+	var helpText string
 	if m.picking {
-		helpText = " Type to filter · ↑/↓ navigate · Enter select · Esc cancel"
+		helpText = helpStyle.Render("↑↓ · enter · esc")
 	} else if m.completing {
-		helpText = " ↑/↓ navigate · Tab complete · Enter submit · Esc cancel"
+		helpText = helpStyle.Render("↑↓ · tab · enter · esc")
+	} else {
+		helpText = helpAccentStyle.Render("/new") + helpStyle.Render(" · ") +
+			helpAccentStyle.Render("/model") + helpStyle.Render(" · ") +
+			helpAccentStyle.Render("/quit")
 	}
-	help := helpStyle.Render(helpText)
 	status := ""
 	if m.status != "" {
-		status = statusStyle.Render(m.status + " ")
+		status = statusStyle.Render(m.status)
 	}
-	helpGap := m.width - lipgloss.Width(help) - lipgloss.Width(status)
+	helpGap := m.width - padX*2 - lipgloss.Width(helpText) - lipgloss.Width(status)
 	if helpGap < 0 {
 		helpGap = 0
 	}
-	helpBar := help + strings.Repeat(" ", helpGap) + status
+	helpBar := pad + helpText + strings.Repeat(" ", helpGap) + status
 
-	if completionView != "" {
-		return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s", titleBar, separator, chatPanel, input, completionView, helpBar)
-	}
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s", titleBar, separator, chatPanel, input, helpBar)
+	// Viewport with padding
+	vpView := padLines(m.viewport.View(), pad)
+
+	return header + "\n\n" + vpView + "\n" + input + completionView + "\n" + helpBar
 }
