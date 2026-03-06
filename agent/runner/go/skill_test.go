@@ -326,3 +326,98 @@ func TestBuildSystemPromptIncludesSkills(t *testing.T) {
 		t.Error("expected test-skill in system prompt")
 	}
 }
+
+func TestLoadProjectContextFiles(t *testing.T) {
+	t.Run("finds AGENTS.md in cwd", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# Project Rules"), 0o644)
+
+		files := loadProjectContextFiles(dir)
+		if len(files) == 0 {
+			t.Fatal("expected at least one context file")
+		}
+		found := false
+		for _, f := range files {
+			if strings.Contains(f.Content, "# Project Rules") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected to find AGENTS.md content")
+		}
+	})
+
+	t.Run("walks ancestors in root-to-leaf order", func(t *testing.T) {
+		root := t.TempDir()
+		child := filepath.Join(root, "sub", "project")
+		os.MkdirAll(child, 0o755)
+		os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("root rules"), 0o644)
+		os.WriteFile(filepath.Join(child, "AGENTS.md"), []byte("project rules"), 0o644)
+
+		files := loadProjectContextFiles(child)
+		if len(files) < 2 {
+			t.Fatalf("expected at least 2 context files, got %d", len(files))
+		}
+		// Root should come before child.
+		rootIdx, childIdx := -1, -1
+		for i, f := range files {
+			if strings.Contains(f.Content, "root rules") {
+				rootIdx = i
+			}
+			if strings.Contains(f.Content, "project rules") {
+				childIdx = i
+			}
+		}
+		if rootIdx == -1 || childIdx == -1 {
+			t.Fatal("expected both root and child AGENTS.md files")
+		}
+		if rootIdx >= childIdx {
+			t.Errorf("expected root (%d) before child (%d)", rootIdx, childIdx)
+		}
+	})
+
+	t.Run("case insensitive match", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "agents.md"), []byte("lowercase agents"), 0o644)
+
+		files := loadProjectContextFiles(dir)
+		found := false
+		for _, f := range files {
+			if strings.Contains(f.Content, "lowercase agents") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected case-insensitive AGENTS.md match")
+		}
+	})
+
+	t.Run("empty cwd returns nil", func(t *testing.T) {
+		files := loadProjectContextFiles("")
+		if files != nil {
+			t.Errorf("expected nil, got %v", files)
+		}
+	})
+}
+
+func TestBuildSystemPromptIncludesContextFiles(t *testing.T) {
+	dir := t.TempDir()
+	agentsDir := filepath.Join(dir, "agents")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0o755)
+
+	os.WriteFile(filepath.Join(projectDir, "AGENTS.md"),
+		[]byte("Always use snake_case."), 0o644)
+
+	memStore := memory.NewStore(filepath.Join(agentsDir, "memory"))
+	prompt := BuildSystemPrompt(memStore, agentsDir, projectDir)
+
+	if !strings.Contains(prompt, "# Project Context") {
+		t.Error("expected Project Context section in system prompt")
+	}
+	if !strings.Contains(prompt, "Always use snake_case.") {
+		t.Error("expected AGENTS.md content in system prompt")
+	}
+}

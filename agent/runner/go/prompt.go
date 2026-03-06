@@ -40,7 +40,13 @@ type promptFile struct {
 	Content string
 }
 
-// BuildSystemPrompt composes the full system prompt: basic + memories + skills.
+// contextFile represents a discovered AGENTS.md file with its path and content.
+type contextFile struct {
+	Path    string
+	Content string
+}
+
+// BuildSystemPrompt composes the full system prompt: basic + memories + skills + project context.
 // The basic prompt defaults to the embedded system.md but can be overridden
 // by placing a system.md file in the agents directory.
 func BuildSystemPrompt(store *memory.Store, agentsDir string, cwd ...string) string {
@@ -77,7 +83,58 @@ func BuildSystemPrompt(store *memory.Store, agentsDir string, cwd ...string) str
 		buf.WriteString(skills)
 	}
 
+	if ctxFiles := loadProjectContextFiles(workDir); len(ctxFiles) > 0 {
+		buf.WriteString("\n\n# Project Context\n\n")
+		buf.WriteString("Project-specific instructions and guidelines:\n\n")
+		for _, f := range ctxFiles {
+			buf.WriteString("## " + f.Path + "\n\n")
+			buf.WriteString(strings.TrimRight(f.Content, "\n"))
+			buf.WriteString("\n\n")
+		}
+	}
+
 	return buf.String()
+}
+
+// loadProjectContextFiles walks from cwd up to the filesystem root,
+// collecting AGENTS.md files from each directory (case-insensitive).
+// Files are returned in root-to-leaf order (ancestors first).
+func loadProjectContextFiles(cwd string) []contextFile {
+	if cwd == "" {
+		return nil
+	}
+
+	absDir, err := filepath.Abs(cwd)
+	if err != nil {
+		return nil
+	}
+
+	var files []contextFile
+	seen := map[string]bool{}
+
+	for {
+		if path := resolveFile(absDir, "AGENTS.md"); path != "" {
+			if !seen[path] {
+				seen[path] = true
+				if data, err := os.ReadFile(path); err == nil {
+					files = append(files, contextFile{Path: path, Content: string(data)})
+				}
+			}
+		}
+
+		parent := filepath.Dir(absDir)
+		if parent == absDir {
+			break
+		}
+		absDir = parent
+	}
+
+	// Reverse so ancestors come first (root → leaf).
+	for i, j := 0, len(files)-1; i < j; i, j = i+1, j-1 {
+		files[i], files[j] = files[j], files[i]
+	}
+
+	return files
 }
 
 // resolveFile finds a file in dir with case-insensitive matching.
