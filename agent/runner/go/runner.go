@@ -23,12 +23,13 @@ const maxToolIterations = 40
 
 // Config configures the Go runner.
 type Config struct {
-	API     string // provider key: "anthropic", "openai"
-	Model   string // e.g. "claude-sonnet-4-20250514"
+	API       string // provider key: "anthropic", "openai"
+	Model     string // e.g. "claude-sonnet-4-20250514"
 	APIKey    string
 	BaseURL   string // optional provider base URL override
 	WorkDir   string // working directory for tool execution
 	AgentsDir string // .agents dir for persona files (soul.md, user.md, memory.md)
+	System    string // optional system prompt override (bypasses BuildSystemPrompt)
 }
 
 // Runner implements runner.Runner by calling LLM providers directly via Engine.
@@ -62,13 +63,18 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 	reg.Register(openai.New(openai.Config{BaseURL: cfg.BaseURL}))
 	reg.Register(openairesponse.New(openairesponse.Config{BaseURL: cfg.BaseURL}))
 
+	system := cfg.System
+	if system == "" {
+		system = BuildSystemPrompt(cfg.AgentsDir, cfg.WorkDir)
+	}
+
 	return &Runner{
 		engine:       &core.Engine{Providers: reg},
 		reg:          reg,
 		tools:        tool.NewRegistry(cfg.WorkDir),
 		model:        aitypes.Model{API: cfg.API, Name: cfg.Model},
 		apiKey:       cfg.APIKey,
-		system:       BuildSystemPrompt(cfg.AgentsDir),
+		system:       system,
 		lastActivity: time.Now(),
 		log:          slog.With("component", "go_runner"),
 	}, nil
