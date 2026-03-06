@@ -1,4 +1,4 @@
-package agent
+package pi
 
 import (
 	"context"
@@ -12,40 +12,42 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/vaayne/anna/agent/runner"
 )
 
-// ProcessRunner spawns Pi as a local process with --no-session and communicates
-// via NDJSON over stdin/stdout. It implements the Runner interface.
-type ProcessRunner struct {
+// Runner spawns Pi as a local process with --no-session and communicates
+// via NDJSON over stdin/stdout. It implements the runner.Runner interface.
+type Runner struct {
 	binary string
 	model  string
 
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	decoder *json.Decoder
-	events  chan *RPCEvent
+	events  chan *runner.RPCEvent
 	done    chan struct{}
 	mu      sync.Mutex
 	reqID   atomic.Int64
 
 	// For RPC request-response matching.
-	pending   map[string]chan *RPCEvent
+	pending   map[string]chan *runner.RPCEvent
 	pendingMu sync.Mutex
 
 	lastActivity time.Time
 	log          *slog.Logger
 }
 
-// NewProcessRunner creates and starts a ProcessRunner.
-func NewProcessRunner(ctx context.Context, binary, model string) (*ProcessRunner, error) {
-	r := &ProcessRunner{
+// New creates and starts a Pi process runner.
+func New(ctx context.Context, binary, model string) (*Runner, error) {
+	r := &Runner{
 		binary:       binary,
 		model:        model,
-		events:       make(chan *RPCEvent, 100),
+		events:       make(chan *runner.RPCEvent, 100),
 		done:         make(chan struct{}),
-		pending:      make(map[string]chan *RPCEvent),
+		pending:      make(map[string]chan *runner.RPCEvent),
 		lastActivity: time.Now(),
-		log:          slog.With("component", "process_runner"),
+		log:          slog.With("component", "pi_runner"),
 	}
 	if err := r.start(ctx); err != nil {
 		return nil, err
@@ -54,7 +56,7 @@ func NewProcessRunner(ctx context.Context, binary, model string) (*ProcessRunner
 }
 
 // start spawns the Pi process and begins reading stdout/stderr.
-func (r *ProcessRunner) start(ctx context.Context) error {
+func (r *Runner) start(ctx context.Context) error {
 	args := []string{"--mode", "rpc", "--no-session"}
 	if r.model != "" {
 		args = append(args, "--model", r.model)
@@ -96,15 +98,15 @@ func (r *ProcessRunner) start(ctx context.Context) error {
 // Chat sends a prompt and streams back events. The history parameter is
 // available for future use (e.g. crash recovery replay). Currently Pi
 // maintains context in-process.
-func (r *ProcessRunner) Chat(ctx context.Context, history []RPCEvent, message string) <-chan Event {
-	out := make(chan Event, 100)
+func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message string) <-chan runner.Event {
+	out := make(chan runner.Event, 100)
 
 	r.mu.Lock()
 	r.lastActivity = time.Now()
 	r.mu.Unlock()
 
 	id := fmt.Sprintf("%d", r.reqID.Add(1))
-	cmd := RPCCommand{
+	cmd := runner.RPCCommand{
 		ID:      id,
 		Type:    "prompt",
 		Message: message,
@@ -114,7 +116,7 @@ func (r *ProcessRunner) Chat(ctx context.Context, history []RPCEvent, message st
 
 	if err := r.sendCommand(cmd); err != nil {
 		go func() {
-			out <- Event{Err: fmt.Errorf("send prompt: %w", err)}
+			out <- runner.Event{Err: fmt.Errorf("send prompt: %w", err)}
 			close(out)
 		}()
 		return out
@@ -125,32 +127,32 @@ func (r *ProcessRunner) Chat(ctx context.Context, history []RPCEvent, message st
 		for {
 			select {
 			case <-ctx.Done():
-				out <- Event{Err: ctx.Err()}
+				out <- runner.Event{Err: ctx.Err()}
 				return
 			case <-r.done:
-				out <- Event{Err: fmt.Errorf("agent process exited")}
+				out <- runner.Event{Err: fmt.Errorf("agent process exited")}
 				return
 			case evt, ok := <-r.events:
 				if !ok {
-					out <- Event{Err: fmt.Errorf("event channel closed")}
+					out <- runner.Event{Err: fmt.Errorf("event channel closed")}
 					return
 				}
 
 				switch evt.Type {
 				case "message_update":
 					if len(evt.AssistantMessageEvent) > 0 {
-						var ame assistantMessageEvent
+						var ame runner.AssistantMessageEvent
 						if err := json.Unmarshal(evt.AssistantMessageEvent, &ame); err != nil {
-							out <- Event{Err: fmt.Errorf("parse assistant event: %w", err)}
+							out <- runner.Event{Err: fmt.Errorf("parse assistant event: %w", err)}
 							return
 						}
 						if ame.Type == "text_delta" && ame.Delta != "" {
-							out <- Event{Text: ame.Delta}
+							out <- runner.Event{Text: ame.Delta}
 						}
 					}
 				case "error":
 					r.log.Error("rpc error", "request_id", id, "error", evt.Error)
-					out <- Event{Err: fmt.Errorf("pi error: %s", evt.Error)}
+					out <- runner.Event{Err: fmt.Errorf("pi error: %s", evt.Error)}
 					return
 				case "agent_end":
 					r.log.Debug("prompt completed", "request_id", id)
@@ -164,11 +166,11 @@ func (r *ProcessRunner) Chat(ctx context.Context, history []RPCEvent, message st
 }
 
 // readStdout decodes NDJSON events from stdout.
-func (r *ProcessRunner) readStdout() {
+func (r *Runner) readStdout() {
 	defer close(r.events)
 
 	for {
-		var evt RPCEvent
+		var evt runner.RPCEvent
 		if err := r.decoder.Decode(&evt); err != nil {
 			if err != io.EOF {
 				r.log.Warn("stdout decode error", "error", err)
@@ -196,7 +198,7 @@ func (r *ProcessRunner) readStdout() {
 }
 
 // readStderr drains stderr and logs any output.
-func (r *ProcessRunner) readStderr(stderr io.Reader) {
+func (r *Runner) readStderr(stderr io.Reader) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := stderr.Read(buf)
@@ -210,7 +212,7 @@ func (r *ProcessRunner) readStderr(stderr io.Reader) {
 }
 
 // waitProcess waits for the process to exit, then signals done.
-func (r *ProcessRunner) waitProcess() {
+func (r *Runner) waitProcess() {
 	err := r.cmd.Wait()
 	if err != nil {
 		r.log.Warn("process exited with error", "error", err)
@@ -221,7 +223,7 @@ func (r *ProcessRunner) waitProcess() {
 }
 
 // sendCommand writes a JSON command followed by a newline to stdin.
-func (r *ProcessRunner) sendCommand(cmd RPCCommand) error {
+func (r *Runner) sendCommand(cmd runner.RPCCommand) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -239,7 +241,7 @@ func (r *ProcessRunner) sendCommand(cmd RPCCommand) error {
 }
 
 // Close gracefully shuts down the Pi process.
-func (r *ProcessRunner) Close() error {
+func (r *Runner) Close() error {
 	r.mu.Lock()
 	if r.stdin != nil {
 		_ = r.stdin.Close()
@@ -260,7 +262,7 @@ func (r *ProcessRunner) Close() error {
 }
 
 // Alive reports whether the Pi process is still running.
-func (r *ProcessRunner) Alive() bool {
+func (r *Runner) Alive() bool {
 	select {
 	case <-r.done:
 		return false
@@ -270,7 +272,7 @@ func (r *ProcessRunner) Alive() bool {
 }
 
 // LastActivity returns the time of the last Chat call.
-func (r *ProcessRunner) LastActivity() time.Time {
+func (r *Runner) LastActivity() time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastActivity

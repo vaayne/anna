@@ -7,10 +7,10 @@ anna is a minimal Go CLI that acts as a local AI assistant. It spawns Pi (a codi
 ```
 main.go                         → Entry point, signal handling, wiring
 config.go                       → Config types, YAML loading, env var overrides
-agent/runner.go                 → Runner interface, Event, RPCEvent, RPCCommand types
+agent/runner/runner.go          → Runner interface, Event, RPCEvent, RPCCommand, HandlerFunc, optional interfaces
+agent/runner/pi/runner.go       → pi.Runner: Pi process via NDJSON stdin/stdout
 agent/pool.go                   → Pool: session management, history, runner lifecycle
 agent/session.go                → Session: event history + runner
-agent/process_runner.go         → ProcessRunner: Pi process via NDJSON stdin/stdout
 channel/telegram/telegram.go    → Telegram long polling, message splitting
 channel/cli/cli.go              → Interactive terminal chat
 channel/cli/chat.go             → Bubble Tea TUI chat model
@@ -43,7 +43,7 @@ Env var overrides:
 
 ## Code Conventions
 
-- Channel-based package structure: `main`, `agent`, `channel/cli`, `channel/telegram`
+- Channel-based package structure: `main`, `agent`, `agent/runner`, `agent/runner/pi`, `channel/cli`, `channel/telegram`
 - Minimal dependencies (only `gopkg.in/yaml.v3`)
 - stdlib `net/http` for Telegram API (no third-party bot libraries)
 - `json.Decoder` for NDJSON reading (not `bufio.Scanner`)

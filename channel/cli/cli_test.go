@@ -8,15 +8,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/agent/runner"
 )
 
-// mockRunner implements agent.Runner for testing.
+// mockRunner implements runner.Runner for testing.
 type mockRunner struct {
-	events []agent.Event
+	events []runner.Event
 }
 
-func (m *mockRunner) Chat(_ context.Context, _ []agent.RPCEvent, _ string) <-chan agent.Event {
-	ch := make(chan agent.Event, len(m.events))
+func (m *mockRunner) Chat(_ context.Context, _ []runner.RPCEvent, _ string) <-chan runner.Event {
+	ch := make(chan runner.Event, len(m.events))
 	for _, e := range m.events {
 		ch <- e
 	}
@@ -24,8 +25,8 @@ func (m *mockRunner) Chat(_ context.Context, _ []agent.RPCEvent, _ string) <-cha
 	return ch
 }
 
-func newTestPool(events []agent.Event) *agent.Pool {
-	factory := func(_ context.Context) (agent.Runner, error) {
+func newTestPool(events []runner.Event) *agent.Pool {
+	factory := func(_ context.Context) (runner.Runner, error) {
 		return &mockRunner{events: events}, nil
 	}
 	return agent.NewPool(factory)
@@ -129,9 +130,9 @@ func TestChatModelStreaming(t *testing.T) {
 	}
 
 	// Simulate streamStartMsg with a fake channel.
-	ch := make(chan agent.Event, 3)
-	ch <- agent.Event{Text: "Hello"}
-	ch <- agent.Event{Text: " world"}
+	ch := make(chan runner.Event, 3)
+	ch <- runner.Event{Text: "Hello"}
+	ch <- runner.Event{Text: " world"}
 	close(ch)
 
 	result, cmd = m.Update(streamStartMsg{stream: ch})

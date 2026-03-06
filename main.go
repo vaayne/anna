@@ -12,6 +12,8 @@ import (
 
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/agent/runner"
+	"github.com/vaayne/anna/agent/runner/pi"
 	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
 )
@@ -97,8 +99,8 @@ func setup(parent context.Context) (context.Context, *Config, *agent.Pool, error
 	_ = cancel // cancel is deferred via the caller's lifecycle
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
-	factory := func(ctx context.Context) (agent.Runner, error) {
-		return agent.NewProcessRunner(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
+	factory := func(ctx context.Context) (runner.Runner, error) {
+		return pi.New(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
 	}
 	pool := agent.NewPool(factory, agent.WithIdleTimeout(idleTimeout))
 	go pool.StartReaper(ctx)

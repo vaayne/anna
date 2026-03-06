@@ -1,8 +1,9 @@
-package agent
+package runner
 
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // RPCCommand is sent to Pi's stdin as NDJSON.
@@ -24,8 +25,8 @@ type RPCEvent struct {
 	Summary               string          `json:"summary,omitempty"`
 }
 
-// assistantMessageEvent represents the inner event for text deltas.
-type assistantMessageEvent struct {
+// AssistantMessageEvent represents the inner event for text deltas.
+type AssistantMessageEvent struct {
 	Type  string `json:"type"`
 	Delta string `json:"delta"`
 }
@@ -46,3 +47,32 @@ type Runner interface {
 
 // NewRunnerFunc creates a new Runner instance.
 type NewRunnerFunc func(ctx context.Context) (Runner, error)
+
+// HandlerFunc is an adapter to allow the use of ordinary functions as Runners.
+// If f is a function with the appropriate signature, HandlerFunc(f) is a Runner
+// that calls f.
+type HandlerFunc func(ctx context.Context, history []RPCEvent, message string) <-chan Event
+
+// Chat calls f(ctx, history, message).
+func (f HandlerFunc) Chat(ctx context.Context, history []RPCEvent, message string) <-chan Event {
+	return f(ctx, history, message)
+}
+
+// Aliver is an optional interface for runners that can report liveness.
+type Aliver interface {
+	Alive() bool
+}
+
+// ActivityTracker is an optional interface for runners that track last activity.
+type ActivityTracker interface {
+	LastActivity() time.Time
+}
+
+// TextDeltaToRPCEvent converts a text delta string to an RPCEvent for storage.
+func TextDeltaToRPCEvent(text string) RPCEvent {
+	inner, _ := json.Marshal(AssistantMessageEvent{Type: "text_delta", Delta: text})
+	return RPCEvent{
+		Type:                  "message_update",
+		AssistantMessageEvent: inner,
+	}
+}

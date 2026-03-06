@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented — core architecture (Runner interface, Pool, ProcessRunner) is live.
+Implemented — core architecture (runner package, Pool, pi.Runner, HandlerFunc) is live.
 
 ## Problem
 
@@ -29,6 +29,7 @@ container, remote REST) while keeping channels (CLI, Telegram) unchanged.
      v
  +------------------+
  |      Pool        |  owns sessions, owns history, manages lifecycle
+ |  (agent pkg)     |
  |                  |
  |  sessions:       |
  |    id -> Session |
@@ -40,27 +41,50 @@ container, remote REST) while keeping channels (CLI, Telegram) unchanged.
           v
  +-----------------+
  |  Runner (i/f)   |  stateless — receives history each call
+ | (runner pkg)    |
  +-----------------+
           |
-    +-----+-------+--------+
-    |     |       |        |
- Process GoFunc Docker   REST
- Runner  Runner Runner   Runner
+    +-----+----------+--------+
+    |     |          |        |
+   pi  Handler-  Docker   REST
+ Runner  Func    Runner   Runner
+```
+
+## Package Layout
+
+```
+agent/
+    runner/
+        runner.go           # Runner interface, Event, RPCEvent, RPCCommand,
+                            # NewRunnerFunc, HandlerFunc, optional interfaces
+                            # (Aliver, ActivityTracker), TextDeltaToRPCEvent
+        pi/
+            runner.go       # pi.Runner — local Pi process, --no-session
+            runner_test.go
+    pool.go                 # Pool (session management, history, lifecycle)
+    session.go              # Session type (event history + runner reference)
+    pool_test.go
 ```
 
 ## Naming
 
-All types live in package `agent`. The package name provides domain context
-(agent.Runner = "agent runner", agent.Pool = "agent pool"), so type names
-describe the role, not the domain.
+Types are split across two packages. The `runner` package holds the interface
+and wire types. The `agent` package holds session management (Pool, Session).
+Each runner implementation lives in its own sub-package under `runner/`.
 
-| Type | Role |
-|------|------|
-| `Runner` | Runs prompts against an AI backend. Stateless. |
-| `Pool` | Manages sessions: maps session IDs to history + runner, handles lifecycle. |
-| `NewRunnerFunc` | Constructor function that creates a Runner. |
-| `Session` | A single conversation: history ([]RPCEvent) + assigned Runner. |
-| `Event` | Consumer-facing stream event (text delta or error). |
+| Type | Package | Role |
+|------|---------|------|
+| `Runner` | `runner` | Runs prompts against an AI backend. Stateless. |
+| `Event` | `runner` | Consumer-facing stream event (text delta or error). |
+| `RPCEvent` | `runner` | Pi RPC event, stored verbatim as session history. |
+| `RPCCommand` | `runner` | Command sent to Pi's stdin. |
+| `NewRunnerFunc` | `runner` | Constructor function that creates a Runner. |
+| `HandlerFunc` | `runner` | Adapter: wraps a Go function as a Runner (like `http.HandlerFunc`). |
+| `Aliver` | `runner` | Optional interface: `Alive() bool`. |
+| `ActivityTracker` | `runner` | Optional interface: `LastActivity() time.Time`. |
+| `Pool` | `agent` | Manages sessions: maps session IDs to history + runner, handles lifecycle. |
+| `Session` | `agent` | A single conversation: history ([]RPCEvent) + assigned Runner. |
+| `Runner` | `pi` | Pi process runner — spawns Pi with `--no-session`, NDJSON over stdin/stdout. |
 
 ## Core Types
 
@@ -70,8 +94,8 @@ Pool stores the full Pi RPC event stream per session. This is the canonical
 representation — no lossy conversion to a simplified message type.
 
 ```go
-// RPCEvent is the raw event from Pi's stdout NDJSON stream.
-// Pool stores these verbatim as the session history.
+// In package runner
+
 type RPCEvent struct {
     Type                  string          `json:"type"`
     AssistantMessageEvent json.RawMessage `json:"assistantMessageEvent,omitempty"`
@@ -92,10 +116,10 @@ Known event types from Pi RPC:
 | `response`       | RPC request-response (matched by ID)        |
 | `error`          | Error from the agent                        |
 
-The `message_update` event contains an inner `assistantMessageEvent`:
+The `message_update` event contains an inner `AssistantMessageEvent`:
 
 ```go
-type assistantMessageEvent struct {
+type AssistantMessageEvent struct {
     Type  string `json:"type"`   // "text_delta"
     Delta string `json:"delta"`  // the text chunk
 }
@@ -126,18 +150,19 @@ type Event struct {
 ### Session
 
 ```go
+// In package agent
+
 type Session struct {
-    Events []RPCEvent  // full event log, append-only
-    Runner Runner      // current runner, swappable
+    Events []runner.RPCEvent  // full event log, append-only
+    Runner runner.Runner      // current runner, swappable
 }
 ```
 
 ### Runner interface
 
 ```go
-// Runner runs prompts against an AI backend.
-// It is stateless — it receives full history each call and must
-// reconstruct context from it.
+// In package runner
+
 type Runner interface {
     Chat(ctx context.Context, history []RPCEvent, message string) <-chan Event
 }
@@ -146,35 +171,54 @@ type Runner interface {
 Runners that hold resources (processes, connections) also implement
 `io.Closer`. Pool calls `Close()` when evicting or swapping.
 
+### HandlerFunc
+
+```go
+// HandlerFunc is an adapter to allow ordinary functions as Runners.
+// Same pattern as http.HandlerFunc → http.Handler.
+type HandlerFunc func(ctx context.Context, history []RPCEvent, message string) <-chan Event
+
+func (f HandlerFunc) Chat(ctx context.Context, history []RPCEvent, message string) <-chan Event {
+    return f(ctx, history, message)
+}
+```
+
+### Optional Interfaces
+
+Pool uses type assertions to check for these, keeping it decoupled from
+any specific runner implementation.
+
+```go
+// Aliver is an optional interface for runners that can report liveness.
+type Aliver interface {
+    Alive() bool
+}
+
+// ActivityTracker is an optional interface for runners that track last activity.
+type ActivityTracker interface {
+    LastActivity() time.Time
+}
+```
+
 ### NewRunnerFunc
 
 ```go
-// NewRunnerFunc creates a new Runner instance.
-// It does not receive a session ID — runners are stateless.
 type NewRunnerFunc func(ctx context.Context) (Runner, error)
 ```
 
 ### Pool
 
 ```go
-// Pool manages a set of sessions, each with its own history and runner.
-// It is the only type channels interact with.
+// In package agent
+
 type Pool struct { ... }
 
-func NewPool(factory NewRunnerFunc, opts ...PoolOption) *Pool
+func NewPool(factory runner.NewRunnerFunc, opts ...PoolOption) *Pool
 
-// Chat sends a message in a session and streams back events.
-// Internally: gets/creates runner, passes history, collects events,
-// appends to session log, streams to caller.
-func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-chan Event
+func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-chan runner.Event
 
-// Reset clears session history and closes the current runner.
 func (p *Pool) Reset(sessionID string) error
 
-// SetRunner swaps the runner for a session. History is preserved.
-func (p *Pool) SetRunner(sessionID string, runner Runner) error
-
-// Close shuts down all sessions and runners.
 func (p *Pool) Close() error
 ```
 
@@ -183,11 +227,21 @@ func (p *Pool) Close() error
 ```
 1. Look up session by ID (create if new)
 2. If session has no runner, create one via NewRunnerFunc
-3. Call runner.Chat(ctx, session.Events, message)
-4. For each Event from the runner:
+3. If runner implements Aliver and is dead, close and recreate
+4. Call runner.Chat(ctx, session.Events, message)
+5. For each Event from the runner:
    a. Convert to RPCEvent, append to session.Events
    b. Forward Event to the caller's channel
-5. On completion or error, stop collecting
+6. On completion or error, stop collecting
+```
+
+## Pool.reap Flow
+
+```
+For each session with a non-nil runner:
+1. If runner implements Aliver and !Alive() → nil out runner
+2. If runner implements ActivityTracker and idle > timeout → Close + nil out
+3. Runners without these interfaces are left alone
 ```
 
 ## Session History: Why Full RPCEvents
@@ -206,62 +260,55 @@ Storing the full RPCEvent stream (not just user/assistant text) gives us:
 
 ## Runner Implementations
 
-### ProcessRunner (current)
+### pi.Runner (current)
 
 Spawns Pi as a local process with `--no-session`. On each `Chat()` call,
 replays history events to Pi's stdin, then sends the new prompt. Reads
-NDJSON from stdout.
-
-Pi with `--no-session` means it keeps no session file — Pool owns the
-history and replays it each time.
+NDJSON from stdout. Implements `Runner`, `Aliver`, `ActivityTracker`,
+and `io.Closer`.
 
 ```go
-type ProcessRunner struct {
+// In package pi (agent/runner/pi)
+
+type Runner struct {
     binary string
     model  string
+    // ... process management fields
 }
+
+func New(ctx context.Context, binary, model string) (*Runner, error)
 ```
 
-### FuncRunner (future)
+### HandlerFunc (current)
 
-Pure Go implementation. No external process. Calls an LLM API directly
-(e.g., OpenAI, Anthropic). Converts `[]RPCEvent` history to the API's
-message format (extracting user/assistant text turns).
+Adapter in the `runner` package. Wraps any Go function as a Runner.
+Use for inline implementations, testing, or direct LLM API calls.
 
 ```go
-type FuncRunner struct {
-    handler func(ctx context.Context, history []RPCEvent, msg string) <-chan Event
+factory := func(ctx context.Context) (runner.Runner, error) {
+    return runner.HandlerFunc(func(ctx context.Context, history []runner.RPCEvent, msg string) <-chan runner.Event {
+        // call OpenAI, Anthropic, etc.
+    }), nil
 }
 ```
 
 ### DockerRunner (future)
 
-Runs Pi inside a Docker container. Same NDJSON protocol as ProcessRunner
-but over `docker exec -i` instead of a direct process.
-
-```go
-type DockerRunner struct {
-    image string
-    model string
-}
-```
+Runs Pi inside a Docker container. Same NDJSON protocol as pi.Runner
+but over `docker exec -i` instead of a direct process. Would live in
+`agent/runner/docker/`.
 
 ### RESTRunner (future)
 
 Calls a remote HTTP endpoint. Translates RPCEvent history to the
 endpoint's expected format. Reads SSE or chunked response back as Events.
-
-```go
-type RESTRunner struct {
-    url string
-}
-```
+Would live in `agent/runner/rest/`.
 
 ## Configuration
 
 ```yaml
 runner:
-  type: process          # process | func | docker | rest
+  type: process          # process | docker | rest
   process:
     binary: pi
     model: ""
@@ -278,37 +325,13 @@ telegram:
   token: ""
 ```
 
-## File Layout
-
-```
-agent/
-    runner.go           # Runner interface, Event, RPCEvent, RPCCommand
-    pool.go             # Pool implementation (session management, history, lifecycle)
-    session.go          # Session type, history persistence (save/load NDJSON)
-    process_runner.go   # ProcessRunner — local Pi process, --no-session
-    func_runner.go      # FuncRunner — pure Go (future)
-    docker_runner.go    # DockerRunner — Docker container (future)
-    rest_runner.go      # RESTRunner — remote HTTP (future)
-```
-
-## Migration Path
-
-1. Extract `Runner` interface and `Event`/`RPCEvent` types into
-   `runner.go`.
-2. Build `Pool` with session history management in `pool.go`.
-3. Rename current `Agent` struct to `ProcessRunner`, implement the `Runner`
-   interface. Switch to `--no-session` mode.
-4. Update callers (main.go, channels) to use `Pool` instead of
-   `SessionManager`.
-5. Add new runners incrementally — each is an independent file.
-
 ## Open Questions
 
 - **History replay cost**: Replaying the full event log on every `Chat()`
   call may be slow for long sessions. Consider a compaction strategy
   (e.g., summarize older turns) or let the runner decide how much history
   to use.
-- **Tool state**: Tool call results are in the RPCEvent log. A FuncRunner
+- **Tool state**: Tool call results are in the RPCEvent log. A HandlerFunc
   that doesn't support tools will ignore them. Is that acceptable, or do
   we need a translation layer?
 - **Persistence format**: NDJSON files per session (one RPCEvent per line)

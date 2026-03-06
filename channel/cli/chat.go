@@ -10,11 +10,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/agent/runner"
 )
 
 // streamStartMsg carries the stream channel from the agent.
 type streamStartMsg struct {
-	stream <-chan agent.Event
+	stream <-chan runner.Event
 }
 
 // streamChunkMsg carries a text delta from the agent stream.
@@ -31,7 +32,7 @@ type chatModel struct {
 	pool     *agent.Pool
 	textarea textarea.Model
 	viewport viewport.Model
-	stream   <-chan agent.Event
+	stream   <-chan runner.Event
 
 	history   *strings.Builder
 	streaming bool
@@ -186,7 +187,7 @@ func (m *chatModel) handleInput(input string) tea.Cmd {
 }
 
 // waitNextChunk returns a Cmd that reads the next event from the stream channel.
-func waitNextChunk(stream <-chan agent.Event) tea.Cmd {
+func waitNextChunk(stream <-chan runner.Event) tea.Cmd {
 	if stream == nil {
 		return nil
 	}
