@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,6 +183,136 @@ func TestRunHelpShort(t *testing.T) {
 	err := app.Run([]string{"anna", "-h"})
 	if err != nil {
 		t.Fatalf("run -h: %v", err)
+	}
+}
+
+func TestGoConfigAnthropicEnvVarResolution(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-123")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://custom-proxy.example.com")
+	// Ensure runner type doesn't interfere.
+	t.Setenv("ANNA_RUNNER_TYPE", "go")
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Runner.Go.APIKey != "sk-ant-test-123" {
+		t.Errorf("Go.APIKey = %q, want %q", cfg.Runner.Go.APIKey, "sk-ant-test-123")
+	}
+	if cfg.Runner.Go.BaseURL != "https://custom-proxy.example.com" {
+		t.Errorf("Go.BaseURL = %q, want %q", cfg.Runner.Go.BaseURL, "https://custom-proxy.example.com")
+	}
+}
+
+func TestGoConfigOpenAIEnvVars(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `
+runner:
+  go:
+    api: openai
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OPENAI_API_KEY", "sk-openai-test")
+	t.Setenv("OPENAI_BASE_URL", "https://openai-proxy.example.com")
+	// Clear anthropic vars to avoid interference.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Runner.Go.API != "openai" {
+		t.Errorf("Go.API = %q, want %q", cfg.Runner.Go.API, "openai")
+	}
+	if cfg.Runner.Go.APIKey != "sk-openai-test" {
+		t.Errorf("Go.APIKey = %q, want %q", cfg.Runner.Go.APIKey, "sk-openai-test")
+	}
+	if cfg.Runner.Go.BaseURL != "https://openai-proxy.example.com" {
+		t.Errorf("Go.BaseURL = %q, want %q", cfg.Runner.Go.BaseURL, "https://openai-proxy.example.com")
+	}
+}
+
+func TestGoConfigDefaults(t *testing.T) {
+	dir := t.TempDir()
+	// Clear env vars that could interfere.
+	t.Setenv("ANNA_RUNNER_TYPE", "")
+	t.Setenv("ANNA_GO_MODEL", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Runner.Go.API != "anthropic" {
+		t.Errorf("Go.API = %q, want default %q", cfg.Runner.Go.API, "anthropic")
+	}
+	if cfg.Runner.Go.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Go.Model = %q, want default %q", cfg.Runner.Go.Model, "claude-sonnet-4-20250514")
+	}
+}
+
+func TestRunnerTypeEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANNA_RUNNER_TYPE", "go")
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Runner.Type != "go" {
+		t.Errorf("Runner.Type = %q, want %q", cfg.Runner.Type, "go")
+	}
+}
+
+func TestNewRunnerFactoryGo(t *testing.T) {
+	cfg := &Config{
+		Runner: RunnerConfig{
+			Type: "go",
+			Go: GoConfig{
+				API:    "anthropic",
+				Model:  "test-model",
+				APIKey: "test-key",
+			},
+		},
+	}
+
+	factory, err := newRunnerFactory(cfg)
+	if err != nil {
+		t.Fatalf("newRunnerFactory: %v", err)
+	}
+
+	r, err := factory(context.Background())
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+
+	if r == nil {
+		t.Fatal("expected non-nil runner")
+	}
+}
+
+func TestNewRunnerFactoryUnknown(t *testing.T) {
+	cfg := &Config{
+		Runner: RunnerConfig{Type: "invalid"},
+	}
+
+	_, err := newRunnerFactory(cfg)
+	if err == nil {
+		t.Fatal("expected error for unknown runner type")
+	}
+	if !strings.Contains(err.Error(), "unknown runner type") {
+		t.Errorf("error = %q, want contains 'unknown runner type'", err.Error())
 	}
 }
 
