@@ -49,7 +49,10 @@ var toolEmoji = map[string]string{
 	"default": "🔧",
 }
 
-var log = slog.With("component", "telegram")
+// logger returns the package logger, always using the current default handler.
+// This must be a function (not a package-level var) because the default handler
+// is set in main() after package init.
+func logger() *slog.Logger { return slog.With("component", "telegram") }
 
 // Config holds Telegram bot settings.
 type Config struct {
@@ -76,8 +79,11 @@ type Bot struct {
 // New creates a Telegram bot and registers handlers. Call Start to begin polling.
 func New(cfg Config, pool *agent.Pool, listFn ModelListFunc, switchFn channel.ModelSwitchFunc) (*Bot, error) {
 	bot, err := tele.NewBot(tele.Settings{
-		Token:  cfg.Token,
-		Poller: &tele.LongPoller{Timeout: 30 * time.Second},
+		Token: cfg.Token,
+		Poller: &tele.LongPoller{
+			Timeout:        30 * time.Second,
+			AllowedUpdates: tele.AllowedUpdates,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create bot: %w", err)
@@ -112,14 +118,14 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.ctx = ctx
 
 	if err := registerCommands(b.bot); err != nil {
-		log.Warn("register telegram commands failed", "error", err)
+		logger().Warn("register telegram commands failed", "error", err)
 	}
 
-	log.Info("polling started")
+	logger().Info("polling started")
 
 	go func() {
 		<-ctx.Done()
-		log.Info("polling stopped")
+		logger().Info("polling stopped")
 		b.bot.Stop()
 	}()
 
@@ -151,7 +157,9 @@ func (b *Bot) Notify(_ context.Context, n channel.Notification) error {
 		chat = chatRef(chatID)
 	}
 
-	opts := &tele.SendOptions{}
+	logger().Debug("sending notification", "chat_id", chatID, "text_len", len(n.Text), "silent", n.Silent)
+
+	opts := &tele.SendOptions{ParseMode: tele.ModeMarkdownV2}
 	if n.Silent {
 		opts.DisableNotification = true
 	}
@@ -159,13 +167,17 @@ func (b *Bot) Notify(_ context.Context, n channel.Notification) error {
 	chunks := splitMessage(n.Text)
 	for _, chunk := range chunks {
 		rendered := renderMarkdown(b.md, chunk)
-		if _, err := b.bot.Send(chat, rendered, tele.ModeMarkdownV2, opts); err != nil {
+		if _, err := b.bot.Send(chat, rendered, opts); err != nil {
+			logger().Warn("markdown notification send failed, falling back to plain text", "error", err)
 			// Fallback to plain text.
-			if _, err := b.bot.Send(chat, chunk, opts); err != nil {
+			plainOpts := &tele.SendOptions{DisableNotification: n.Silent}
+			if _, err := b.bot.Send(chat, chunk, plainOpts); err != nil {
+				logger().Error("plain text notification send failed", "error", err)
 				return fmt.Errorf("send notification: %w", err)
 			}
 		}
 	}
+	logger().Debug("notification sent successfully", "chat_id", chatID, "chunks", len(chunks))
 	return nil
 }
 
@@ -204,10 +216,10 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/new", b.guard(func(c tele.Context) error {
 		sessionID := sessionIDFor(c)
 		if err := b.pool.Reset(sessionID); err != nil {
-			log.Error("reset session failed", "session_id", sessionID, "error", err)
+			logger().Error("reset session failed", "session_id", sessionID, "error", err)
 			return c.Send(fmt.Sprintf("Error creating new session: %v", err))
 		}
-		log.Info("session reset", "session_id", sessionID)
+		logger().Info("session reset", "session_id", sessionID)
 		return c.Send("New session started.")
 	}))
 
@@ -216,10 +228,10 @@ func (b *Bot) registerHandlers() {
 		_ = c.Notify(tele.Typing)
 		summary, err := b.pool.CompactSession(b.ctx, sessionID)
 		if err != nil {
-			log.Error("compact session failed", "session_id", sessionID, "error", err)
+			logger().Error("compact session failed", "session_id", sessionID, "error", err)
 			return c.Send(fmt.Sprintf("Compaction failed: %v", err))
 		}
-		log.Info("session compacted", "session_id", sessionID, "summary_len", len(summary))
+		logger().Info("session compacted", "session_id", sessionID, "summary_len", len(summary))
 		return c.Send("Session compacted.")
 	}))
 
@@ -237,8 +249,10 @@ func (b *Bot) registerHandlers() {
 	// telebot strips the "\fmodel_select|" prefix, so c.Data() = "1", "2", etc.
 	b.bot.Handle("\fmodel_select", b.guard(func(c tele.Context) error {
 		idxStr := c.Data()
+		logger().Debug("model_select callback fired", "data", idxStr, "sender", c.Sender().ID, "chat", c.Chat().ID)
 		models := b.listFn()
 		if err := b.switchModel(c, models, idxStr); err != nil {
+			logger().Error("model switch failed", "data", idxStr, "error", err)
 			return err
 		}
 		_ = c.Respond()
@@ -248,6 +262,13 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle(tele.OnText, b.guard(func(c tele.Context) error {
 		return b.handleText(c)
 	}))
+
+	// Debug: catch-all callback handler for unmatched callbacks.
+	b.bot.Handle(tele.OnCallback, func(c tele.Context) error {
+		cb := c.Callback()
+		logger().Warn("unmatched callback", "data", cb.Data, "unique", cb.Unique)
+		return c.Respond()
+	})
 }
 
 // guard wraps a handler with access control and group mode checks.
@@ -255,7 +276,7 @@ func (b *Bot) guard(h tele.HandlerFunc) tele.HandlerFunc {
 	return func(c tele.Context) error {
 		if !b.isAllowed(c) {
 			if s := c.Sender(); s != nil {
-				log.Warn("unauthorized access", "user_id", s.ID)
+				logger().Warn("unauthorized access", "user_id", s.ID)
 			}
 			return nil
 		}
@@ -263,7 +284,11 @@ func (b *Bot) guard(h tele.HandlerFunc) tele.HandlerFunc {
 		// the bot's own inline keyboards (e.g. model selection) and don't
 		// carry mention/reply context.
 		if isGroup(c) && c.Callback() == nil && !b.shouldRespondInGroup(c) {
+			logger().Debug("guard: skipped group message", "chat", c.Chat().ID)
 			return nil
+		}
+		if c.Callback() != nil {
+			logger().Debug("guard: passing callback through", "data", c.Callback().Data, "unique", c.Callback().Unique)
 		}
 		return h(c)
 	}
@@ -297,7 +322,7 @@ func (b *Bot) handleText(c tele.Context) error {
 		text = b.stripBotMention(text)
 	}
 
-	log.Debug("message received", "chat_id", chatID, "text_len", len(text))
+	logger().Debug("message received", "chat_id", chatID, "text_len", len(text))
 
 	typingCtx, stopTyping := context.WithCancel(b.ctx)
 	go keepTyping(typingCtx, c)
@@ -307,7 +332,7 @@ func (b *Bot) handleText(c tele.Context) error {
 	stopTyping()
 
 	if streamErr != nil {
-		log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
+		logger().Error("agent stream error", "session_id", sessionID, "error", streamErr)
 		if response == "" {
 			response = fmt.Sprintf("Agent error: %v", streamErr)
 		} else {
@@ -320,7 +345,7 @@ func (b *Bot) handleText(c tele.Context) error {
 	}
 
 	b.sendFinalResponse(c, response)
-	log.Debug("response sent", "chat_id", chatID, "response_len", len(response))
+	logger().Debug("response sent", "chat_id", chatID, "response_len", len(response))
 	return nil
 }
 
@@ -411,10 +436,10 @@ func (b *Bot) switchModel(c tele.Context, models []ModelOption, idxStr string) e
 	}
 	sessionID := sessionIDFor(c)
 	if err := b.pool.Reset(sessionID); err != nil {
-		log.Error("reset session after model switch failed", "session_id", sessionID, "error", err)
+		logger().Error("reset session after model switch failed", "session_id", sessionID, "error", err)
 	}
 	b.chatModels[c.Chat().ID] = selected
-	log.Info("model switched", "session_id", sessionID, "provider", selected.Provider, "model", selected.Model)
+	logger().Info("model switched", "session_id", sessionID, "provider", selected.Provider, "model", selected.Model)
 	return c.Send(fmt.Sprintf("Switched to %s/%s. Session reset.", selected.Provider, selected.Model))
 }
 
@@ -506,13 +531,13 @@ func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, 
 		if sentMsg == nil {
 			msg, err := b.bot.Send(c.Chat(), display+suffix)
 			if err != nil {
-				log.Warn("stream send failed", "error", err)
+				logger().Warn("stream send failed", "error", err)
 			} else {
 				sentMsg = msg
 			}
 		} else {
 			if _, err := b.bot.Edit(sentMsg, display+suffix); err != nil {
-				log.Warn("stream edit failed", "error", err)
+				logger().Warn("stream edit failed", "error", err)
 			}
 		}
 		lastEdit = now
@@ -521,7 +546,7 @@ func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, 
 	// Clean up the streaming message so the caller can send the final version.
 	if sentMsg != nil {
 		if err := b.bot.Delete(sentMsg); err != nil {
-			log.Warn("delete streaming message failed", "error", err)
+			logger().Warn("delete streaming message failed", "error", err)
 		}
 	}
 
@@ -536,9 +561,9 @@ func (b *Bot) sendFinalResponse(c tele.Context, response string) {
 	for _, chunk := range chunks {
 		rendered := renderMarkdown(b.md, chunk)
 		if err := c.Send(rendered, tele.ModeMarkdownV2); err != nil {
-			log.Warn("markdown send failed, falling back to plain text", "error", err)
+			logger().Warn("markdown send failed, falling back to plain text", "error", err)
 			if err := c.Send(chunk); err != nil {
-				log.Error("sendMessage failed", "chat_id", chatID, "error", err)
+				logger().Error("sendMessage failed", "chat_id", chatID, "error", err)
 			}
 		}
 	}
