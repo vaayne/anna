@@ -150,6 +150,7 @@ pkg/agent/core/                     Agent loop engine
 
 | Document | Description |
 |----------|-------------|
+| [Deployment](docs/deployment.md) | Binary install, Docker, systemd, compose |
 | [Configuration](docs/configuration.md) | Full config reference, env vars, defaults |
 | [Architecture](docs/architecture.md) | System design, packages, providers, tools |
 | [Telegram](docs/telegram.md) | Bot setup, streaming, groups, access control |

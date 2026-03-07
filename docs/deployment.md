@@ -1,0 +1,174 @@
+# Deployment
+
+Two deployment methods: **binary** (direct install) and **Docker**.
+
+## Binary
+
+### From Release
+
+Download a pre-built binary from [GitHub Releases](https://github.com/vaayne/anna/releases). Binaries are available for linux, macOS, and Windows on amd64/arm64.
+
+```bash
+# Example: Linux amd64
+curl -LO https://github.com/vaayne/anna/releases/latest/download/anna_linux_amd64.tar.gz
+tar xzf anna_linux_amd64.tar.gz
+chmod +x anna
+sudo mv anna /usr/local/bin/
+```
+
+### From Source
+
+```bash
+go install github.com/vaayne/anna@latest
+# or
+git clone https://github.com/vaayne/anna.git
+cd anna && go build -o anna .
+```
+
+### Running
+
+Create a config file at `.agents/config.yaml` (see [configuration.md](configuration.md) for full reference):
+
+```bash
+mkdir -p .agents
+cat > .agents/config.yaml <<'EOF'
+provider: anthropic
+model: claude-sonnet-4-6
+providers:
+  anthropic:
+    api_key: "sk-..."
+EOF
+```
+
+Start the gateway daemon:
+
+```bash
+anna gateway
+```
+
+Or use the interactive CLI:
+
+```bash
+anna chat
+```
+
+### Systemd Service (Linux)
+
+```ini
+# /etc/systemd/system/anna.service
+[Unit]
+Description=anna gateway
+After=network.target
+
+[Service]
+Type=simple
+User=anna
+WorkingDirectory=/home/anna
+ExecStart=/usr/local/bin/anna gateway
+Restart=on-failure
+RestartSec=5
+
+# Environment overrides (alternative to config file)
+Environment=ANTHROPIC_API_KEY=sk-...
+Environment=ANNA_TELEGRAM_TOKEN=123456:ABC...
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now anna
+```
+
+## Docker
+
+Images are published to `ghcr.io/vaayne/anna` for `linux/amd64` and `linux/arm64`.
+
+### Tags
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable release |
+| `v1.2.3` | Specific version |
+| `sha-<commit>` | Specific commit |
+
+### Quick Start
+
+```bash
+docker run -d \
+  --name anna \
+  -v $(pwd)/.agents:/workspace/.agents \
+  -e ANTHROPIC_API_KEY=sk-... \
+  -e ANNA_TELEGRAM_TOKEN=123456:ABC... \
+  ghcr.io/vaayne/anna:latest
+```
+
+The container runs as `nonroot` user with working directory `/workspace`. Mount `.agents/` to persist config, sessions, and cron data.
+
+### Docker Compose
+
+```yaml
+# docker-compose.yml
+services:
+  anna:
+    image: ghcr.io/vaayne/anna:latest
+    restart: unless-stopped
+    volumes:
+      - ./data/.agents:/workspace/.agents
+    environment:
+      - ANTHROPIC_API_KEY=sk-...
+      - ANNA_TELEGRAM_TOKEN=123456:ABC...
+      # - ANNA_TELEGRAM_NOTIFY_CHAT=123456789
+      # - ANNA_TELEGRAM_GROUP_MODE=mention
+```
+
+```bash
+docker compose up -d
+```
+
+### Build Locally
+
+```bash
+# Single platform
+docker build -t anna .
+
+# Multi-platform
+docker buildx build --platform linux/amd64,linux/arm64 -t anna .
+```
+
+## Volumes & Data
+
+| Path | Purpose |
+|------|---------|
+| `.agents/config.yaml` | Configuration |
+| `.agents/workspace/sessions/` | Chat session history |
+| `.agents/cron/` | Cron job persistence |
+
+All paths are relative to the working directory (`/workspace` in Docker).
+
+## Environment Variables
+
+All config values can be overridden via environment variables. See [configuration.md](configuration.md#environment-variable-overrides) for the full list.
+
+Key variables for deployment:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes* | Anthropic provider key |
+| `OPENAI_API_KEY` | Yes* | OpenAI provider key |
+| `ANNA_TELEGRAM_TOKEN` | For Telegram | Bot token from @BotFather |
+| `ANNA_TELEGRAM_NOTIFY_CHAT` | No | Chat ID for proactive notifications |
+
+\* At least one provider key is required.
+
+## Health Check
+
+The gateway logs to stdout. Verify it's running:
+
+```bash
+# Binary
+anna gateway  # Logs appear in terminal
+
+# Docker
+docker logs anna
+```
