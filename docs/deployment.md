@@ -27,16 +27,18 @@ cd anna && go build -o anna .
 
 ### Running
 
-Create a config file at `.agents/config.yaml` (see [configuration.md](configuration.md) for full reference):
+Create a config file at `~/.anna/config.yaml` (see [configuration.md](configuration.md) for full reference):
 
 ```bash
-mkdir -p .agents
-cat > .agents/config.yaml <<'EOF'
-provider: anthropic
-model: claude-sonnet-4-6
+mkdir -p ~/.anna
+cat > ~/.anna/config.yaml <<'EOF'
 providers:
   anthropic:
     api_key: "sk-..."
+
+agents:
+  provider: anthropic
+  model: claude-sonnet-4-6
 EOF
 ```
 
@@ -97,13 +99,13 @@ Images are published to `ghcr.io/vaayne/anna` for `linux/amd64` and `linux/arm64
 ```bash
 docker run -d \
   --name anna \
-  -v $(pwd)/.agents:/workspace/.agents \
+  -v $(pwd)/anna-data:/home/nonroot/.anna \
   -e ANTHROPIC_API_KEY=sk-... \
   -e ANNA_TELEGRAM_TOKEN=123456:ABC... \
   ghcr.io/vaayne/anna:latest
 ```
 
-The container runs as `nonroot` user with working directory `/workspace`. Mount `.agents/` to persist config, sessions, and cron data.
+The container runs as `nonroot` user. Mount `~/.anna` to persist config, sessions, and cron data. You can set `ANNA_HOME` to change the workspace path inside the container.
 
 ### Docker Compose
 
@@ -114,7 +116,7 @@ services:
     image: ghcr.io/vaayne/anna:latest
     restart: unless-stopped
     volumes:
-      - ./data/.agents:/workspace/.agents
+      - ./anna-data:/home/nonroot/.anna
     environment:
       - ANTHROPIC_API_KEY=sk-...
       - ANNA_TELEGRAM_TOKEN=123456:ABC...
@@ -140,11 +142,14 @@ docker buildx build --platform linux/amd64,linux/arm64 -t anna .
 
 | Path | Purpose |
 |------|---------|
-| `.agents/config.yaml` | Configuration |
-| `.agents/workspace/sessions/` | Chat session history |
-| `.agents/cron/` | Cron job persistence |
+| `~/.anna/config.yaml` | Configuration |
+| `~/.anna/sessions/` | Chat session history |
+| `~/.anna/cron/` | Cron job persistence |
+| `~/.anna/memory/` | Persistent memory (facts + journal) |
+| `~/.anna/skills/` | Installed skills |
+| `~/.anna/models.json` | Model cache |
 
-All paths are relative to the working directory (`/workspace` in Docker).
+All paths are under the workspace root (`~/.anna` by default, configurable via `ANNA_HOME`).
 
 ## Environment Variables
 
@@ -154,6 +159,7 @@ Key variables for deployment:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `ANNA_HOME` | No | Workspace root (default `~/.anna`) |
 | `ANTHROPIC_API_KEY` | Yes* | Anthropic provider key |
 | `OPENAI_API_KEY` | Yes* | OpenAI provider key |
 | `ANNA_TELEGRAM_TOKEN` | For Telegram | Bot token from @BotFather |

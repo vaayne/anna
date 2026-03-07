@@ -29,7 +29,7 @@ type Config struct {
 	APIKey      string
 	BaseURL     string        // optional provider base URL override
 	WorkDir     string        // working directory for tool execution
-	AgentsDir   string        // .agents dir for skills discovery
+	AgentsDir   string        // workspace dir for skills discovery (e.g. ~/.anna)
 	MemoryStore *memory.Store // persistent memory (soul, user, facts, journal)
 	System      string        // optional system prompt override (bypasses BuildSystemPrompt)
 	ExtraTools  []tool.Tool   // additional tools to register

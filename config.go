@@ -10,15 +10,26 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Config is the top-level configuration for anna.
 type Config struct {
-	Provider  string                    `yaml:"provider"`
-	Model     string                    `yaml:"model"`
-	Models    ModelsConfig              `yaml:"models"`
 	Providers map[string]ProviderConfig `yaml:"providers"`
-	Runner    RunnerConfig              `yaml:"runner"`
-	Telegram  TelegramConfig            `yaml:"telegram"`
-	Sessions  string                    `yaml:"sessions"`
-	Cron      CronConfig                `yaml:"cron"`
+	Channels  ChannelsConfig            `yaml:"channels"`
+	Agents    AgentsConfig              `yaml:"agents"`
+}
+
+// ChannelsConfig groups all channel (interface) configurations.
+type ChannelsConfig struct {
+	Telegram TelegramConfig `yaml:"telegram"`
+}
+
+// AgentsConfig holds agent defaults and workspace settings.
+type AgentsConfig struct {
+	Provider  string           `yaml:"provider"`
+	Model     string           `yaml:"model"`
+	Models    ModelsConfig     `yaml:"models"`
+	Workspace string           `yaml:"workspace"`
+	Runner    RunnerConfig     `yaml:"runner"`
+	Cron      CronConfig       `yaml:"cron"`
 }
 
 // Model tier constants.
@@ -29,7 +40,7 @@ const (
 )
 
 // ModelsConfig holds tiered model IDs.
-// Fallback chain: fast → worker → strong → Config.Model (backward compat).
+// Fallback chain: fast → worker → strong → AgentsConfig.Model (backward compat).
 type ModelsConfig struct {
 	Strong string `yaml:"strong"`
 	Worker string `yaml:"worker"`
@@ -89,17 +100,27 @@ type TelegramConfig struct {
 	AllowedIDs []int64 `yaml:"allowed_ids"` // user IDs allowed to use the bot (empty = allow all)
 }
 
-func configDir() string {
-	return filepath.Join(".", ".agents")
+// annaHome returns the anna home directory.
+// Priority: ANNA_HOME env → ~/.anna
+func annaHome() string {
+	if v := os.Getenv("ANNA_HOME"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".anna")
+	}
+	return filepath.Join(home, ".anna")
 }
 
+// configPath returns the path to config.yaml inside the anna home.
 func configPath() string {
-	return filepath.Join(configDir(), "config.yaml")
+	return filepath.Join(annaHome(), "config.yaml")
 }
 
-// LoadConfig loads config from the default path (.agents/config.yaml).
+// LoadConfig loads config from the default anna home (~/.anna/config.yaml).
 func LoadConfig() (*Config, error) {
-	return loadConfigFrom(configDir())
+	return loadConfigFrom(annaHome())
 }
 
 // loadConfigFrom loads config from the given directory.
@@ -122,34 +143,34 @@ func loadConfigFrom(dir string) (*Config, error) {
 
 	// Apply environment variable overrides.
 	if v := os.Getenv("ANNA_TELEGRAM_TOKEN"); v != "" {
-		cfg.Telegram.Token = v
+		cfg.Channels.Telegram.Token = v
 	}
 	if v := os.Getenv("ANNA_TELEGRAM_NOTIFY_CHAT"); v != "" {
-		cfg.Telegram.NotifyChat = v
+		cfg.Channels.Telegram.NotifyChat = v
 	}
 	if v := os.Getenv("ANNA_TELEGRAM_CHANNEL_ID"); v != "" {
-		cfg.Telegram.ChannelID = v
+		cfg.Channels.Telegram.ChannelID = v
 	}
 	if v := os.Getenv("ANNA_TELEGRAM_GROUP_MODE"); v != "" {
-		cfg.Telegram.GroupMode = v
+		cfg.Channels.Telegram.GroupMode = v
 	}
 	if v := os.Getenv("ANNA_RUNNER_TYPE"); v != "" {
-		cfg.Runner.Type = v
+		cfg.Agents.Runner.Type = v
 	}
 	if v := os.Getenv("ANNA_PROVIDER"); v != "" {
-		cfg.Provider = v
+		cfg.Agents.Provider = v
 	}
 	if v := os.Getenv("ANNA_MODEL"); v != "" {
-		cfg.Model = v
+		cfg.Agents.Model = v
 	}
 	if v := os.Getenv("ANNA_MODEL_STRONG"); v != "" {
-		cfg.Models.Strong = v
+		cfg.Agents.Models.Strong = v
 	}
 	if v := os.Getenv("ANNA_MODEL_WORKER"); v != "" {
-		cfg.Models.Worker = v
+		cfg.Agents.Models.Worker = v
 	}
 	if v := os.Getenv("ANNA_MODEL_FAST"); v != "" {
-		cfg.Models.Fast = v
+		cfg.Agents.Models.Fast = v
 	}
 
 	// Initialize providers map if nil.
@@ -163,23 +184,23 @@ func loadConfigFrom(dir string) (*Config, error) {
 	resolveProviderEnv(cfg, "openai-response", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 
 	// Apply defaults for missing values.
-	if cfg.Provider == "" {
-		cfg.Provider = "anthropic"
+	if cfg.Agents.Provider == "" {
+		cfg.Agents.Provider = "anthropic"
 	}
-	if cfg.Model == "" {
-		cfg.Model = "claude-sonnet-4-6"
+	if cfg.Agents.Model == "" {
+		cfg.Agents.Model = "claude-sonnet-4-6"
 	}
-	if cfg.Runner.Type == "" {
-		cfg.Runner.Type = "go"
+	if cfg.Agents.Workspace == "" {
+		cfg.Agents.Workspace = dir
 	}
-	if cfg.Runner.IdleTimeout == 0 {
-		cfg.Runner.IdleTimeout = 10
+	if cfg.Agents.Runner.Type == "" {
+		cfg.Agents.Runner.Type = "go"
 	}
-	if cfg.Sessions == "" {
-		cfg.Sessions = filepath.Join(dir, "workspace", "sessions")
+	if cfg.Agents.Runner.IdleTimeout == 0 {
+		cfg.Agents.Runner.IdleTimeout = 10
 	}
-	if cfg.Cron.DataDir == "" {
-		cfg.Cron.DataDir = filepath.Join(dir, "cron")
+	if cfg.Agents.Cron.DataDir == "" {
+		cfg.Agents.Cron.DataDir = filepath.Join(cfg.Agents.Workspace, "cron")
 	}
 
 	return cfg, nil
@@ -202,6 +223,28 @@ func resolveProviderEnv(cfg *Config, name, keyEnv, urlEnv string) {
 	cfg.Providers[name] = p
 }
 
+// Workspace path helpers — all data lives under Agents.Workspace.
+
+func (cfg *Config) SessionsPath() string {
+	return filepath.Join(cfg.Agents.Workspace, "sessions")
+}
+
+func (cfg *Config) MemoryPath() string {
+	return filepath.Join(cfg.Agents.Workspace, "memory")
+}
+
+func (cfg *Config) SkillsPath() string {
+	return filepath.Join(cfg.Agents.Workspace, "skills")
+}
+
+func (cfg *Config) ModelsPath() string {
+	return filepath.Join(cfg.Agents.Workspace, "models.json")
+}
+
+func (cfg *Config) LogPath() string {
+	return filepath.Join(cfg.Agents.Workspace, "anna.log")
+}
+
 // ResolveModel returns the types.Model for the default provider/model,
 // looking up from the provider's model list config.
 func (cfg *Config) ResolveModel() types.Model {
@@ -209,59 +252,59 @@ func (cfg *Config) ResolveModel() types.Model {
 }
 
 // ResolveModelTier returns the model ID for the given tier after applying
-// the fallback chain: fast → worker → strong → Config.Model.
+// the fallback chain: fast → worker → strong → Agents.Model.
 func (cfg *Config) ResolveModelTier(tier string) types.Model {
 	modelID := cfg.resolveModelID(tier)
-	providerCfg := cfg.Providers[cfg.Provider]
+	providerCfg := cfg.Providers[cfg.Agents.Provider]
 	for _, m := range providerCfg.Models {
 		if m.ID == modelID {
-			return modelConfigToType(cfg.Provider, m)
+			return modelConfigToType(cfg.Agents.Provider, m)
 		}
 	}
 	// Fallback: construct a minimal Model from defaults.
 	return types.Model{
 		ID:       modelID,
 		Name:     modelID,
-		API:      cfg.Provider,
-		Provider: cfg.Provider,
+		API:      cfg.Agents.Provider,
+		Provider: cfg.Agents.Provider,
 		BaseURL:  providerCfg.BaseURL,
 	}
 }
 
 // resolveModelID returns the model ID string for the given tier,
-// walking the fallback chain: fast → worker → strong → Config.Model.
+// walking the fallback chain: fast → worker → strong → Agents.Model.
 func (cfg *Config) resolveModelID(tier string) string {
 	switch tier {
 	case ModelTierFast:
-		if cfg.Models.Fast != "" {
-			return cfg.Models.Fast
+		if cfg.Agents.Models.Fast != "" {
+			return cfg.Agents.Models.Fast
 		}
-		if cfg.Models.Worker != "" {
-			return cfg.Models.Worker
+		if cfg.Agents.Models.Worker != "" {
+			return cfg.Agents.Models.Worker
 		}
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
+		if cfg.Agents.Models.Strong != "" {
+			return cfg.Agents.Models.Strong
 		}
-		return cfg.Model
+		return cfg.Agents.Model
 	case ModelTierWorker:
-		if cfg.Models.Worker != "" {
-			return cfg.Models.Worker
+		if cfg.Agents.Models.Worker != "" {
+			return cfg.Agents.Models.Worker
 		}
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
+		if cfg.Agents.Models.Strong != "" {
+			return cfg.Agents.Models.Strong
 		}
-		return cfg.Model
+		return cfg.Agents.Model
 	case ModelTierStrong:
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
+		if cfg.Agents.Models.Strong != "" {
+			return cfg.Agents.Models.Strong
 		}
-		return cfg.Model
+		return cfg.Agents.Model
 	default:
 		// Unknown tier, treat as strong.
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
+		if cfg.Agents.Models.Strong != "" {
+			return cfg.Agents.Models.Strong
 		}
-		return cfg.Model
+		return cfg.Agents.Model
 	}
 }
 
@@ -281,8 +324,14 @@ func SaveModelSelection(provider, model string) error {
 		}
 	}
 
-	raw["provider"] = provider
-	raw["model"] = model
+	// Ensure agents section exists.
+	agents, _ := raw["agents"].(map[string]any)
+	if agents == nil {
+		agents = make(map[string]any)
+	}
+	agents["provider"] = provider
+	agents["model"] = model
+	raw["agents"] = agents
 
 	out, err := yaml.Marshal(raw)
 	if err != nil {

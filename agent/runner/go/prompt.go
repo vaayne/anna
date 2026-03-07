@@ -48,24 +48,45 @@ type contextFile struct {
 
 // BuildSystemPrompt composes the full system prompt: basic + memories + skills + project context.
 // The basic prompt defaults to the embedded system.md but can be overridden
-// by placing a system.md file in the agents directory.
+// by placing a system.md file in the project's .agents directory or the workspace.
 func BuildSystemPrompt(store *memory.Store, agentsDir string, cwd ...string) string {
 	workDir := ""
 	if len(cwd) > 0 {
 		workDir = cwd[0]
 	}
+	projectDir := ""
+	if workDir != "" {
+		projectDir = filepath.Join(workDir, ".agents")
+	}
 
-	// Basic prompt: use agentsDir/system.md if present, otherwise embedded default.
+	// Basic prompt: project .agents/system.md > workspace system.md > embedded default.
 	basic := defaultBasicPrompt
 	if path := resolveFile(agentsDir, "system.md"); path != "" {
 		if custom, err := os.ReadFile(path); err == nil {
 			basic = string(custom)
 		}
 	}
+	if projectDir != "" {
+		if path := resolveFile(projectDir, "system.md"); path != "" {
+			if custom, err := os.ReadFile(path); err == nil {
+				basic = string(custom)
+			}
+		}
+	}
 
 	soul, _ := store.Read(memory.FileSoul)
 	user, _ := store.Read(memory.FileUser)
 	facts, _ := store.Read(memory.FileFact)
+
+	// Project-level overrides: .agents/SOUL.md and .agents/USER.md take priority.
+	if projectDir != "" {
+		if content := readFileIfExists(projectDir, string(memory.FileSoul)); content != "" {
+			soul = content
+		}
+		if content := readFileIfExists(projectDir, string(memory.FileUser)); content != "" {
+			user = content
+		}
+	}
 
 	memories := promptMemories{
 		Dir:   store.Dir(),
@@ -94,6 +115,20 @@ func BuildSystemPrompt(store *memory.Store, agentsDir string, cwd ...string) str
 	}
 
 	return buf.String()
+}
+
+// readFileIfExists reads a file from dir with case-insensitive matching.
+// Returns the trimmed content, or empty string if not found.
+func readFileIfExists(dir, name string) string {
+	path := resolveFile(dir, name)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // loadProjectContextFiles walks from cwd up to the filesystem root,

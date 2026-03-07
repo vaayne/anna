@@ -86,7 +86,7 @@ func chatCommand() *ucli.Command {
 			}
 			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
 			switchFn := modelSwitcher(s.cfg, s.pool, s.memStore, s.extraTools)
-			return clicmd.RunChat(s.ctx, s.pool, s.cfg.Provider, s.cfg.Model, listFn, switchFn)
+			return clicmd.RunChat(s.ctx, s.pool, s.cfg.Agents.Provider, s.cfg.Agents.Model, listFn, switchFn)
 		},
 	}
 }
@@ -135,8 +135,8 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	// can be injected into the Go runner.
 	var cronSvc *cron.Service
 	var extraTools []tool.Tool
-	if cfg.Cron.CronEnabled() {
-		cronSvc, err = cron.New(cfg.Cron.DataDir)
+	if cfg.Agents.Cron.CronEnabled() {
+		cronSvc, err = cron.New(cfg.Agents.Cron.DataDir)
 		if err != nil {
 			return nil, fmt.Errorf("create cron service: %w", err)
 		}
@@ -144,21 +144,21 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	}
 
 	// Memory store + tool — always available.
-	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
+	memStore := memory.NewStore(cfg.MemoryPath())
 	extraTools = append(extraTools, memory.NewTool(memStore))
 
 	// Skills tool — always available.
 	cwd, _ := os.Getwd()
-	extraTools = append(extraTools, skills.NewTool(configDir(), cwd))
+	extraTools = append(extraTools, skills.NewTool(cfg.Agents.Workspace, cwd))
 
 	// Notification dispatcher + tool — backends are registered later in
 	// runGateway(). Only expose the tool in gateway mode where backends exist.
 	dispatcher := channel.NewDispatcher()
-	if gateway && cfg.Telegram.Token != "" {
+	if gateway && cfg.Channels.Telegram.Token != "" {
 		extraTools = append(extraTools, channel.NewNotifyTool(dispatcher))
 	}
 
-	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
+	idleTimeout := time.Duration(cfg.Agents.Runner.IdleTimeout) * time.Minute
 	factory, err := newRunnerFactory(cfg, memStore, extraTools)
 	if err != nil {
 		return nil, fmt.Errorf("create runner factory: %w", err)
@@ -166,17 +166,18 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 
 	opts := []agent.PoolOption{
 		agent.WithIdleTimeout(idleTimeout),
-		agent.WithCompaction(cfg.Runner.Compaction.WithDefaults()),
+		agent.WithCompaction(cfg.Agents.Runner.Compaction.WithDefaults()),
 		agent.WithDefaultModel(cfg.resolveModelID(ModelTierStrong)),
 		agent.WithFastModel(cfg.resolveModelID(ModelTierFast)),
 	}
-	if cfg.Sessions != "" {
-		s, err := store.NewFileStore(cfg.Sessions, cwd)
+	sessionsPath := cfg.SessionsPath()
+	if sessionsPath != "" {
+		s, err := store.NewFileStore(sessionsPath, cwd)
 		if err != nil {
 			return nil, fmt.Errorf("create session store: %w", err)
 		}
 		opts = append(opts, agent.WithStore(s))
-		slog.Info("session persistence enabled", "dir", cfg.Sessions)
+		slog.Info("session persistence enabled", "dir", sessionsPath)
 	}
 
 	pool := agent.NewPool(factory, opts...)
@@ -208,25 +209,25 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 }
 
 func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Tool) (runner.NewRunnerFunc, error) {
-	switch cfg.Runner.Type {
+	switch cfg.Agents.Runner.Type {
 	case "go":
-		providerCfg := cfg.Providers[cfg.Provider]
+		providerCfg := cfg.Providers[cfg.Agents.Provider]
 		return func(ctx context.Context, model string) (runner.Runner, error) {
 			if model == "" {
-				model = cfg.Model
+				model = cfg.Agents.Model
 			}
 			return gorunner.New(ctx, gorunner.Config{
-				API:         cfg.Provider,
+				API:         cfg.Agents.Provider,
 				Model:       model,
 				APIKey:      providerCfg.APIKey,
-				AgentsDir:   configDir(),
+				AgentsDir:   cfg.Agents.Workspace,
 				MemoryStore: memStore,
 				BaseURL:     providerCfg.BaseURL,
 				ExtraTools:  extraTools,
 			})
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown runner type: %q", cfg.Runner.Type)
+		return nil, fmt.Errorf("unknown runner type: %q", cfg.Agents.Runner.Type)
 	}
 }
 
@@ -234,8 +235,8 @@ func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Too
 // to use a different provider/model combination.
 func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraTools []tool.Tool) channel.ModelSwitchFunc {
 	return func(provider, model string) error {
-		cfg.Provider = provider
-		cfg.Model = model
+		cfg.Agents.Provider = provider
+		cfg.Agents.Model = model
 		factory, err := newRunnerFactory(cfg, memStore, extraTools)
 		if err != nil {
 			return err
@@ -250,7 +251,7 @@ func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraT
 }
 
 func setupLogFile() error {
-	logPath := filepath.Join(configDir(), "anna.log")
+	logPath := filepath.Join(annaHome(), "anna.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return err
 	}
@@ -267,25 +268,26 @@ func setupLogFile() error {
 func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFunc, switchFn channel.ModelSwitchFunc) error {
 	started := 0
 
-	if s.cfg.Telegram.Token != "" {
+	tg := s.cfg.Channels.Telegram
+	if tg.Token != "" {
 		started++
 		slog.Info("starting telegram bot")
 
 		tgBot, err := telegram.New(telegram.Config{
-			Token:      s.cfg.Telegram.Token,
-			NotifyChat: s.cfg.Telegram.NotifyChat,
-			ChannelID:  s.cfg.Telegram.ChannelID,
-			GroupMode:  s.cfg.Telegram.GroupMode,
-			AllowedIDs: s.cfg.Telegram.AllowedIDs,
+			Token:      tg.Token,
+			NotifyChat: tg.NotifyChat,
+			ChannelID:  tg.ChannelID,
+			GroupMode:  tg.GroupMode,
+			AllowedIDs: tg.AllowedIDs,
 		}, s.pool, listFn, switchFn)
 		if err != nil {
 			return fmt.Errorf("create telegram bot: %w", err)
 		}
 
 		// Register Telegram as a notification backend.
-		defaultChat := s.cfg.Telegram.NotifyChat
+		defaultChat := tg.NotifyChat
 		if defaultChat == "" {
-			defaultChat = s.cfg.Telegram.ChannelID
+			defaultChat = tg.ChannelID
 		}
 		s.notifier.Register(tgBot, defaultChat)
 
@@ -305,7 +307,7 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 	}
 
 	if started == 0 {
-		return fmt.Errorf("no gateway services configured. Check .agents/config.yaml")
+		return fmt.Errorf("no gateway services configured. Check %s", configPath())
 	}
 
 	slog.Info("gateway stopped")

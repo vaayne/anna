@@ -13,12 +13,13 @@ anna supports three model tiers for different workloads:
 Fallback chain: `fast` -> `worker` -> `strong` -> `model` (top-level default).
 
 ```yaml
-model: claude-sonnet-4-6
+agents:
+  model: claude-sonnet-4-6
 
-models:
-  strong: claude-sonnet-4-6
-  worker: claude-haiku-4-5
-  fast: claude-haiku-4-5
+  models:
+    strong: claude-sonnet-4-6
+    worker: claude-haiku-4-5
+    fast: claude-haiku-4-5
 ```
 
 ## CLI Commands
@@ -34,7 +35,7 @@ anna models search <q>  # Search models by name
 
 ### Model Cache
 
-`anna models update` queries all configured provider APIs and saves results to `.agents/models.json`. The cache is used by `list`, `search`, and the Telegram model picker.
+`anna models update` queries all configured provider APIs and saves results to `~/.anna/models.json`. The cache is used by `list`, `search`, and the Telegram model picker.
 
 If no cache exists, only models explicitly listed in the config are shown.
 

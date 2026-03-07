@@ -1,20 +1,12 @@
 # Configuration
 
-Config file: `.agents/config.yaml`
+Config file: `~/.anna/config.yaml`
+
+The workspace root defaults to `~/.anna` and can be changed by setting the `ANNA_HOME` environment variable. All data paths (sessions, memory, skills, models cache, cron) live under this workspace root.
 
 ## Full Reference
 
 ```yaml
-provider: anthropic                # Default LLM provider
-model: claude-sonnet-4-6           # Default model ID
-
-# Tiered models (optional)
-# Fallback chain: fast -> worker -> strong -> model
-models:
-  strong: claude-sonnet-4-6
-  worker: claude-haiku-4-5
-  fast: claude-haiku-4-5
-
 # Provider credentials and metadata
 providers:
   anthropic:
@@ -40,63 +32,92 @@ providers:
     api_key: "sk-..."
     base_url: "https://api.example.com/v1"
 
-# Runner settings
-runner:
-  type: go                         # Runner implementation (only "go" currently)
-  system: ""                       # Custom system prompt (bypasses default builder)
-  idle_timeout: 10                 # Minutes before reaping idle runners
-  compaction:
-    max_tokens: 80000              # Auto-compact when history exceeds this
-    keep_tail: 20                  # Keep N recent messages after compaction
+# Channel configuration
+channels:
+  telegram:
+    token: "BOT_TOKEN"
+    notify_chat: "123456789"       # Chat ID for proactive notifications
+    channel_id: "@my_channel"      # Optional broadcast channel
+    group_mode: "mention"          # mention | always | disabled
+    allowed_ids:                   # Restrict to these user IDs (empty = allow all)
+      - 136345060
 
-# Telegram bot
-telegram:
-  token: "BOT_TOKEN"
-  notify_chat: "123456789"         # Chat ID for proactive notifications
-  channel_id: "@my_channel"        # Optional broadcast channel
-  group_mode: "mention"            # mention | always | disabled
-  allowed_ids:                     # Restrict to these user IDs (empty = allow all)
-    - 136345060
+# Agent configuration
+agents:
+  provider: anthropic              # Default LLM provider
+  model: claude-sonnet-4-6         # Default model ID
+  workspace: "~/.anna"             # Workspace root (default: ANNA_HOME or ~/.anna)
 
-# Scheduled tasks
-cron:
-  enabled: true
-  data_dir: ".agents/cron"         # Job persistence directory
+  # Tiered models (optional)
+  # Fallback chain: fast -> worker -> strong -> model
+  models:
+    strong: claude-sonnet-4-6
+    worker: claude-haiku-4-5
+    fast: claude-haiku-4-5
 
-# Session persistence directory
-sessions: ".agents/workspace/sessions"
+  # Runner settings
+  runner:
+    type: go                       # Runner implementation (only "go" currently)
+    system: ""                     # Custom system prompt (bypasses default builder)
+    idle_timeout: 10               # Minutes before reaping idle runners
+    compaction:
+      max_tokens: 80000            # Auto-compact when history exceeds this
+      keep_tail: 20                # Keep N recent messages after compaction
+
+  # Scheduled tasks
+  cron:
+    enabled: true
+    data_dir: "~/.anna/cron"       # Job persistence directory
 ```
+
+## Workspace Layout
+
+All data lives under the workspace root (`~/.anna` by default):
+
+| Path | Purpose |
+|------|---------|
+| `~/.anna/config.yaml` | Configuration file |
+| `~/.anna/sessions/` | Chat session history |
+| `~/.anna/cron/` | Cron job persistence |
+| `~/.anna/memory/` | Persistent memory (facts + journal) |
+| `~/.anna/skills/` | Installed skills |
+| `~/.anna/models.json` | Model cache |
+
+Sessions are derived from `agents.workspace` as `<workspace>/sessions` and no longer have a separate config key.
 
 ## Environment Variable Overrides
 
 | Variable | Overrides | Notes |
 |----------|-----------|-------|
-| `ANNA_PROVIDER` | `provider` | |
-| `ANNA_MODEL` | `model` | |
-| `ANNA_MODEL_STRONG` | `models.strong` | |
-| `ANNA_MODEL_WORKER` | `models.worker` | |
-| `ANNA_MODEL_FAST` | `models.fast` | |
-| `ANNA_RUNNER_TYPE` | `runner.type` | |
-| `ANNA_TELEGRAM_TOKEN` | `telegram.token` | |
-| `ANNA_TELEGRAM_NOTIFY_CHAT` | `telegram.notify_chat` | |
-| `ANNA_TELEGRAM_CHANNEL_ID` | `telegram.channel_id` | |
-| `ANNA_TELEGRAM_GROUP_MODE` | `telegram.group_mode` | |
+| `ANNA_HOME` | workspace root | Default `~/.anna` |
+| `ANNA_PROVIDER` | `agents.provider` | |
+| `ANNA_MODEL` | `agents.model` | |
+| `ANNA_MODEL_STRONG` | `agents.models.strong` | |
+| `ANNA_MODEL_WORKER` | `agents.models.worker` | |
+| `ANNA_MODEL_FAST` | `agents.models.fast` | |
+| `ANNA_RUNNER_TYPE` | `agents.runner.type` | |
+| `ANNA_TELEGRAM_TOKEN` | `channels.telegram.token` | |
+| `ANNA_TELEGRAM_NOTIFY_CHAT` | `channels.telegram.notify_chat` | |
+| `ANNA_TELEGRAM_CHANNEL_ID` | `channels.telegram.channel_id` | |
+| `ANNA_TELEGRAM_GROUP_MODE` | `channels.telegram.group_mode` | |
 | `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` | |
 | `ANTHROPIC_BASE_URL` | `providers.anthropic.base_url` | |
 | `OPENAI_API_KEY` | `providers.openai.api_key` | Also used by `openai-response` |
 | `OPENAI_BASE_URL` | `providers.openai.base_url` | Also used by `openai-response` |
 
+Note: Environment variable names are unchanged from previous versions.
+
 ## Defaults
 
 | Field | Default |
 |-------|---------|
-| `provider` | `anthropic` |
-| `model` | `claude-sonnet-4-6` |
-| `runner.type` | `go` |
-| `runner.idle_timeout` | `10` (minutes) |
-| `runner.compaction.max_tokens` | `80000` |
-| `runner.compaction.keep_tail` | `20` |
-| `cron.enabled` | `true` |
-| `cron.data_dir` | `.agents/cron` |
-| `sessions` | `.agents/workspace/sessions` |
-| `telegram.group_mode` | `mention` |
+| `agents.provider` | `anthropic` |
+| `agents.model` | `claude-sonnet-4-6` |
+| `agents.workspace` | `~/.anna` |
+| `agents.runner.type` | `go` |
+| `agents.runner.idle_timeout` | `10` (minutes) |
+| `agents.runner.compaction.max_tokens` | `80000` |
+| `agents.runner.compaction.keep_tail` | `20` |
+| `agents.cron.enabled` | `true` |
+| `agents.cron.data_dir` | `~/.anna/cron` |
+| `channels.telegram.group_mode` | `mention` |

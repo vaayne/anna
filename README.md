@@ -84,17 +84,20 @@ anna skills remove <n>   # Remove an installed skill
 
 ## Configuration
 
-Config file: `.agents/config.yaml` -- see [docs/configuration.md](docs/configuration.md) for full reference.
+Config file: `~/.anna/config.yaml` -- see [docs/configuration.md](docs/configuration.md) for full reference.
+
+The config directory defaults to `~/.anna` and can be changed via the `ANNA_HOME` environment variable.
 
 Minimal example to get started:
 
 ```yaml
-provider: anthropic
-model: claude-sonnet-4-6
-
 providers:
   anthropic:
     api_key: "sk-..."
+
+agents:
+  provider: anthropic
+  model: claude-sonnet-4-6
 ```
 
 Or use environment variables:

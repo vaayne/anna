@@ -25,17 +25,17 @@ type CachedModel struct {
 	Model    string `json:"model"`
 }
 
-// ModelsCache is the top-level structure for .agents/models.json.
+// ModelsCache is the top-level structure for models.json in the workspace.
 type ModelsCache struct {
 	UpdatedAt time.Time     `json:"updated_at"`
 	Models    []CachedModel `json:"models"`
 }
 
 func modelsCachePath() string {
-	return filepath.Join(configDir(), "models.json")
+	return filepath.Join(annaHome(), "models.json")
 }
 
-// LoadModelsCache reads the cached models from .agents/models.json.
+// LoadModelsCache reads the cached models from the workspace models.json.
 func LoadModelsCache() (*ModelsCache, error) {
 	data, err := os.ReadFile(modelsCachePath())
 	if err != nil {
@@ -48,7 +48,7 @@ func LoadModelsCache() (*ModelsCache, error) {
 	return &cache, nil
 }
 
-// SaveModelsCache writes the models cache to .agents/models.json.
+// SaveModelsCache writes the models cache to the workspace models.json.
 func SaveModelsCache(cache *ModelsCache) error {
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
@@ -122,7 +122,7 @@ func collectModels(cfg *Config) []channel.ModelOption {
 	}
 
 	// Current model first.
-	add(cfg.Provider, cfg.Model)
+	add(cfg.Agents.Provider, cfg.Agents.Model)
 
 	// Load from cache.
 	if cache, err := LoadModelsCache(); err == nil {
@@ -141,7 +141,7 @@ func collectModels(cfg *Config) []channel.ModelOption {
 
 	for _, provName := range provNames {
 		prov := cfg.Providers[provName]
-		add(provName, cfg.Model)
+		add(provName, cfg.Agents.Model)
 		for _, m := range prov.Models {
 			add(provName, m.ID)
 		}
@@ -194,7 +194,7 @@ func modelsListAction(c *ucli.Context) error {
 	}
 
 	models := collectModels(cfg)
-	printModelsGrouped(models, cfg.Provider, cfg.Model)
+	printModelsGrouped(models, cfg.Agents.Provider, cfg.Agents.Model)
 	return nil
 }
 
@@ -220,7 +220,7 @@ func modelsUpdateCommand() *ucli.Command {
 				return fmt.Errorf("save models cache: %w", err)
 			}
 
-			fmt.Fprintf(os.Stderr, "Cached %d models to %s\n", len(cached), modelsCachePath())
+			fmt.Fprintf(os.Stderr, "Cached %d models to %s\n", len(cached), cfg.ModelsPath())
 			return nil
 		},
 	}
@@ -235,7 +235,7 @@ func modelsCurrentCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s/%s\n", cfg.Provider, cfg.Model)
+			fmt.Printf("%s/%s\n", cfg.Agents.Provider, cfg.Agents.Model)
 			return nil
 		},
 	}
@@ -296,7 +296,7 @@ func modelsSearchCommand() *ucli.Command {
 				return nil
 			}
 
-			printModelsGrouped(matched, cfg.Provider, cfg.Model)
+			printModelsGrouped(matched, cfg.Agents.Provider, cfg.Agents.Model)
 			return nil
 		},
 	}
