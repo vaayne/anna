@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vaayne/anna/agent/runner"
+	"github.com/vaayne/anna/agent/engine"
 	"github.com/vaayne/anna/ai/providers/anthropic"
 	"github.com/vaayne/anna/ai/providers/openai"
 	openairesponse "github.com/vaayne/anna/ai/providers/openai-response"
@@ -87,12 +87,12 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 			reg := registry.New()
 			reg.Register(p.factory(struct{ BaseURL string }{BaseURL: p.baseURL}))
 
-			engine := &runner.Engine{Providers: reg}
+			eng := &engine.Engine{Providers: reg}
 
 			var toolCalled atomic.Bool
 			var capturedCity string
 
-			tools := runner.ToolSet{
+			tools := engine.ToolSet{
 				"get_weather": func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error) {
 					toolCalled.Store(true)
 					city, _ := call.Arguments["city"].(string)
@@ -101,7 +101,7 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 				},
 			}
 
-			cfg := runner.LoopConfig{
+			cfg := engine.LoopConfig{
 				Model:           aitypes.Model{API: p.name, Name: model},
 				StreamOptions:   aitypes.StreamOptions{APIKey: apiKey},
 				MaxTurns:        5,
@@ -117,7 +117,7 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 				aitypes.UserMessage{Content: "What's the weather in Tokyo?"},
 			}
 
-			history, err := engine.Run(ctx, cfg, messages, nil)
+			history, err := eng.Run(ctx, cfg, messages, nil)
 			if err != nil {
 				t.Fatalf("engine.Run error: %v", err)
 			}

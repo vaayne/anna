@@ -44,16 +44,17 @@ agent/
   pool.go                           Session pool, runner lifecycle, idle reaping
   session.go                        Per-chat session state and history
   store/                            Session persistence (JSONL file store, index)
+  engine/
+    engine.go                       Agent loop engine (multi-turn tool execution)
+    continue.go                     Resume agent loop from existing history
+    types.go                        LoopConfig, ToolSet, ToolFunc
+    events.go                       Loop event types (AgentStarted, AssistantDelta, etc.)
+    tool_execution.go               Tool call dispatch with callbacks
   runner/
     runner.go                       Runner interface, RPC types, event helpers
     gorunner.go                     GoRunner: native LLM provider calls
-    loop.go                         Agent loop engine (multi-turn tool execution)
-    tool_execution.go               Tool call dispatch with callbacks
-    continue.go                     Resume agent loop from existing history
     prompt.go                       System prompt builder (memory, tools, context)
     skill.go                        Skill loading from ~/.anna/workspace/skills/
-    agent_types.go                  LoopConfig, ToolSet, ToolFunc
-    agent_events.go                 Loop event types (AgentStarted, AssistantDelta, etc.)
     stream_proxy.go                 Stream proxy utilities
   tool/                             Built-in tools
     tool.go                         Tool interface and registry

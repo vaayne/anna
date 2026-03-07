@@ -1,4 +1,4 @@
-package runner
+package engine
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 	aitypes "github.com/vaayne/anna/ai/types"
 )
 
-type loopFakeProvider struct {
+type fakeProvider struct {
 	streamFunc func(model aitypes.Model, ctx aitypes.Context, opts aitypes.StreamOptions) (stream.AssistantEventStream, error)
 }
 
-func (f loopFakeProvider) API() string { return "fake" }
+func (f fakeProvider) API() string { return "fake" }
 
-func (f loopFakeProvider) Stream(model aitypes.Model, ctx aitypes.Context, opts aitypes.StreamOptions) (stream.AssistantEventStream, error) {
+func (f fakeProvider) Stream(model aitypes.Model, ctx aitypes.Context, opts aitypes.StreamOptions) (stream.AssistantEventStream, error) {
 	if f.streamFunc != nil {
 		return f.streamFunc(model, ctx, opts)
 	}
@@ -29,11 +29,11 @@ func (f loopFakeProvider) Stream(model aitypes.Model, ctx aitypes.Context, opts 
 	return out, nil
 }
 
-func (f loopFakeProvider) StreamSimple(model aitypes.Model, ctx aitypes.Context, opts aitypes.SimpleStreamOptions) (stream.AssistantEventStream, error) {
+func (f fakeProvider) StreamSimple(model aitypes.Model, ctx aitypes.Context, opts aitypes.SimpleStreamOptions) (stream.AssistantEventStream, error) {
 	return f.Stream(model, ctx, opts.StreamOptions)
 }
 
-func newTestEngine(p loopFakeProvider) *Engine {
+func newTestEngine(p fakeProvider) *Engine {
 	r := registry.New()
 	r.Register(p)
 	return &Engine{Providers: r}
@@ -60,7 +60,7 @@ func countEvents[T LoopEvent](events []LoopEvent) int {
 var baseCfg = LoopConfig{Model: aitypes.Model{API: "fake", Name: "stub"}}
 
 func TestRunEmitsStreamingEvents(t *testing.T) {
-	engine := newTestEngine(loopFakeProvider{})
+	engine := newTestEngine(fakeProvider{})
 	history, events, err := collectEvents(engine, baseCfg, []aitypes.Message{aitypes.UserMessage{Content: "hello"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,7 +109,7 @@ func TestRunEmitsStreamingEvents(t *testing.T) {
 }
 
 func TestRunStreamingDeltasCarryPartial(t *testing.T) {
-	provider := loopFakeProvider{
+	provider := fakeProvider{
 		streamFunc: func(_ aitypes.Model, _ aitypes.Context, _ aitypes.StreamOptions) (stream.AssistantEventStream, error) {
 			out := stream.NewChannelEventStream(8)
 			go func() {
@@ -157,7 +157,7 @@ func TestRunStreamingDeltasCarryPartial(t *testing.T) {
 func TestRunMultiTurnLoop(t *testing.T) {
 	var callCount atomic.Int32
 
-	provider := loopFakeProvider{
+	provider := fakeProvider{
 		streamFunc: func(_ aitypes.Model, _ aitypes.Context, _ aitypes.StreamOptions) (stream.AssistantEventStream, error) {
 			out := stream.NewChannelEventStream(8)
 			n := callCount.Add(1)
@@ -210,7 +210,7 @@ func TestRunMultiTurnLoop(t *testing.T) {
 }
 
 func TestRunMaxTurnsEnforced(t *testing.T) {
-	provider := loopFakeProvider{
+	provider := fakeProvider{
 		streamFunc: func(_ aitypes.Model, _ aitypes.Context, _ aitypes.StreamOptions) (stream.AssistantEventStream, error) {
 			out := stream.NewChannelEventStream(8)
 			go func() {
@@ -240,7 +240,7 @@ func TestRunMaxTurnsEnforced(t *testing.T) {
 }
 
 func TestRunStopsOnErrorStopReason(t *testing.T) {
-	provider := loopFakeProvider{
+	provider := fakeProvider{
 		streamFunc: func(_ aitypes.Model, _ aitypes.Context, _ aitypes.StreamOptions) (stream.AssistantEventStream, error) {
 			out := stream.NewChannelEventStream(8)
 			go func() {
@@ -266,7 +266,7 @@ func TestRunInterruptStopsLoop(t *testing.T) {
 	var callCount atomic.Int32
 	interrupt := make(chan struct{})
 
-	provider := loopFakeProvider{
+	provider := fakeProvider{
 		streamFunc: func(_ aitypes.Model, _ aitypes.Context, _ aitypes.StreamOptions) (stream.AssistantEventStream, error) {
 			out := stream.NewChannelEventStream(8)
 			n := callCount.Add(1)

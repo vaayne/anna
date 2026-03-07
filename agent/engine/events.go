@@ -1,4 +1,4 @@
-package runner
+package engine
 
 import aitypes "github.com/vaayne/anna/ai/types"
 

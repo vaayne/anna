@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vaayne/anna/agent/engine"
 	"github.com/vaayne/anna/agent/tool"
 	"github.com/vaayne/anna/ai/providers/anthropic"
 	"github.com/vaayne/anna/ai/providers/openai"
@@ -34,7 +35,7 @@ type GoRunnerConfig struct {
 
 // GoRunner implements Runner by calling LLM providers directly via Engine.
 type GoRunner struct {
-	engine *Engine
+	eng    *engine.Engine
 	reg    *registry.Registry
 	tools  *tool.Registry
 	model  aitypes.Model
@@ -78,7 +79,7 @@ func NewGoRunner(_ context.Context, cfg GoRunnerConfig) (*GoRunner, error) {
 	}
 
 	return &GoRunner{
-		engine:       &Engine{Providers: reg},
+		eng:          &engine.Engine{Providers: reg},
 		reg:          reg,
 		tools:        tools,
 		model:        aitypes.Model{API: cfg.API, Name: cfg.Model},
@@ -103,7 +104,7 @@ func (r *GoRunner) Chat(ctx context.Context, history []RPCEvent, message string)
 		messages := convertHistory(history)
 		messages = append(messages, aitypes.UserMessage{Content: message})
 
-		cfg := LoopConfig{
+		cfg := engine.LoopConfig{
 			Model:           r.model,
 			StreamOptions:   aitypes.StreamOptions{APIKey: r.apiKey},
 			MaxTurns:        maxToolIterations,
@@ -112,7 +113,7 @@ func (r *GoRunner) Chat(ctx context.Context, history []RPCEvent, message string)
 			System:          r.system,
 		}
 
-		if _, err := r.engine.Run(ctx, cfg, messages, func(e LoopEvent) {
+		if _, err := r.eng.Run(ctx, cfg, messages, func(e engine.LoopEvent) {
 			for _, evt := range convertLoopEvent(e) {
 				out <- evt
 			}
@@ -137,9 +138,9 @@ func (r *GoRunner) LastActivity() time.Time {
 // Close is a no-op for the Go runner.
 func (r *GoRunner) Close() error { return nil }
 
-// buildToolSet adapts tool.Registry to ToolSet for Engine.
-func (r *GoRunner) buildToolSet() ToolSet {
-	set := ToolSet{}
+// buildToolSet adapts tool.Registry to engine.ToolSet for Engine.
+func (r *GoRunner) buildToolSet() engine.ToolSet {
+	set := engine.ToolSet{}
 	for _, def := range r.tools.Definitions() {
 		name := def.Name
 		set[name] = func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error) {
@@ -150,15 +151,15 @@ func (r *GoRunner) buildToolSet() ToolSet {
 	return set
 }
 
-// convertLoopEvent bridges LoopEvent to Event(s).
-func convertLoopEvent(e LoopEvent) []Event {
+// convertLoopEvent bridges engine.LoopEvent to Event(s).
+func convertLoopEvent(e engine.LoopEvent) []Event {
 	switch e := e.(type) {
-	case AssistantDelta:
+	case engine.AssistantDelta:
 		if d, ok := e.Event.(aitypes.EventTextDelta); ok && d.Text != "" {
 			return []Event{{Text: d.Text}}
 		}
 
-	case AssistantFinished:
+	case engine.AssistantFinished:
 		// Emit Store events for tool calls in the final message.
 		var events []Event
 		for _, block := range e.Message.Content {
@@ -169,14 +170,14 @@ func convertLoopEvent(e LoopEvent) []Event {
 		}
 		return events
 
-	case ToolStarted:
+	case engine.ToolStarted:
 		return []Event{{ToolUse: &ToolUseEvent{
 			Tool:   e.ToolCall.Name,
 			Status: "running",
 			Input:  summarizeToolInput(e.ToolCall.Name, e.ToolCall.Arguments),
 		}}}
 
-	case ToolFinished:
+	case engine.ToolFinished:
 		status := "done"
 		detail := ""
 		if e.Result.IsError {
@@ -198,7 +199,7 @@ func convertLoopEvent(e LoopEvent) []Event {
 			{Store: &rpc},
 		}
 
-	case AgentErrored:
+	case engine.AgentErrored:
 		return []Event{{Err: e.Err}}
 	}
 

@@ -132,8 +132,9 @@ models.go                           Model cache, discovery, CLI model commands
 agent/pool.go                       Session management, runner lifecycle
 agent/session.go                    Per-chat session state
 agent/store/                        Session persistence (JSONL file store)
-agent/runner/                       Runner interface, GoRunner, agent loop engine
+agent/runner/                       Runner interface, GoRunner, RPC protocol
 agent/runner/prompt.go              System prompt builder
+agent/engine/                       Agent loop engine, tool execution, loop events
 agent/tool/                         Built-in tools (read, bash, write, edit, truncate)
 channel/notifier.go                 Notification dispatcher (multi-backend)
 channel/notify_tool.go              Agent notify tool
