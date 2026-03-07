@@ -1,20 +1,19 @@
 # anna
 
-A minimal Go CLI that acts as a local AI assistant. Uses a native Go runner that calls LLM providers (Anthropic, OpenAI) directly.
+A minimal Go CLI that acts as a local AI assistant. Uses a native Go runner that calls LLM providers (Anthropic, OpenAI, OpenAI-compatible) directly.
 
 Two interfaces: **interactive CLI chat** and **gateway daemon** (Telegram bot via long polling).
 
 ## Features
 
-- Native Go runner calling LLM providers directly (Anthropic, OpenAI)
+- Native Go runner calling LLM providers directly (Anthropic, OpenAI, OpenAI-compatible)
 - Interactive CLI chat with Bubble Tea TUI and streaming responses
 - Telegram bot via long polling (no webhook, no public IP needed)
-- **Notification system** — multi-backend dispatcher for proactive messaging
-  - Agent `notify` tool — LLM can push messages to users
-  - Cron job results broadcast to all notification backends
-  - Extensible: add Slack, Discord, etc. by implementing the `Backend` interface
-- **Telegram group support** — configurable `group_mode` (mention/always/disabled)
-- **Access control** — `allowed_ids` restricts bot to specific Telegram users
+  - Streaming drafts (Bot API 9.3+) for smooth animated responses
+  - Group support with configurable `group_mode` (mention/always/disabled)
+  - Access control via `allowed_ids`
+- Notification system with multi-backend dispatcher
+- Model management CLI (`anna models list/update/set/search`)
 - Tiered model config (strong/worker/fast) with runtime model switching
 - Per-chat session management with persistent history (JSONL)
 - Session compaction with LLM-generated summaries
@@ -43,15 +42,14 @@ cd anna
 go build -o anna .
 ```
 
-## Usage
+## Quick Start
 
 ### CLI Chat
 
 ```bash
-anna chat
+anna chat            # Interactive TUI
+anna chat --stream   # Pipe prompt via stdin, stream to stdout
 ```
-
-Starts an interactive terminal session with streaming responses.
 
 ### Gateway (Daemon)
 
@@ -59,118 +57,109 @@ Starts an interactive terminal session with streaming responses.
 anna gateway
 ```
 
-Starts all configured services (Telegram bot, cron scheduler). Services are activated based on config — e.g., Telegram starts only when a token is provided.
+Starts all configured services (Telegram bot, cron scheduler). Services are activated based on config.
+
+### Model Management
+
+```bash
+anna models             # List available models (alias for list)
+anna models list        # List all models grouped by provider
+anna models update      # Fetch models from provider APIs and update cache
+anna models current     # Show active provider/model
+anna models set <p/m>   # Switch model (e.g. anna models set openai/gpt-4o)
+anna models search <q>  # Search models by name
+```
 
 ## Configuration
 
-Config file: `.agents/config.yaml`
+Config file: `.agents/config.yaml` -- see [docs/configuration.md](docs/configuration.md) for full reference.
+
+Minimal example to get started:
 
 ```yaml
 provider: anthropic
 model: claude-sonnet-4-6
 
-# Tiered models (optional)
-models:
-  strong: claude-sonnet-4-6
-  worker: claude-haiku-4-5
-  fast: claude-haiku-4-5
-
-# Provider credentials
 providers:
   anthropic:
     api_key: "sk-..."
-  openai:
-    api_key: "sk-..."
-    base_url: "https://api.openai.com/v1"
-
-# Runner settings
-runner:
-  type: go
-  idle_timeout: 10          # minutes before reaping idle runners
-  compaction:
-    max_tokens: 80000       # auto-compact when history exceeds this
-    keep_tail: 20           # keep N recent messages after compaction
-
-# Telegram bot
-telegram:
-  token: "BOT_TOKEN"
-  notify_chat: "123456789"  # chat ID for proactive notifications
-  channel_id: "@my_channel" # optional broadcast channel
-  group_mode: "mention"     # mention | always | disabled
-  allowed_ids:              # restrict to these user IDs (empty = allow all)
-    - 136345060
-
-# Scheduled tasks
-cron:
-  enabled: true
-
-# Session persistence directory
-sessions: ".agents/workspace/sessions"
 ```
 
-### Environment Variable Overrides
+Or use environment variables:
 
-| Variable | Overrides |
-|----------|-----------|
-| `ANNA_PROVIDER` | `provider` |
-| `ANNA_MODEL` | `model` |
-| `ANNA_MODEL_STRONG` | `models.strong` |
-| `ANNA_MODEL_WORKER` | `models.worker` |
-| `ANNA_MODEL_FAST` | `models.fast` |
-| `ANNA_RUNNER_TYPE` | `runner.type` |
-| `ANNA_TELEGRAM_TOKEN` | `telegram.token` |
-| `ANNA_TELEGRAM_NOTIFY_CHAT` | `telegram.notify_chat` |
-| `ANNA_TELEGRAM_CHANNEL_ID` | `telegram.channel_id` |
-| `ANNA_TELEGRAM_GROUP_MODE` | `telegram.group_mode` |
-| `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
-| `OPENAI_API_KEY` | `providers.openai.api_key` |
+```bash
+export ANTHROPIC_API_KEY="sk-..."
+anna chat
+```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        anna                             │
-│                                                         │
-│  ┌──────────┐      ┌────────────────┐                  │
-│  │ CLI Chat  │─────▶│                │                  │
-│  └──────────┘      │     Pool       │   LLM Providers  │
-│                     │ (sessions +   │◄────────────────▶ Anthropic / OpenAI
-│  ┌──────────┐      │  Go runner)   │   HTTP API        │
-│  │ Telegram  │─────▶│                │                  │
-│  │ LongPoll  │      └───────┬────────┘                  │
-│  └──────────┘              │                            │
-│                     ┌──────▼────────┐                   │
-│  ┌──────────┐      │  Dispatcher   │                   │
-│  │   Cron   │─────▶│ (notify tool) │──▶ Telegram       │
-│  └──────────┘      │               │──▶ Slack (future) │
-│                     └───────────────┘                   │
-└─────────────────────────────────────────────────────────┘
+                        anna
+  +-----------+      +----------------+
+  | CLI Chat  |----->|                |
+  +-----------+      |     Pool       |   LLM Providers
+                     | (sessions +   |<--> Anthropic / OpenAI
+  +-----------+      |  Go runner)   |   HTTP API
+  | Telegram  |----->|                |
+  | LongPoll  |      +-------+--------+
+  +-----------+              |
+                     +-------v--------+
+  +-----------+      |  Dispatcher   |
+  |   Cron    |----->| (notify tool) |--> Telegram
+  +-----------+      |               |--> (future backends)
+                     +---------------+
 ```
 
 ```
-main.go                         Entry point, signal handling, wiring
-config.go                       Config types, YAML loading, env var overrides
-agent/pool.go                   Session management, history, runner lifecycle
-agent/runner/go/runner.go       Go runner: native LLM provider calls
-channel/notifier.go             Notification dispatcher (multi-backend)
-channel/notify_tool.go          Agent notify tool
-channel/telegram/telegram.go    Telegram bot + notification backend
-channel/cli/cli.go              Interactive terminal chat
-cron/cron.go                    Scheduled jobs with gocron/v2
-memory/                         Persistent memory (facts + journal)
+main.go                             Entry point, CLI commands, service wiring
+config.go                           Config types, YAML loading, env var overrides
+models.go                           Model cache, discovery, CLI model commands
+agent/pool.go                       Session management, runner lifecycle
+agent/session.go                    Per-chat session state
+agent/store/                        Session persistence (JSONL file store)
+agent/runner/go/                    Go runner: native LLM provider calls
+agent/runner/go/tool/               Built-in tools (read, bash, write, edit, truncate)
+agent/runner/go/prompt.go           System prompt builder
+channel/notifier.go                 Notification dispatcher (multi-backend)
+channel/notify_tool.go              Agent notify tool
+channel/telegram/                   Telegram bot + streaming + notification backend
+channel/cli/                        Interactive terminal chat (Bubble Tea TUI)
+cron/                               Scheduled jobs (gocron/v2)
+memory/                             Persistent memory (facts + journal)
+pkg/ai/providers/                   LLM provider implementations
+pkg/ai/providers/anthropic/         Anthropic provider
+pkg/ai/providers/openai/            OpenAI provider
+pkg/ai/providers/openai-response/   OpenAI-compatible APIs (Responses API)
+pkg/agent/core/                     Agent loop engine
 ```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Configuration](docs/configuration.md) | Full config reference, env vars, defaults |
+| [Architecture](docs/architecture.md) | System design, packages, providers, tools |
+| [Telegram](docs/telegram.md) | Bot setup, streaming, groups, access control |
+| [Models](docs/models.md) | Tiers, CLI commands, provider setup, caching |
+| [Memory System](docs/memory-system.md) | Facts + journal, tool interface |
+| [Cron System](docs/cron-system.md) | Scheduled tasks, job persistence |
+| [Session Compaction](docs/session-compaction.md) | History compaction, token management |
+| [Notification System](docs/notification-system.md) | Dispatcher, backends, agent tool |
 
 ## Development
 
 Uses [mise](https://mise.jdx.dev/) for task automation:
 
 ```bash
-mise run build          # Build binary → bin/anna
+mise run build          # Build binary -> bin/anna
 mise run test           # Run tests with race detection
 mise run lint           # go vet
 mise run format         # gofmt + go mod tidy
 mise run run:chat       # Build + run CLI chat
+mise run run:stream     # Build + run streaming chat
 mise run run:gateway    # Build + run gateway daemon
+mise run clean          # Remove build artifacts
 ```
 
 Or with plain Go:
