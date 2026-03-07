@@ -29,7 +29,11 @@ func (t *SkillsTool) install(ctx context.Context, args map[string]any) (string, 
 		return "", fmt.Errorf("create cache dir: %w", err)
 	}
 
-	if err := cloneOrUpdate(ctx, owner, repo, ref, cacheDir); err != nil {
+	clone := t.cloner
+	if clone == nil {
+		clone = cloneOrUpdate
+	}
+	if err := clone(ctx, owner, repo, ref, cacheDir); err != nil {
 		return "", fmt.Errorf("fetch repo: %w", err)
 	}
 

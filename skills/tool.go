@@ -40,11 +40,15 @@ var skillsInputSchema = func() map[string]any {
 	return m
 }()
 
+// cloneFn abstracts git clone/update for testing.
+type cloneFn func(ctx context.Context, owner, repo, ref, cacheDir string) error
+
 // SkillsTool exposes skill management as an agent tool.
 type SkillsTool struct {
 	agentsDir string
 	cwd       string
-	searchURL string // override for testing; empty uses default
+	searchURL string  // override for testing; empty uses default
+	cloner    cloneFn // override for testing; nil uses default
 }
 
 // NewTool creates a SkillsTool for the given project directories.
