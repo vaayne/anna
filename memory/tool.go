@@ -17,11 +17,11 @@ var memoryInputSchema = func() map[string]any {
     "action": {
       "type": "string",
       "enum": ["update", "append", "search"],
-      "description": "Action to perform: 'update' overwrites facts (memory.md), 'append' adds a journal entry, 'search' queries the journal"
+      "description": "Action to perform: 'update' overwrites FACT.md (durable project knowledge only), 'append' adds a JOURNAL entry, 'search' queries the journal"
     },
     "content": {
       "type": "string",
-      "description": "Full markdown content for memory.md (required for update)"
+      "description": "Full markdown content for FACT.md (required for update)"
     },
     "text": {
       "type": "string",
