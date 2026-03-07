@@ -35,14 +35,14 @@ const (
 var validNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // LoadSkills discovers skills from project, workspace, and common directories.
-// agentsDir is the workspace dir (e.g. ~/.anna), cwd is the working directory.
-// Priority order: cwd/.agents/skills/ > agentsDir/skills/ > ~/.agents/skills/
-func LoadSkills(agentsDir, cwd string) []Skill {
+// workspace is the workspace dir (e.g. ~/.anna/workspace), cwd is the working directory.
+// Priority order: cwd/.agents/skills/ > workspace/skills/ > ~/.agents/skills/
+func LoadSkills(workspace, cwd string) []Skill {
 	home, _ := os.UserHomeDir()
-	return loadSkills(home, agentsDir, cwd)
+	return loadSkills(home, workspace, cwd)
 }
 
-func loadSkills(homeDir, agentsDir, cwd string) []Skill {
+func loadSkills(homeDir, workspace, cwd string) []Skill {
 	seen := map[string]bool{} // name → already loaded
 	var skills []Skill
 
@@ -71,9 +71,9 @@ func loadSkills(homeDir, agentsDir, cwd string) []Skill {
 		addDir(filepath.Join(cwd, ".agents", "skills"), "project")
 	}
 
-	// 2. Workspace skills: agentsDir/skills/ (e.g. ~/.anna/skills/)
-	if agentsDir != "" {
-		addDir(filepath.Join(agentsDir, "skills"), "user")
+	// 2. Workspace skills: workspace/skills/ (e.g. ~/.anna/workspace/skills/)
+	if workspace != "" {
+		addDir(filepath.Join(workspace, "skills"), "user")
 	}
 
 	// 3. Common skills: ~/.agents/skills/ (legacy/shared)

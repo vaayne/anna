@@ -74,7 +74,7 @@ func (t *SkillsTool) install(ctx context.Context, args map[string]any) (string, 
 		return "", err
 	}
 
-	targetDir := filepath.Join(t.agentsDir, "skills", skillName)
+	targetDir := filepath.Join(t.workspace, "skills", skillName)
 	if err := copyDir(skillDir, targetDir); err != nil {
 		return "", fmt.Errorf("install skill: %w", err)
 	}

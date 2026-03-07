@@ -41,9 +41,9 @@ func (t *SkillsTool) remove(args map[string]any) (string, error) {
 		return "", fmt.Errorf("invalid skill name %q: must be lowercase alphanumeric with hyphens", name)
 	}
 
-	skillDir := fmt.Sprintf("%s/skills/%s", t.agentsDir, name)
+	skillDir := fmt.Sprintf("%s/skills/%s", t.workspace, name)
 	if err := Remove(name, skillDir); err != nil {
-		return "", fmt.Errorf("%w (only skills in %s/skills/ can be removed; user-level skills must be removed manually)", err, t.agentsDir)
+		return "", fmt.Errorf("%w (only skills in %s/skills/ can be removed; user-level skills must be removed manually)", err, t.workspace)
 	}
 
 	return fmt.Sprintf("Skill %q removed from %s.", name, skillDir), nil

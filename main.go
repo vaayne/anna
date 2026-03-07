@@ -220,7 +220,7 @@ func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Too
 				API:         cfg.Provider,
 				Model:       model,
 				APIKey:      providerCfg.APIKey,
-				AgentsDir:   cfg.Workspace,
+				Workspace:   cfg.Workspace,
 				MemoryStore: memStore,
 				BaseURL:     providerCfg.BaseURL,
 				ExtraTools:  extraTools,

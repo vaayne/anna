@@ -15,7 +15,7 @@ type installedSkill struct {
 }
 
 func (t *SkillsTool) list() (string, error) {
-	all := gorunner.LoadSkills(t.agentsDir, t.cwd)
+	all := gorunner.LoadSkills(t.workspace, t.cwd)
 	if len(all) == 0 {
 		return "No skills installed.", nil
 	}
