@@ -10,9 +10,16 @@ import (
 	"sync"
 	"time"
 
+	"errors"
+
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 )
+
+// errOneTimeJobPast is returned by scheduleJob when a one-time job's timestamp
+// has already elapsed. Start suppresses this for persisted jobs; AddJob treats
+// it as a hard failure.
+var errOneTimeJobPast = errors.New("one-time job timestamp is in the past")
 
 // OnJobFunc is called when a scheduled job fires.
 type OnJobFunc func(ctx context.Context, job Job)
@@ -64,7 +71,11 @@ func (s *Service) Start(ctx context.Context) error {
 		s.jobs[j.ID] = j
 		if j.Enabled {
 			if err := s.scheduleJob(ctx, j); err != nil {
-				s.log.Warn("failed to schedule persisted job", "id", j.ID, "name", j.Name, "error", err)
+				if errors.Is(err, errOneTimeJobPast) {
+					s.log.Info("skipping one-time job with past timestamp", "id", j.ID, "at", j.Schedule.At)
+				} else {
+					s.log.Warn("failed to schedule persisted job", "id", j.ID, "name", j.Name, "error", err)
+				}
 			}
 		}
 	}
@@ -220,8 +231,7 @@ func (s *Service) scheduleJob(ctx context.Context, job Job) error {
 			return fmt.Errorf("parse at timestamp: %w", err)
 		}
 		if !t.After(time.Now()) {
-			s.log.Info("skipping one-time job with past timestamp", "id", job.ID, "at", job.Schedule.At)
-			return nil
+			return errOneTimeJobPast
 		}
 		jobDef = gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(t))
 	}
