@@ -14,9 +14,6 @@ import (
 func TestTruncateHeadShortOutput(t *testing.T) {
 	input := "line1\nline2\nline3\n"
 	r := TruncateHead(input)
-	if r.Truncated {
-		t.Error("short output should not be truncated")
-	}
 	if r.Content != input {
 		t.Errorf("content = %q, want %q", r.Content, input)
 	}
@@ -24,9 +21,6 @@ func TestTruncateHeadShortOutput(t *testing.T) {
 
 func TestTruncateHeadEmpty(t *testing.T) {
 	r := TruncateHead("")
-	if r.Truncated {
-		t.Error("empty output should not be truncated")
-	}
 	if r.Content != "" {
 		t.Errorf("content = %q, want empty", r.Content)
 	}
@@ -43,20 +37,13 @@ func TestTruncateHeadByLines(t *testing.T) {
 	input := strings.Join(lines, "")
 
 	r := TruncateHead(input)
-	if !r.Truncated {
-		t.Fatal("should be truncated")
-	}
-	if r.TotalLines != 10 {
-		t.Errorf("TotalLines = %d, want 10", r.TotalLines)
-	}
 	if r.OutputLines != 3 {
 		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
 	}
 	if !strings.Contains(r.Content, "showing first 3 of 10 lines") {
 		t.Errorf("header missing, got: %s", r.Content)
 	}
-	// Verify temp file.
-	verifyTempFile(t, r.FullFilePath, input)
+	verifyTempFileInContent(t, r.Content, input)
 }
 
 func TestTruncateHeadByBytes(t *testing.T) {
@@ -71,13 +58,10 @@ func TestTruncateHeadByBytes(t *testing.T) {
 	input := strings.Join(lines, "")
 
 	r := TruncateHead(input)
-	if !r.Truncated {
-		t.Fatal("should be truncated by bytes")
-	}
 	if r.OutputLines != 3 {
 		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
 	}
-	verifyTempFile(t, r.FullFilePath, input)
+	verifyTempFileInContent(t, r.Content, input)
 }
 
 func TestTruncateHeadExactThreshold(t *testing.T) {
@@ -91,7 +75,7 @@ func TestTruncateHeadExactThreshold(t *testing.T) {
 	input := strings.Join(lines, "")
 
 	r := TruncateHead(input)
-	if r.Truncated {
+	if strings.Contains(r.Content, "Output truncated") {
 		t.Error("output at exactly the line threshold should not be truncated")
 	}
 }
@@ -101,9 +85,6 @@ func TestTruncateHeadExactThreshold(t *testing.T) {
 func TestTruncateTailShortOutput(t *testing.T) {
 	input := "line1\nline2\n"
 	r := TruncateTail(input)
-	if r.Truncated {
-		t.Error("short output should not be truncated")
-	}
 	if r.Content != input {
 		t.Errorf("content = %q, want %q", r.Content, input)
 	}
@@ -120,20 +101,16 @@ func TestTruncateTailByLines(t *testing.T) {
 	input := strings.Join(lines, "")
 
 	r := TruncateTail(input)
-	if !r.Truncated {
-		t.Fatal("should be truncated")
-	}
 	if r.OutputLines != 3 {
 		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
 	}
 	if !strings.Contains(r.Content, "showing last 3 of 10 lines") {
 		t.Errorf("header missing, got: %s", r.Content)
 	}
-	// The kept content should be the last 3 lines.
 	if !strings.Contains(r.Content, "line\nline\nline\n") {
 		t.Error("should contain the last 3 lines")
 	}
-	verifyTempFile(t, r.FullFilePath, input)
+	verifyTempFileInContent(t, r.Content, input)
 }
 
 func TestTruncateTailByBytes(t *testing.T) {
@@ -147,20 +124,16 @@ func TestTruncateTailByBytes(t *testing.T) {
 	input := strings.Join(lines, "")
 
 	r := TruncateTail(input)
-	if !r.Truncated {
-		t.Fatal("should be truncated by bytes")
-	}
 	if r.OutputLines != 3 {
 		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
 	}
-	verifyTempFile(t, r.FullFilePath, input)
+	verifyTempFileInContent(t, r.Content, input)
 }
 
 // --- Env var override tests ---
 
 func TestMaxLinesDefault(t *testing.T) {
-	n := maxLines()
-	if n != defaultMaxLines {
+	if n := maxLines(); n != defaultMaxLines {
 		t.Errorf("default maxLines = %d, want %d", n, defaultMaxLines)
 	}
 }
@@ -180,8 +153,7 @@ func TestMaxLinesEnvInvalid(t *testing.T) {
 }
 
 func TestMaxBytesDefault(t *testing.T) {
-	n := maxBytes()
-	if n != defaultMaxBytes {
+	if n := maxBytes(); n != defaultMaxBytes {
 		t.Errorf("default maxBytes = %d, want %d", n, defaultMaxBytes)
 	}
 }
@@ -193,6 +165,27 @@ func TestMaxBytesEnvOverride(t *testing.T) {
 	}
 }
 
+// --- splitLines tests ---
+
+func TestSplitLines(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"", 0},
+		{"a\n", 1},
+		{"a\nb\n", 2},
+		{"a\nb", 2}, // no trailing newline
+		{"a\nb\nc\n", 3},
+	}
+	for _, tt := range tests {
+		lines := splitLines(tt.input)
+		if len(lines) != tt.want {
+			t.Errorf("splitLines(%q) = %d lines, want %d", tt.input, len(lines), tt.want)
+		}
+	}
+}
+
 // --- Integration: tools apply truncation ---
 
 func TestBashToolTruncatesOutput(t *testing.T) {
@@ -200,7 +193,6 @@ func TestBashToolTruncatesOutput(t *testing.T) {
 	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
 
 	tool := &BashTool{}
-	// Generate 10 lines of output.
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"command": "for i in $(seq 1 10); do echo line$i; done",
 	})
@@ -210,7 +202,6 @@ func TestBashToolTruncatesOutput(t *testing.T) {
 	if !strings.Contains(result, "Output truncated") {
 		t.Error("bash output should be truncated")
 	}
-	// Tail truncation: should show the last lines.
 	if !strings.Contains(result, "showing last") {
 		t.Errorf("should use tail truncation, got: %s", result)
 	}
@@ -236,7 +227,6 @@ func TestReadToolTruncatesOutput(t *testing.T) {
 	if !strings.Contains(result, "Output truncated") {
 		t.Error("read output should be truncated")
 	}
-	// Head truncation: should show the first lines.
 	if !strings.Contains(result, "showing first") {
 		t.Errorf("should use head truncation, got: %s", result)
 	}
@@ -356,17 +346,31 @@ func TestBashToolNoTruncateOnError(t *testing.T) {
 
 // --- helpers ---
 
-func verifyTempFile(t *testing.T, path, expectedContent string) {
+// verifyTempFileInContent extracts the temp file path from truncation output
+// and verifies it contains the expected content.
+func verifyTempFileInContent(t *testing.T, content, expectedContent string) {
 	t.Helper()
-	if path == "" {
-		t.Fatal("expected temp file path, got empty")
+	// Format: [Full output saved to /tmp/anna-tool-xxx.txt — use the read tool to access]
+	idx := strings.Index(content, "/tmp/anna-tool-")
+	if idx < 0 {
+		// Also check for other temp dir patterns.
+		idx = strings.Index(content, "/var/")
+		if idx < 0 {
+			t.Fatal("could not find temp file path in output")
+		}
 	}
-	data, err := os.ReadFile(path)
+	end := strings.Index(content[idx:], " — use")
+	if end < 0 {
+		t.Fatal("could not find end of temp file path in output")
+	}
+	tmpPath := content[idx : idx+end]
+
+	data, err := os.ReadFile(tmpPath)
 	if err != nil {
-		t.Fatalf("failed to read temp file %s: %v", path, err)
+		t.Fatalf("failed to read temp file %s: %v", tmpPath, err)
 	}
 	if string(data) != expectedContent {
 		t.Error("temp file should contain the full original output")
 	}
-	t.Cleanup(func() { os.Remove(path) })
+	t.Cleanup(func() { os.Remove(tmpPath) })
 }
