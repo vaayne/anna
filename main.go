@@ -14,9 +14,8 @@ import (
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
-	gorunner "github.com/vaayne/anna/agent/runner/go"
-	"github.com/vaayne/anna/agent/runner/go/tool"
 	"github.com/vaayne/anna/agent/store"
+	"github.com/vaayne/anna/agent/tool"
 	"github.com/vaayne/anna/channel"
 	clicmd "github.com/vaayne/anna/channel/cli"
 	"github.com/vaayne/anna/channel/telegram"
@@ -216,7 +215,7 @@ func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Too
 			if model == "" {
 				model = cfg.Model
 			}
-			return gorunner.New(ctx, gorunner.Config{
+			return runner.NewGoRunner(ctx, runner.GoRunnerConfig{
 				API:         cfg.Provider,
 				Model:       model,
 				APIKey:      providerCfg.APIKey,

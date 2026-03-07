@@ -9,14 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vaayne/anna/pkg/agent/core"
-	agenttypes "github.com/vaayne/anna/pkg/agent/types"
-	"github.com/vaayne/anna/pkg/ai/providers/anthropic"
-	"github.com/vaayne/anna/pkg/ai/providers/openai"
-	openairesponse "github.com/vaayne/anna/pkg/ai/providers/openai-response"
-	"github.com/vaayne/anna/pkg/ai/registry"
-	"github.com/vaayne/anna/pkg/ai/stream"
-	aitypes "github.com/vaayne/anna/pkg/ai/types"
+	"github.com/vaayne/anna/agent/runner"
+	"github.com/vaayne/anna/ai/providers/anthropic"
+	"github.com/vaayne/anna/ai/providers/openai"
+	openairesponse "github.com/vaayne/anna/ai/providers/openai-response"
+	"github.com/vaayne/anna/ai/registry"
+	"github.com/vaayne/anna/ai/stream"
+	aitypes "github.com/vaayne/anna/ai/types"
 )
 
 func skipWithoutAPIKey(t *testing.T) string {
@@ -88,12 +87,12 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 			reg := registry.New()
 			reg.Register(p.factory(struct{ BaseURL string }{BaseURL: p.baseURL}))
 
-			engine := &core.Engine{Providers: reg}
+			engine := &runner.Engine{Providers: reg}
 
 			var toolCalled atomic.Bool
 			var capturedCity string
 
-			tools := agenttypes.ToolSet{
+			tools := runner.ToolSet{
 				"get_weather": func(ctx context.Context, call aitypes.ToolCall) (aitypes.TextContent, error) {
 					toolCalled.Store(true)
 					city, _ := call.Arguments["city"].(string)
@@ -102,7 +101,7 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 				},
 			}
 
-			cfg := agenttypes.Config{
+			cfg := runner.LoopConfig{
 				Model:           aitypes.Model{API: p.name, Name: model},
 				StreamOptions:   aitypes.StreamOptions{APIKey: apiKey},
 				MaxTurns:        5,
@@ -118,10 +117,7 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 				aitypes.UserMessage{Content: "What's the weather in Tokyo?"},
 			}
 
-			var events []agenttypes.Event
-			history, err := engine.Run(ctx, cfg, messages, func(e agenttypes.Event) {
-				events = append(events, e)
-			})
+			history, err := engine.Run(ctx, cfg, messages, nil)
 			if err != nil {
 				t.Fatalf("engine.Run error: %v", err)
 			}
@@ -161,8 +157,8 @@ func TestIntegrationToolUseAllProviders(t *testing.T) {
 			}
 
 			// Log for debugging.
-			t.Logf("provider=%s city=%q final_text=%q history_len=%d events=%d",
-				p.name, capturedCity, truncate(finalText, 100), len(history), len(events))
+			t.Logf("provider=%s city=%q final_text=%q history_len=%d",
+				p.name, capturedCity, truncate(finalText, 100), len(history))
 		})
 	}
 }

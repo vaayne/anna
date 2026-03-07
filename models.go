@@ -13,10 +13,10 @@ import (
 
 	ucli "github.com/urfave/cli/v2"
 	"github.com/vaayne/anna/channel"
-	"github.com/vaayne/anna/pkg/ai/providers/anthropic"
-	"github.com/vaayne/anna/pkg/ai/providers/openai"
-	openairesponse "github.com/vaayne/anna/pkg/ai/providers/openai-response"
-	"github.com/vaayne/anna/pkg/ai/stream"
+	"github.com/vaayne/anna/ai/providers/anthropic"
+	"github.com/vaayne/anna/ai/providers/openai"
+	openairesponse "github.com/vaayne/anna/ai/providers/openai-response"
+	"github.com/vaayne/anna/ai/stream"
 )
 
 // CachedModel is the on-disk representation of a model in models.json.

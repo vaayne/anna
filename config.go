@@ -8,7 +8,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/vaayne/anna/agent"
-	"github.com/vaayne/anna/pkg/ai/types"
+	"github.com/vaayne/anna/ai/types"
 	"gopkg.in/yaml.v3"
 )
 
