@@ -4,9 +4,11 @@ anna is a Go CLI local AI assistant. Native Go runner calling LLM providers. Two
 
 ## Packages
 
-`main` → `agent/` (pool, runner, session) → `channel/` (cli, telegram, notifier) → `cron/` → `memory/`
+`main` → `agent/` (pool, session) → `agent/runner/` (GoRunner, engine loop) → `ai/` (providers, types, stream)
 
-Config: `.agents/config.yaml` | Sessions: `.agents/workspace/sessions`
+Side packages: `channel/` (cli, telegram, notifier) → `cron/` → `memory/` → `agent/tool/`
+
+Config: `~/.anna/config.yaml` | Sessions: `~/.anna/workspace/sessions`
 
 ## Tasks
 
