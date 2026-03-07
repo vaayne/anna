@@ -2,7 +2,7 @@
 
 Config file: `~/.anna/config.yaml`
 
-The workspace root defaults to `~/.anna/workspace` and can be changed by setting the `ANNA_HOME` environment variable. Session, memory, skills, and cron data live under the workspace root. The model cache lives in `~/.anna/cache/`, and runtime state (current provider/model) is stored in `~/.anna/state.yaml` — separate from the static config.
+The workspace root defaults to `~/.anna/workspace` and can be changed by setting the `ANNA_HOME` environment variable. Session, memory, skills, cron data, and runtime state all live under the workspace root. The model cache lives in `~/.anna/cache/`.
 
 ## Full Reference
 
@@ -73,7 +73,7 @@ cron:
 | Path | Purpose | Category |
 |------|---------|----------|
 | `~/.anna/config.yaml` | Static configuration (user-edited) | Config |
-| `~/.anna/state.yaml` | Runtime state: current provider/model (program-managed) | State |
+| `~/.anna/workspace/state.yaml` | Runtime state: current provider/model (program-managed) | State |
 | `~/.anna/cache/models.json` | Cached model list (safe to delete) | Cache |
 | `~/.anna/workspace/sessions/` | Chat session history | Data |
 | `~/.anna/workspace/memory/` | Persistent memory (facts + journal) | Data |

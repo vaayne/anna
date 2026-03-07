@@ -628,11 +628,16 @@ model: claude-sonnet-4-6
 		t.Fatal(err)
 	}
 
+	// state.yaml lives under workspace (dir/workspace/state.yaml).
+	wsDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	stateYAML := `
 provider: openai
 model: gpt-4o
 `
-	if err := os.WriteFile(filepath.Join(dir, "state.yaml"), []byte(stateYAML), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "state.yaml"), []byte(stateYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -655,11 +660,16 @@ func TestEnvOverridesState(t *testing.T) {
 	t.Setenv("ANNA_PROVIDER", "anthropic")
 	t.Setenv("ANNA_MODEL", "claude-opus-4-6")
 
+	// state.yaml lives under workspace (dir/workspace/state.yaml).
+	wsDir := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	stateYAML := `
 provider: openai
 model: gpt-4o
 `
-	if err := os.WriteFile(filepath.Join(dir, "state.yaml"), []byte(stateYAML), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "state.yaml"), []byte(stateYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -677,25 +687,19 @@ model: gpt-4o
 }
 
 func TestSaveModelSelectionWritesState(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("ANNA_HOME", dir)
+	wsDir := t.TempDir()
 
-	if err := SaveModelSelection("openai", "gpt-4o"); err != nil {
+	if err := SaveModelSelection(wsDir, "openai", "gpt-4o"); err != nil {
 		t.Fatalf("SaveModelSelection: %v", err)
 	}
 
-	// state.yaml should exist.
-	data, err := os.ReadFile(filepath.Join(dir, "state.yaml"))
+	// state.yaml should exist in workspace.
+	data, err := os.ReadFile(filepath.Join(wsDir, "state.yaml"))
 	if err != nil {
 		t.Fatalf("read state.yaml: %v", err)
 	}
 	if !strings.Contains(string(data), "openai") {
 		t.Errorf("state.yaml should contain provider, got: %s", data)
-	}
-
-	// config.yaml should NOT exist (SaveModelSelection doesn't touch it).
-	if _, err := os.Stat(filepath.Join(dir, "config.yaml")); err == nil {
-		t.Error("config.yaml should not be created by SaveModelSelection")
 	}
 }
 

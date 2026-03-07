@@ -261,7 +261,11 @@ func modelsSetCommand() *ucli.Command {
 				return fmt.Errorf("invalid format %q, expected provider/model", arg)
 			}
 
-			if err := SaveModelSelection(provider, model); err != nil {
+			cfg, err := LoadConfig()
+			if err != nil {
+				return err
+			}
+			if err := SaveModelSelection(cfg.Workspace, provider, model); err != nil {
 				return err
 			}
 			fmt.Printf("Switched to %s/%s\n", provider, model)

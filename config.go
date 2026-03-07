@@ -108,9 +108,9 @@ func configPath() string {
 	return filepath.Join(annaHome(), "config.yaml")
 }
 
-// statePath returns the path to state.yaml (mutable runtime state).
-func statePath() string {
-	return filepath.Join(annaHome(), "state.yaml")
+// StatePath returns the path to state.yaml (mutable runtime state) inside the workspace.
+func (cfg *Config) StatePath() string {
+	return filepath.Join(cfg.Workspace, "state.yaml")
 }
 
 // cachePath returns the cache directory inside the anna home.
@@ -141,6 +141,16 @@ func loadConfigFrom(dir string) (*Config, error) {
 		}
 	}
 
+	// Resolve workspace early so state.yaml can be found.
+	// Priority: ANNA_WORKSPACE env → yaml → default.
+	if cfg.Workspace == "" {
+		if v := os.Getenv("ANNA_WORKSPACE"); v != "" {
+			cfg.Workspace = v
+		} else {
+			cfg.Workspace = filepath.Join(dir, "workspace")
+		}
+	}
+
 	// Apply runtime state overrides (state.yaml) — mutable values like
 	// current provider/model set by "anna models set" or /model command.
 	applyState(cfg)
@@ -168,9 +178,6 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 	if cfg.Model == "" {
 		cfg.Model = "claude-sonnet-4-6"
-	}
-	if cfg.Workspace == "" {
-		cfg.Workspace = filepath.Join(dir, "workspace")
 	}
 	if cfg.Runner.Type == "" {
 		cfg.Runner.Type = "go"
@@ -272,10 +279,10 @@ func (cfg *Config) resolveModelID(tier string) string {
 	}
 }
 
-// SaveModelSelection persists the provider and model to state.yaml,
-// keeping config.yaml as a static, user-edited file.
-func SaveModelSelection(provider, model string) error {
-	path := statePath()
+// SaveModelSelection persists the provider and model to state.yaml
+// in the given workspace, keeping config.yaml as a static, user-edited file.
+func SaveModelSelection(workspace, provider, model string) error {
+	path := filepath.Join(workspace, "state.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
@@ -304,12 +311,13 @@ func SaveModelSelection(provider, model string) error {
 	return nil
 }
 
-// applyState loads state.yaml and overrides provider/model in cfg.
+// applyState loads state.yaml from the workspace and overrides provider/model in cfg.
 func applyState(cfg *Config) {
-	data, err := os.ReadFile(statePath())
+	path := cfg.StatePath()
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Warn("failed to read state file", "path", statePath(), "error", err)
+			slog.Warn("failed to read state file", "path", path, "error", err)
 		}
 		return
 	}
