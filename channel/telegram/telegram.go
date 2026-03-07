@@ -240,9 +240,20 @@ func (b *Bot) registerHandlers() {
 		models := b.listFn()
 
 		if args == "" {
-			return b.sendModelKeyboard(c, models)
+			return b.sendModelKeyboard(c, indexModels(models))
 		}
-		return b.switchModel(c, models, args)
+
+		// Numeric arg → direct switch by index.
+		if _, err := strconv.Atoi(args); err == nil {
+			return b.switchModel(c, models, args)
+		}
+
+		// Text arg → filter models by substring match, preserving global indices.
+		filtered := filterModels(models, args)
+		if len(filtered) == 0 {
+			return c.Send(fmt.Sprintf("No models matching %q.", args))
+		}
+		return b.sendModelKeyboard(c, filtered)
 	}))
 
 	// Handle inline keyboard callbacks for model selection via unique handler.
@@ -258,6 +269,27 @@ func (b *Bot) registerHandlers() {
 		_ = c.Respond()
 		return c.Delete()
 	}))
+
+	// Handle pagination for model keyboard.
+	// Callback data format: "page" or "page|filter_query".
+	b.bot.Handle("\fmodel_page", b.guard(func(c tele.Context) error {
+		data := c.Data()
+		pageStr, query, _ := strings.Cut(data, "|")
+		page, _ := strconv.Atoi(pageStr)
+
+		allModels := b.listFn()
+		models := filterModels(allModels, query)
+		if err := b.sendModelPage(c, models, page, query, true); err != nil {
+			logger().Error("model page failed", "page", page, "error", err)
+			return err
+		}
+		return c.Respond()
+	}))
+
+	// No-op handler for the page counter button.
+	b.bot.Handle("\fmodel_noop", func(c tele.Context) error {
+		return c.Respond()
+	})
 
 	b.bot.Handle(tele.OnText, b.guard(func(c tele.Context) error {
 		return b.handleText(c)
@@ -399,27 +431,106 @@ func sessionIDFor(c tele.Context) string {
 	return strconv.FormatInt(c.Chat().ID, 10)
 }
 
-// sendModelKeyboard sends an inline keyboard with model selection buttons.
-func (b *Bot) sendModelKeyboard(c tele.Context, models []ModelOption) error {
+const modelsPerPage = 8
+
+// indexedModel pairs a ModelOption with its 1-based index in the full model list.
+type indexedModel struct {
+	ModelOption
+	globalIdx int
+}
+
+// indexModels wraps a full model list with sequential 1-based indices.
+func indexModels(models []ModelOption) []indexedModel {
+	out := make([]indexedModel, len(models))
+	for i, m := range models {
+		out[i] = indexedModel{ModelOption: m, globalIdx: i + 1}
+	}
+	return out
+}
+
+// filterModels returns indexed models matching the query (or all if query is empty).
+func filterModels(models []ModelOption, query string) []indexedModel {
+	if query == "" {
+		return indexModels(models)
+	}
+	query = strings.ToLower(query)
+	var out []indexedModel
+	for i, m := range models {
+		label := strings.ToLower(m.Provider + "/" + m.Model)
+		if strings.Contains(label, query) {
+			out = append(out, indexedModel{ModelOption: m, globalIdx: i + 1})
+		}
+	}
+	return out
+}
+
+// sendModelKeyboard sends a paginated inline keyboard with model selection buttons.
+func (b *Bot) sendModelKeyboard(c tele.Context, models []indexedModel) error {
+	return b.sendModelPage(c, models, 0, "", false)
+}
+
+// sendModelPage renders a single page of the model keyboard.
+// query is preserved in nav button data so filtered pagination works across pages.
+// If edit is true, it edits the existing message instead of sending a new one.
+func (b *Bot) sendModelPage(c tele.Context, models []indexedModel, page int, query string, edit bool) error {
 	if len(models) == 0 {
 		return c.Send("No models configured.")
+	}
+
+	totalPages := (len(models) + modelsPerPage - 1) / modelsPerPage
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * modelsPerPage
+	end := start + modelsPerPage
+	if end > len(models) {
+		end = len(models)
 	}
 
 	active, hasActive := b.chatModels[c.Chat().ID]
 	markup := &tele.ReplyMarkup{}
 
 	var rows []tele.Row
-	for i, m := range models {
+	for i := start; i < end; i++ {
+		m := models[i]
 		label := fmt.Sprintf("%s/%s", m.Provider, m.Model)
 		if hasActive && m.Provider == active.Provider && m.Model == active.Model {
 			label = "✅ " + label
 		}
-		btn := markup.Data(label, "model_select", fmt.Sprintf("%d", i+1))
+		btn := markup.Data(label, "model_select", fmt.Sprintf("%d", m.globalIdx))
 		rows = append(rows, markup.Row(btn))
 	}
 
+	// Navigation row. Encode "page|query" so filtered pagination persists.
+	if totalPages > 1 {
+		pageData := func(p int) string {
+			if query == "" {
+				return fmt.Sprintf("%d", p)
+			}
+			return fmt.Sprintf("%d|%s", p, query)
+		}
+		var navBtns []tele.Btn
+		if page > 0 {
+			navBtns = append(navBtns, markup.Data("◀ Prev", "model_page", pageData(page-1)))
+		}
+		navBtns = append(navBtns, markup.Data(fmt.Sprintf("%d/%d", page+1, totalPages), "model_noop"))
+		if page < totalPages-1 {
+			navBtns = append(navBtns, markup.Data("Next ▶", "model_page", pageData(page+1)))
+		}
+		rows = append(rows, markup.Row(navBtns...))
+	}
+
 	markup.Inline(rows...)
-	return c.Send("Select a model:", markup)
+
+	text := fmt.Sprintf("Select a model (%d total):", len(models))
+	if edit {
+		return c.Edit(text, markup)
+	}
+	return c.Send(text, markup)
 }
 
 // switchModel handles model switching by index string.
