@@ -5,20 +5,22 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/pkg/ai/types"
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the top-level configuration for anna.
+// Env vars use ANNA_ prefix (e.g. ANNA_PROVIDER, ANNA_MODEL).
 type Config struct {
-	Provider    string                    `yaml:"provider"`
-	Model       string                    `yaml:"model"`
-	ModelStrong string                    `yaml:"model_strong"`
-	ModelFast   string                    `yaml:"model_fast"`
-	Workspace   string                    `yaml:"workspace"`
-	Runner      RunnerConfig              `yaml:"runner"`
-	Cron        CronConfig                `yaml:"cron"`
+	Provider    string                    `yaml:"provider"     env:"PROVIDER"`
+	Model       string                    `yaml:"model"        env:"MODEL"`
+	ModelStrong string                    `yaml:"model_strong" env:"MODEL_STRONG"`
+	ModelFast   string                    `yaml:"model_fast"   env:"MODEL_FAST"`
+	Workspace   string                    `yaml:"workspace"    env:"WORKSPACE"`
+	Runner      RunnerConfig              `yaml:"runner"       envPrefix:"RUNNER_"`
+	Cron        CronConfig                `yaml:"cron"         envPrefix:"CRON_"`
 	Providers   map[string]ProviderConfig `yaml:"providers"`
 	Channels    ChannelsConfig            `yaml:"channels"`
 }
@@ -31,12 +33,12 @@ const (
 
 // ChannelsConfig groups all channel (interface) configurations.
 type ChannelsConfig struct {
-	Telegram TelegramConfig `yaml:"telegram"`
+	Telegram TelegramConfig `yaml:"telegram" envPrefix:"TELEGRAM_"`
 }
 
 type CronConfig struct {
-	Enabled *bool  `yaml:"enabled"`
-	DataDir string `yaml:"data_dir"`
+	Enabled *bool  `yaml:"enabled"  env:"ENABLED"`
+	DataDir string `yaml:"data_dir" env:"DATA_DIR"`
 }
 
 // CronEnabled returns whether cron is enabled (defaults to true).
@@ -70,21 +72,21 @@ type ModelCostConfig struct {
 }
 
 type RunnerConfig struct {
-	Type        string           `yaml:"type"`
-	System      string           `yaml:"system"`
-	IdleTimeout int              `yaml:"idle_timeout"`
-	Compaction  CompactionConfig `yaml:"compaction"`
+	Type        string           `yaml:"type"         env:"TYPE"`
+	System      string           `yaml:"system"       env:"SYSTEM"`
+	IdleTimeout int              `yaml:"idle_timeout" env:"IDLE_TIMEOUT"`
+	Compaction  CompactionConfig `yaml:"compaction"   envPrefix:"COMPACTION_"`
 }
 
 // CompactionConfig is an alias for agent.CompactionConfig for config YAML binding.
 type CompactionConfig = agent.CompactionConfig
 
 type TelegramConfig struct {
-	Token      string  `yaml:"token"`
-	NotifyChat string  `yaml:"notify_chat"` // chat ID for proactive notifications
-	ChannelID  string  `yaml:"channel_id"`  // broadcast channel (@name or numeric ID)
-	GroupMode  string  `yaml:"group_mode"`  // "mention" | "always" | "disabled"
-	AllowedIDs []int64 `yaml:"allowed_ids"` // user IDs allowed to use the bot (empty = allow all)
+	Token      string  `yaml:"token"       env:"TOKEN"`
+	NotifyChat string  `yaml:"notify_chat" env:"NOTIFY_CHAT"`
+	ChannelID  string  `yaml:"channel_id"  env:"CHANNEL_ID"`
+	GroupMode  string  `yaml:"group_mode"  env:"GROUP_MODE"`
+	AllowedIDs []int64 `yaml:"allowed_ids" env:"ALLOWED_IDS"`
 }
 
 // annaHome returns the anna home directory.
@@ -128,33 +130,10 @@ func loadConfigFrom(dir string) (*Config, error) {
 		}
 	}
 
-	// Apply environment variable overrides.
-	if v := os.Getenv("ANNA_TELEGRAM_TOKEN"); v != "" {
-		cfg.Channels.Telegram.Token = v
-	}
-	if v := os.Getenv("ANNA_TELEGRAM_NOTIFY_CHAT"); v != "" {
-		cfg.Channels.Telegram.NotifyChat = v
-	}
-	if v := os.Getenv("ANNA_TELEGRAM_CHANNEL_ID"); v != "" {
-		cfg.Channels.Telegram.ChannelID = v
-	}
-	if v := os.Getenv("ANNA_TELEGRAM_GROUP_MODE"); v != "" {
-		cfg.Channels.Telegram.GroupMode = v
-	}
-	if v := os.Getenv("ANNA_RUNNER_TYPE"); v != "" {
-		cfg.Runner.Type = v
-	}
-	if v := os.Getenv("ANNA_PROVIDER"); v != "" {
-		cfg.Provider = v
-	}
-	if v := os.Getenv("ANNA_MODEL"); v != "" {
-		cfg.Model = v
-	}
-	if v := os.Getenv("ANNA_MODEL_STRONG"); v != "" {
-		cfg.ModelStrong = v
-	}
-	if v := os.Getenv("ANNA_MODEL_FAST"); v != "" {
-		cfg.ModelFast = v
+	// Apply environment variable overrides (ANNA_ prefix).
+	// Uses caarlos0/env struct tags; only set env vars override YAML values.
+	if err := env.ParseWithOptions(cfg, env.Options{Prefix: "ANNA_"}); err != nil {
+		return nil, fmt.Errorf("parse env vars: %w", err)
 	}
 
 	// Initialize providers map if nil.
@@ -163,6 +142,7 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 
 	// Resolve provider env vars for known providers.
+	// These use standard env var names (ANTHROPIC_API_KEY, etc.) not ANNA_ prefix.
 	resolveProviderEnv(cfg, "anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")
 	resolveProviderEnv(cfg, "openai", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 	resolveProviderEnv(cfg, "openai-response", "OPENAI_API_KEY", "OPENAI_BASE_URL")

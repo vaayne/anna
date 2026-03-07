@@ -85,20 +85,27 @@ Sessions are derived from `workspace` as `<workspace>/sessions` and no longer ha
 
 ## Environment Variable Overrides
 
+All config fields support env var overrides using the `ANNA_` prefix. Nested structs add their own prefix segment (e.g. `runner.type` → `ANNA_RUNNER_TYPE`). Env vars always override YAML values.
+
 | Variable | Overrides | Notes |
 |----------|-----------|-------|
-| `ANNA_HOME` | workspace root | Default `~/.anna/workspace` |
+| `ANNA_HOME` | anna home directory | Default `~/.anna` |
 | `ANNA_PROVIDER` | `provider` | |
 | `ANNA_MODEL` | `model` | |
 | `ANNA_MODEL_STRONG` | `model_strong` | |
 | `ANNA_MODEL_FAST` | `model_fast` | |
+| `ANNA_WORKSPACE` | `workspace` | |
 | `ANNA_RUNNER_TYPE` | `runner.type` | |
+| `ANNA_RUNNER_IDLE_TIMEOUT` | `runner.idle_timeout` | |
+| `ANNA_CRON_ENABLED` | `cron.enabled` | |
+| `ANNA_CRON_DATA_DIR` | `cron.data_dir` | |
 | `ANNA_TELEGRAM_TOKEN` | `channels.telegram.token` | |
 | `ANNA_TELEGRAM_NOTIFY_CHAT` | `channels.telegram.notify_chat` | |
 | `ANNA_TELEGRAM_CHANNEL_ID` | `channels.telegram.channel_id` | |
 | `ANNA_TELEGRAM_GROUP_MODE` | `channels.telegram.group_mode` | |
-| `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` | |
-| `ANTHROPIC_BASE_URL` | `providers.anthropic.base_url` | |
+| `ANNA_TELEGRAM_ALLOWED_IDS` | `channels.telegram.allowed_ids` | Comma-separated |
+| `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` | Standard provider env |
+| `ANTHROPIC_BASE_URL` | `providers.anthropic.base_url` | Standard provider env |
 | `OPENAI_API_KEY` | `providers.openai.api_key` | Also used by `openai-response` |
 | `OPENAI_BASE_URL` | `providers.openai.base_url` | Also used by `openai-response` |
 
