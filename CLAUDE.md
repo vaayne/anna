@@ -47,3 +47,15 @@ Docs structure:
 - `docs/cron-system.md` -- Scheduled tasks, job persistence
 - `docs/session-compaction.md` -- History compaction, token management
 - `docs/notification-system.md` -- Dispatcher, backends, agent tool
+
+## Release
+
+See `.agents/skills/release/SKILL.md` for the full release workflow. Quick ref:
+
+```bash
+mise run release:check     # Validate config
+mise run release:snapshot  # Test release locally
+mise run release           # Production release (requires tag)
+```
+
+Tag format: `vX.Y.Z` (semver). Push tag to trigger CI.
