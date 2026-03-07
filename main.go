@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -65,7 +66,7 @@ func chatCommand() *ucli.Command {
 				}
 			}
 
-			s, err := setup(c.Context)
+			s, err := setup(c.Context, false)
 			if err != nil {
 				return err
 			}
@@ -93,22 +94,18 @@ func gatewayCommand() *ucli.Command {
 		Name:  "gateway",
 		Usage: "Start daemon services (Telegram, etc.) based on config",
 		Action: func(c *ucli.Context) error {
-			s, err := setup(c.Context)
+			s, err := setup(c.Context, true)
 			if err != nil {
 				return err
 			}
 			defer s.pool.Close()
 
-			if s.cronSvc != nil {
-				if err := s.cronSvc.Start(s.ctx); err != nil {
-					return fmt.Errorf("start cron: %w", err)
-				}
-				defer s.cronSvc.Stop()
-			}
+			// Cron is started inside runGateway after notification wiring,
+			// so early-firing jobs already have the dispatcher callback.
 
 			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
 			switchFn := modelSwitcher(s.cfg, s.pool, s.memStore, s.extraTools)
-			return runGateway(s.ctx, s.cfg, s.pool, listFn, switchFn)
+			return runGateway(s.ctx, s, listFn, switchFn)
 		},
 	}
 }
@@ -120,9 +117,10 @@ type setupResult struct {
 	cronSvc    *cron.Service
 	memStore   *memory.Store
 	extraTools []tool.Tool
+	notifier   *channel.Dispatcher
 }
 
-func setup(parent context.Context) (*setupResult, error) {
+func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
@@ -146,6 +144,13 @@ func setup(parent context.Context) (*setupResult, error) {
 	// Memory store + tool — always available.
 	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
 	extraTools = append(extraTools, memory.NewTool(memStore))
+
+	// Notification dispatcher + tool — backends are registered later in
+	// runGateway(). Only expose the tool in gateway mode where backends exist.
+	dispatcher := channel.NewDispatcher()
+	if gateway && cfg.Telegram.Token != "" {
+		extraTools = append(extraTools, channel.NewNotifyTool(dispatcher))
+	}
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
 	factory, err := newRunnerFactory(cfg, memStore, extraTools)
@@ -193,6 +198,7 @@ func setup(parent context.Context) (*setupResult, error) {
 		cronSvc:    cronSvc,
 		memStore:   memStore,
 		extraTools: extraTools,
+		notifier:   dispatcher,
 	}, nil
 }
 
@@ -253,13 +259,42 @@ func setupLogFile() error {
 	return nil
 }
 
-func runGateway(ctx context.Context, cfg *Config, pool *agent.Pool, listFn channel.ModelListFunc, switchFn channel.ModelSwitchFunc) error {
+func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFunc, switchFn channel.ModelSwitchFunc) error {
 	started := 0
 
-	if cfg.Telegram.Token != "" {
+	if s.cfg.Telegram.Token != "" {
 		started++
 		slog.Info("starting telegram bot")
-		if err := telegram.Run(ctx, cfg.Telegram.Token, pool, listFn, switchFn); err != nil && ctx.Err() == nil {
+
+		tgBot, err := telegram.New(telegram.Config{
+			Token:      s.cfg.Telegram.Token,
+			NotifyChat: s.cfg.Telegram.NotifyChat,
+			ChannelID:  s.cfg.Telegram.ChannelID,
+			GroupMode:  s.cfg.Telegram.GroupMode,
+			AllowedIDs: s.cfg.Telegram.AllowedIDs,
+		}, s.pool, listFn, switchFn)
+		if err != nil {
+			return fmt.Errorf("create telegram bot: %w", err)
+		}
+
+		// Register Telegram as a notification backend.
+		defaultChat := s.cfg.Telegram.NotifyChat
+		if defaultChat == "" {
+			defaultChat = s.cfg.Telegram.ChannelID
+		}
+		s.notifier.Register(tgBot, defaultChat)
+
+		// Wire cron notifications and start the scheduler AFTER the backend
+		// is registered, so early-firing jobs already use the dispatcher.
+		if s.cronSvc != nil {
+			wireCronNotifier(s.cronSvc, s.pool, s.notifier)
+			if err := s.cronSvc.Start(ctx); err != nil {
+				return fmt.Errorf("start cron: %w", err)
+			}
+			defer s.cronSvc.Stop()
+		}
+
+		if err := tgBot.Start(ctx); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("telegram: %w", err)
 		}
 	}
@@ -270,4 +305,28 @@ func runGateway(ctx context.Context, cfg *Config, pool *agent.Pool, listFn chann
 
 	slog.Info("gateway stopped")
 	return nil
+}
+
+// wireCronNotifier overrides the cron callback to collect the agent response
+// and broadcast it via the notification dispatcher.
+func wireCronNotifier(cronSvc *cron.Service, pool *agent.Pool, dispatcher *channel.Dispatcher) {
+	cronSvc.SetOnJob(func(ctx context.Context, job cron.Job) {
+		sessionID := "cron:" + job.ID
+		msg := fmt.Sprintf("[Scheduled Task] %s\n\nInstruction: %s", job.Name, job.Message)
+		var result strings.Builder
+		for evt := range pool.Chat(ctx, sessionID, msg) {
+			if evt.Err != nil {
+				slog.Error("cron job error", "job_id", job.ID, "error", evt.Err)
+			}
+			if evt.Text != "" {
+				result.WriteString(evt.Text)
+			}
+		}
+		if result.Len() > 0 {
+			text := fmt.Sprintf("*%s*\n\n%s", job.Name, result.String())
+			if err := dispatcher.Notify(ctx, channel.Notification{Text: text}); err != nil {
+				slog.Error("cron notification failed", "job_id", job.ID, "error", err)
+			}
+		}
+	})
 }
