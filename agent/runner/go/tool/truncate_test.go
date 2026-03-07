@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -238,6 +239,110 @@ func TestReadToolTruncatesOutput(t *testing.T) {
 	// Head truncation: should show the first lines.
 	if !strings.Contains(result, "showing first") {
 		t.Errorf("should use head truncation, got: %s", result)
+	}
+}
+
+func TestReadToolWithOffset(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lines.txt")
+	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"file_path": path,
+		"offset":    float64(3),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "line3") {
+		t.Errorf("should contain line3, got: %s", result)
+	}
+	if strings.Contains(result, "line1") {
+		t.Errorf("should not contain line1, got: %s", result)
+	}
+}
+
+func TestReadToolWithLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lines.txt")
+	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"file_path": path,
+		"limit":     float64(2),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "line1") || !strings.Contains(result, "line2") {
+		t.Errorf("should contain first 2 lines, got: %s", result)
+	}
+	if strings.Contains(result, "line3\n") {
+		t.Errorf("should not contain line3 content, got: %s", result)
+	}
+	if !strings.Contains(result, "Use offset=3 to continue") {
+		t.Errorf("should contain pagination hint, got: %s", result)
+	}
+}
+
+func TestReadToolWithOffsetAndLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lines.txt")
+	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"file_path": path,
+		"offset":    float64(2),
+		"limit":     float64(2),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "line2") || !strings.Contains(result, "line3") {
+		t.Errorf("should contain lines 2-3, got: %s", result)
+	}
+	if !strings.Contains(result, "Use offset=4 to continue") {
+		t.Errorf("should contain pagination hint, got: %s", result)
+	}
+}
+
+func TestReadToolPaginationHintNotShownAtEnd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lines.txt")
+	os.WriteFile(path, []byte("line1\nline2\n"), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "Use offset=") {
+		t.Errorf("should not show pagination hint when all lines are shown, got: %s", result)
+	}
+}
+
+func TestReadToolTruncatedShowsPaginationHint(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "3")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	var content string
+	for i := 1; i <= 10; i++ {
+		content += fmt.Sprintf("line%d\n", i)
+	}
+	os.WriteFile(path, []byte(content), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Use offset=4 to continue") {
+		t.Errorf("truncated read should show pagination hint, got: %s", result)
 	}
 }
 

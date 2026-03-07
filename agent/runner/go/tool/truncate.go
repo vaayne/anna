@@ -71,6 +71,9 @@ func TruncateHead(output string) TruncationResult {
 
 	truncated := strings.Join(kept, "")
 	fullPath := saveTempFile(output)
+	if fullPath == "" {
+		return TruncationResult{Content: output, TotalLines: totalLines, TotalBytes: totalBytes, OutputLines: totalLines, OutputBytes: totalBytes}
+	}
 
 	content := formatTruncatedHead(truncated, totalLines, totalBytes, len(kept), fullPath)
 	return TruncationResult{
@@ -117,6 +120,9 @@ func TruncateTail(output string) TruncationResult {
 
 	truncated := strings.Join(kept, "")
 	fullPath := saveTempFile(output)
+	if fullPath == "" {
+		return TruncationResult{Content: output, TotalLines: totalLines, TotalBytes: totalBytes, OutputLines: totalLines, OutputBytes: totalBytes}
+	}
 
 	content := formatTruncatedTail(truncated, totalLines, totalBytes, len(kept), fullPath)
 	return TruncationResult{
