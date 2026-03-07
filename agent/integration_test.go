@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/vaayne/anna/agent/runner"
-	gorunner "github.com/vaayne/anna/agent/runner/go"
 )
 
 func skipWithoutAnthropicKey(t *testing.T) {
@@ -27,7 +26,7 @@ func TestIntegrationPoolWithGoRunner(t *testing.T) {
 	}
 
 	factory := func(ctx context.Context, _ string) (runner.Runner, error) {
-		return gorunner.New(ctx, gorunner.Config{
+		return runner.NewGoRunner(ctx, runner.GoRunnerConfig{
 			API:     "anthropic",
 			Model:   model,
 			APIKey:  os.Getenv("ANTHROPIC_API_KEY"),

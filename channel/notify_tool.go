@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	aitypes "github.com/vaayne/anna/pkg/ai/types"
+	aitypes "github.com/vaayne/anna/ai/types"
 )
 
 // NotifyTool is an agent tool that sends notifications via a Dispatcher.

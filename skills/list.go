@@ -3,7 +3,7 @@ package skills
 import (
 	"encoding/json"
 
-	gorunner "github.com/vaayne/anna/agent/runner/go"
+	"github.com/vaayne/anna/agent/runner"
 )
 
 type installedSkill struct {
@@ -15,7 +15,7 @@ type installedSkill struct {
 }
 
 func (t *SkillsTool) list() (string, error) {
-	all := gorunner.LoadSkills(t.workspace, t.cwd)
+	all := runner.LoadSkills(t.workspace, t.cwd)
 	if len(all) == 0 {
 		return "No skills installed.", nil
 	}

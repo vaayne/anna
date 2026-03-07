@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	aitypes "github.com/vaayne/anna/pkg/ai/types"
+	aitypes "github.com/vaayne/anna/ai/types"
 )
 
 var skillsInputSchema = func() map[string]any {

@@ -132,20 +132,19 @@ models.go                           Model cache, discovery, CLI model commands
 agent/pool.go                       Session management, runner lifecycle
 agent/session.go                    Per-chat session state
 agent/store/                        Session persistence (JSONL file store)
-agent/runner/go/                    Go runner: native LLM provider calls
-agent/runner/go/tool/               Built-in tools (read, bash, write, edit, truncate)
-agent/runner/go/prompt.go           System prompt builder
+agent/runner/                       Runner interface, GoRunner, RPC protocol
+agent/runner/prompt.go              System prompt builder
+agent/engine/                       Agent loop engine, tool execution, loop events
+agent/tool/                         Built-in tools (read, bash, write, edit, truncate)
 channel/notifier.go                 Notification dispatcher (multi-backend)
 channel/notify_tool.go              Agent notify tool
 channel/telegram/                   Telegram bot + streaming + notification backend
 channel/cli/                        Interactive terminal chat (Bubble Tea TUI)
 cron/                               Scheduled jobs (gocron/v2)
 memory/                             Persistent memory (facts + journal)
-pkg/ai/providers/                   LLM provider implementations
-pkg/ai/providers/anthropic/         Anthropic provider
-pkg/ai/providers/openai/            OpenAI provider
-pkg/ai/providers/openai-response/   OpenAI-compatible APIs (Responses API)
-pkg/agent/core/                     Agent loop engine
+ai/providers/                       LLM provider implementations (Anthropic, OpenAI)
+ai/types/                           Shared types (Model, Message, ToolDefinition, events)
+ai/stream/                          Streaming abstractions
 ```
 
 ## Documentation

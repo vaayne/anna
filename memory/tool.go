@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	aitypes "github.com/vaayne/anna/pkg/ai/types"
+	aitypes "github.com/vaayne/anna/ai/types"
 )
 
 var memoryInputSchema = func() map[string]any {

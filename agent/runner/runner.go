@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	aitypes "github.com/vaayne/anna/pkg/ai/types"
+	aitypes "github.com/vaayne/anna/ai/types"
 )
 
 // RPCCommand represents a command in the runner protocol.

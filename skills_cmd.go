@@ -10,7 +10,7 @@ import (
 	"time"
 
 	ucli "github.com/urfave/cli/v2"
-	gorunner "github.com/vaayne/anna/agent/runner/go"
+	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/skills"
 )
 
@@ -130,14 +130,14 @@ func skillsListAction() error {
 		return err
 	}
 	cwd, _ := os.Getwd()
-	loaded := gorunner.LoadSkills(cfg.Workspace, cwd)
+	loaded := runner.LoadSkills(cfg.Workspace, cwd)
 	if len(loaded) == 0 {
 		fmt.Println("No skills installed.")
 		return nil
 	}
 
 	// Group by source
-	grouped := map[string][]gorunner.Skill{}
+	grouped := map[string][]runner.Skill{}
 	var sourceOrder []string
 	seen := map[string]bool{}
 	for _, s := range loaded {
@@ -169,7 +169,7 @@ func skillsListJSON() error {
 		return err
 	}
 	cwd, _ := os.Getwd()
-	loaded := gorunner.LoadSkills(cfg.Workspace, cwd)
+	loaded := runner.LoadSkills(cfg.Workspace, cwd)
 
 	type entry struct {
 		Name        string `json:"name"`

@@ -6,7 +6,7 @@ anna is structured as a set of loosely coupled packages wired together in `main.
 
 1. A **channel** (CLI or Telegram) receives user input
 2. The **Pool** manages sessions and dispatches to a **Runner**
-3. The **Go runner** calls LLM providers via `pkg/ai/providers/`, executing tools in a loop
+3. The **Go runner** calls LLM providers via `ai/providers/`, executing tools in a loop
 4. Responses stream back through the channel to the user
 
 ```
@@ -29,23 +29,40 @@ main.go                             Entry point, CLI commands, service wiring
 config.go                           Config types, YAML loading, env var overrides
 models.go                           Model cache, discovery, CLI model commands
 
+ai/
+  types/                            Shared types (Model, Message, ToolDefinition, events)
+  stream/                           Streaming abstractions
+  providers/
+    anthropic/                      Anthropic provider (Messages API)
+    openai/                         OpenAI provider (Chat Completions API)
+    openai-response/                OpenAI-compatible provider (Responses API)
+    register_builtins.go            Auto-register all built-in providers
+  registry/                         Provider registry
+  transform/                        Message format conversions
+
 agent/
   pool.go                           Session pool, runner lifecycle, idle reaping
   session.go                        Per-chat session state and history
   store/                            Session persistence (JSONL file store, index)
+  engine/
+    engine.go                       Agent loop engine (multi-turn tool execution)
+    continue.go                     Resume agent loop from existing history
+    types.go                        LoopConfig, ToolSet, ToolFunc
+    events.go                       Loop event types (AgentStarted, AssistantDelta, etc.)
+    tool_execution.go               Tool call dispatch with callbacks
   runner/
-    runner.go                       Runner interface definition
-    go/
-      runner.go                     Go runner: native LLM provider calls
-      prompt.go                     System prompt builder (memory, tools, context)
-      skill.go                      Skill loading from ~/.anna/workspace/skills/
-      tool/                         Built-in tools
-        read.go                     Read file contents
-        bash.go                     Execute shell commands
-        write.go                    Create/overwrite files
-        edit.go                     Edit file sections
-        truncate.go                 Truncate large outputs to temp files
-        tool.go                     Tool interface definition
+    runner.go                       Runner interface, RPC types, event helpers
+    gorunner.go                     GoRunner: native LLM provider calls
+    prompt.go                       System prompt builder (memory, tools, context)
+    skill.go                        Skill loading from ~/.anna/workspace/skills/
+    stream_proxy.go                 Stream proxy utilities
+  tool/                             Built-in tools
+    tool.go                         Tool interface and registry
+    read.go                         Read file contents
+    bash.go                         Execute shell commands
+    write.go                        Create/overwrite files
+    edit.go                         Edit file sections
+    truncate.go                     Truncate large outputs to temp files
 
 channel/
   notifier.go                       Notification dispatcher (multi-backend)
@@ -79,22 +96,6 @@ skills/
   install.go                        Git clone + copy install flow (go-git)
   list.go                           List installed skills
   remove.go                         Remove installed skills
-
-pkg/
-  ai/
-    types/                          Shared types (Model, Message, ToolDefinition, events)
-    stream/                         Streaming abstractions
-    providers/
-      anthropic/                    Anthropic provider (Messages API)
-      openai/                       OpenAI provider (Chat Completions API)
-      openai-response/              OpenAI-compatible provider (Responses API)
-      register_builtins.go          Auto-register all built-in providers
-    registry/                       Provider registry
-    transform/                      Message format conversions
-  agent/
-    core/                           Agent loop engine (multi-turn tool execution)
-    proxy/                          Stream proxy utilities
-    types/                          Agent-level event types
 ```
 
 ## Providers
