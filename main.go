@@ -15,7 +15,6 @@ import (
 	"github.com/vaayne/anna/agent/runner"
 	gorunner "github.com/vaayne/anna/agent/runner/go"
 	"github.com/vaayne/anna/agent/runner/go/tool"
-	"github.com/vaayne/anna/agent/runner/pi"
 	"github.com/vaayne/anna/agent/store"
 	"github.com/vaayne/anna/channel"
 	clicmd "github.com/vaayne/anna/channel/cli"
@@ -136,7 +135,7 @@ func setup(parent context.Context) (*setupResult, error) {
 	// can be injected into the Go runner.
 	var cronSvc *cron.Service
 	var extraTools []tool.Tool
-	if cfg.Cron.CronEnabled() && cfg.Runner.Type == "go" {
+	if cfg.Cron.CronEnabled() {
 		cronSvc, err = cron.New(cfg.Cron.DataDir)
 		if err != nil {
 			return nil, fmt.Errorf("create cron service: %w", err)
@@ -144,12 +143,9 @@ func setup(parent context.Context) (*setupResult, error) {
 		extraTools = append(extraTools, cron.NewTool(cronSvc))
 	}
 
-	// Memory store + tool — always available for Go runner.
-	var memStore *memory.Store
-	if cfg.Runner.Type == "go" {
-		memStore = memory.NewStore(filepath.Join(configDir(), "memory"))
-		extraTools = append(extraTools, memory.NewTool(memStore))
-	}
+	// Memory store + tool — always available.
+	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
+	extraTools = append(extraTools, memory.NewTool(memStore))
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
 	factory, err := newRunnerFactory(cfg, memStore, extraTools)
@@ -200,10 +196,6 @@ func setup(parent context.Context) (*setupResult, error) {
 
 func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Tool) (runner.NewRunnerFunc, error) {
 	switch cfg.Runner.Type {
-	case "process":
-		return func(ctx context.Context) (runner.Runner, error) {
-			return pi.New(ctx, cfg.Runner.Process.Binary, cfg.Runner.Process.Model)
-		}, nil
 	case "go":
 		providerCfg := cfg.Providers[cfg.Provider]
 		return func(ctx context.Context) (runner.Runner, error) {

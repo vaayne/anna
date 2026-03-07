@@ -8,7 +8,7 @@ import (
 	aitypes "github.com/vaayne/anna/pkg/ai/types"
 )
 
-// RPCCommand is sent to Pi's stdin as NDJSON.
+// RPCCommand represents a command in the runner protocol.
 type RPCCommand struct {
 	ID      string `json:"id"`
 	Type    string `json:"type"`
@@ -26,7 +26,7 @@ const (
 	RPCEventAgentEnd      = "agent_end"
 )
 
-// RPCEvent is received from Pi's stdout as NDJSON.
+// RPCEvent represents an event in the runner protocol.
 // Pool stores these verbatim as the session history.
 type RPCEvent struct {
 	Type                  string          `json:"type"`

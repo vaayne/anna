@@ -16,11 +16,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Runner.Type != "process" {
-		t.Errorf("Runner.Type = %q, want %q", cfg.Runner.Type, "process")
-	}
-	if cfg.Runner.Process.Binary != "pi" {
-		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "pi")
+	if cfg.Runner.Type != "go" {
+		t.Errorf("Runner.Type = %q, want %q", cfg.Runner.Type, "go")
 	}
 	if cfg.Runner.IdleTimeout != 10 {
 		t.Errorf("Runner.IdleTimeout = %d, want 10", cfg.Runner.IdleTimeout)
@@ -43,9 +40,7 @@ func TestLoadConfigFromFile(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `
 runner:
-  type: process
-  process:
-    binary: "/usr/local/bin/pi"
+  type: go
   idle_timeout: 5
 telegram:
   token: "test-token-123"
@@ -60,9 +55,6 @@ sessions: "/tmp/sessions"
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Runner.Process.Binary != "/usr/local/bin/pi" {
-		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "/usr/local/bin/pi")
-	}
 	if cfg.Runner.IdleTimeout != 5 {
 		t.Errorf("Runner.IdleTimeout = %d, want 5", cfg.Runner.IdleTimeout)
 	}
@@ -78,7 +70,6 @@ func TestLoadConfigEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Setenv("ANNA_TELEGRAM_TOKEN", "env-token")
-	t.Setenv("ANNA_PI_BINARY", "/env/pi")
 
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
@@ -88,9 +79,6 @@ func TestLoadConfigEnvOverrides(t *testing.T) {
 	if cfg.Telegram.Token != "env-token" {
 		t.Errorf("Telegram.Token = %q, want %q", cfg.Telegram.Token, "env-token")
 	}
-	if cfg.Runner.Process.Binary != "/env/pi" {
-		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "/env/pi")
-	}
 }
 
 func TestLoadConfigEnvOverridesFile(t *testing.T) {
@@ -98,16 +86,12 @@ func TestLoadConfigEnvOverridesFile(t *testing.T) {
 	yaml := `
 telegram:
   token: "file-token"
-runner:
-  process:
-    binary: "file-pi"
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("ANNA_TELEGRAM_TOKEN", "env-token")
-	t.Setenv("ANNA_PI_BINARY", "")
 
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
@@ -117,10 +101,6 @@ runner:
 	// Env var overrides file value.
 	if cfg.Telegram.Token != "env-token" {
 		t.Errorf("Telegram.Token = %q, want %q", cfg.Telegram.Token, "env-token")
-	}
-	// Empty env var does NOT override.
-	if cfg.Runner.Process.Binary != "file-pi" {
-		t.Errorf("Runner.Process.Binary = %q, want %q", cfg.Runner.Process.Binary, "file-pi")
 	}
 }
 
@@ -172,8 +152,8 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.Runner.Process.Binary == "" {
-		t.Error("Runner.Process.Binary should have a default")
+	if cfg.Runner.Type == "" {
+		t.Error("Runner.Type should have a default")
 	}
 }
 

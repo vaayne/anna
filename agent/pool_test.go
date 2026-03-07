@@ -3,14 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/vaayne/anna/agent/runner"
-	"github.com/vaayne/anna/agent/runner/pi"
 )
 
 // mockRunner implements runner.Runner and io.Closer for pool tests.
@@ -284,23 +281,8 @@ func TestPoolClose(t *testing.T) {
 	}
 }
 
-// writeMockBinary creates a shell script that acts as a mock Pi process.
-func writeMockBinary(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	bin := dir + "/mock-pi"
-	script := "#!/bin/sh\nexec cat\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return bin
-}
-
 func TestPoolReapIdle(t *testing.T) {
-	bin := writeMockBinary(t)
-	factory := func(ctx context.Context) (runner.Runner, error) {
-		return pi.New(ctx, bin, "")
-	}
+	factory, _ := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory, WithIdleTimeout(1*time.Millisecond))
 	defer pool.Close()
 
@@ -336,31 +318,29 @@ func TestPoolReapIdle(t *testing.T) {
 		t.Error("runner should be nil after reap")
 	}
 
-	pr := r.(*pi.Runner)
-	if pr.Alive() {
+	mr := r.(*mockRunner)
+	if mr.Alive() {
 		t.Error("idle runner should not be alive after reap")
 	}
 }
 
 func TestPoolReapDead(t *testing.T) {
-	bin := writeMockBinary(t)
-	factory := func(ctx context.Context) (runner.Runner, error) {
-		return pi.New(ctx, bin, "")
-	}
+	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory, WithIdleTimeout(10*time.Minute))
 	defer pool.Close()
 
 	ctx := context.Background()
 
-	// Create a session with a real pi.Runner.
-	_, r, err := pool.getOrCreateRunner(ctx, "dead-sess")
+	// Create a session with a mockRunner.
+	_, _, err := pool.getOrCreateRunner(ctx, "dead-sess")
 	if err != nil {
 		t.Fatalf("getOrCreateRunner: %v", err)
 	}
 
-	// Kill the runner.
-	r.(*pi.Runner).Close()
-	time.Sleep(100 * time.Millisecond)
+	// Kill the runner by marking it dead.
+	(*runners)[0].mu.Lock()
+	(*runners)[0].alive = false
+	(*runners)[0].mu.Unlock()
 
 	pool.reap()
 
@@ -402,32 +382,23 @@ func TestPoolStartReaperCancels(t *testing.T) {
 }
 
 func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
-	// Use real pi.Runner to test dead-runner replacement in getOrCreateRunner.
-	bin := writeMockBinary(t)
-	factory := func(ctx context.Context) (runner.Runner, error) {
-		return pi.New(ctx, bin, "")
-	}
+	// Use mockRunner to test dead-runner replacement in getOrCreateRunner.
+	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
 	defer pool.Close()
 
 	ctx := context.Background()
 
 	// Create a session with a runner.
-	pool.mu.Lock()
-	pool.sessions["sess"] = &Session{}
-	pool.mu.Unlock()
-
-	// Use pool to create the runner via getOrCreateRunner.
-	_, runnerRef, err := pool.getOrCreateRunner(ctx, "sess")
+	_, _, err := pool.getOrCreateRunner(ctx, "sess")
 	if err != nil {
 		t.Fatalf("getOrCreateRunner: %v", err)
 	}
 
-	// Kill the runner.
-	if closer, ok := runnerRef.(io.Closer); ok {
-		closer.Close()
-	}
-	time.Sleep(100 * time.Millisecond)
+	// Kill the runner by marking it dead.
+	(*runners)[0].mu.Lock()
+	(*runners)[0].alive = false
+	(*runners)[0].mu.Unlock()
 
 	// Next call should create a new runner.
 	_, runner2, err := pool.getOrCreateRunner(ctx, "sess")
@@ -435,8 +406,11 @@ func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
 		t.Fatalf("getOrCreateRunner after death: %v", err)
 	}
 
-	if runner2 == runnerRef {
+	if runner2 == (*runners)[0] {
 		t.Error("dead runner should be replaced with a new one")
+	}
+	if len(*runners) != 2 {
+		t.Errorf("expected 2 runners created, got %d", len(*runners))
 	}
 }
 
