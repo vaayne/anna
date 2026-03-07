@@ -52,12 +52,13 @@ Top-level package (sibling to `agent/`, `channel/`). Three files:
 
 ```go
 type Job struct {
-    ID        string    // short UUID
-    Name      string    // human-readable name
-    Schedule  Schedule  // cron or interval
-    Message   string    // prompt sent to agent
-    Enabled   bool
-    CreatedAt time.Time
+    ID          string    // short UUID
+    Name        string    // human-readable name
+    Schedule    Schedule  // cron, interval, or one-time
+    Message     string    // prompt sent to agent
+    SessionMode string    // "reuse" (default) or "new"
+    Enabled     bool
+    CreatedAt   time.Time
 }
 ```
 
@@ -84,7 +85,10 @@ Behavior details:
 
 ### Session Model
 
-Each cron job gets a dedicated session with ID `cron:{job.ID}`. This means the agent retains conversational memory across scheduled runs of the same job.
+Each cron job's session behavior is controlled by its `session_mode`:
+
+- **`reuse`** (default) — the job gets a stable session ID `cron:{job.ID}`. The agent retains conversational memory across scheduled runs of the same job.
+- **`new`** — each execution gets a unique session ID `cron:{job.ID}:{timestamp}`. The agent starts fresh every time with no prior context.
 
 ## Configuration
 
@@ -112,6 +116,7 @@ Parameters:
 - `cron` — cron expression (use this OR `every` OR `at`)
 - `every` — Go duration (use this OR `cron` OR `at`)
 - `at` — RFC3339 timestamp for a one-time job (use this OR `cron` OR `every`)
+- `session_mode` — `"reuse"` (default) keeps conversation history; `"new"` starts fresh each execution
 
 Example (recurring): _"Set a reminder every 30 minutes to check my email"_ triggers:
 ```json
@@ -155,6 +160,8 @@ Tests are in `cron/cron_test.go` covering:
 - One-time job fires exactly once and auto-removes
 - One-time job with past timestamp skipped on restart
 - Tool interface for one-time jobs
+- Session mode default, reuse, new, and invalid validation
+- Session mode via tool interface
 - Full tool interface (add/list/remove via `Execute`)
 - Error cases (invalid action, missing ID)
 

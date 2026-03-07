@@ -38,6 +38,11 @@ var cronInputSchema = func() map[string]any {
       "type": "string",
       "description": "RFC3339 timestamp for a one-time job, e.g. '2024-01-15T14:30:00+08:00' (use at OR cron OR every, not combined)"
     },
+    "session_mode": {
+      "type": "string",
+      "enum": ["reuse", "new"],
+      "description": "Session behavior: 'reuse' (default) keeps conversation history across executions, 'new' starts a fresh session each time"
+    },
     "id": {
       "type": "string",
       "description": "Job ID (required for remove)"
@@ -89,8 +94,9 @@ func (t *CronTool) add(args map[string]any) (string, error) {
 	every, _ := args["every"].(string)
 
 	at, _ := args["at"].(string)
+	sessionMode, _ := args["session_mode"].(string)
 	sched := Schedule{Cron: cronExpr, Every: every, At: at}
-	job, err := t.service.AddJob(name, message, sched)
+	job, err := t.service.AddJob(name, message, sched, sessionMode)
 	if err != nil {
 		return "", err
 	}

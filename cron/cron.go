@@ -92,7 +92,8 @@ func (s *Service) Stop() error {
 }
 
 // AddJob creates, persists, and schedules a new job.
-func (s *Service) AddJob(name, message string, sched Schedule) (Job, error) {
+// sessionMode controls session reuse: "reuse" (default) or "new".
+func (s *Service) AddJob(name, message string, sched Schedule, sessionMode string) (Job, error) {
 	if name == "" {
 		return Job{}, fmt.Errorf("name is required")
 	}
@@ -132,13 +133,21 @@ func (s *Service) AddJob(name, message string, sched Schedule) (Job, error) {
 		}
 	}
 
+	if sessionMode == "" {
+		sessionMode = SessionReuse
+	}
+	if sessionMode != SessionReuse && sessionMode != SessionNew {
+		return Job{}, fmt.Errorf("invalid session_mode %q: must be %q or %q", sessionMode, SessionReuse, SessionNew)
+	}
+
 	job := Job{
-		ID:        uuid.New().String()[:8],
-		Name:      name,
-		Schedule:  sched,
-		Message:   message,
-		Enabled:   true,
-		CreatedAt: time.Now(),
+		ID:          uuid.New().String()[:8],
+		Name:        name,
+		Schedule:    sched,
+		Message:     message,
+		SessionMode: sessionMode,
+		Enabled:     true,
+		CreatedAt:   time.Now(),
 	}
 
 	s.mu.Lock()
