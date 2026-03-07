@@ -132,16 +132,38 @@ In `.agents/config.yaml` under `runner`:
 ```yaml
 runner:
   compaction:
-    max_tokens: 80000   # auto-compact threshold (0 = disabled)
+    max_tokens: 80000   # auto-compact threshold (0 = default 80k, -1 = disabled)
     keep_tail: 20       # recent messages to preserve verbatim
 ```
 
 Both fields have defaults applied via `CompactionConfig.WithDefaults()`:
-- `max_tokens`: 80,000
+- `max_tokens`: 80,000 (when 0 or omitted; set to `-1` to disable)
 - `keep_tail`: 20
 
-Setting `max_tokens: 0` in config disables automatic compaction; `/compact`
+Setting `max_tokens: -1` in config disables automatic compaction; `/compact`
 still works manually.
+
+## Stateful Runners
+
+Some runners (like the Pi subprocess) maintain their own context in-process and
+ignore the `history` parameter passed to `Chat()`. For these runners, killing
+the process after compaction would destroy live context for no benefit — the new
+process can't replay the compacted history anyway.
+
+Runners signal this by implementing the optional `runner.Stateful` interface:
+
+```go
+type Stateful interface {
+    Stateful() bool
+}
+```
+
+When a runner is stateful, `CompactSession()` skips the runner kill. The
+compacted history is still written to disk (for crash recovery and session
+restore), but the live runner keeps its in-process context intact.
+
+For stateless runners that rebuild context from history, the runner is killed as
+before so the next `Chat()` call starts fresh with the compacted history.
 
 ## Session Loading
 

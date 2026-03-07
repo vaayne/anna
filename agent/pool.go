@@ -242,13 +242,18 @@ func (p *Pool) CompactSession(ctx context.Context, sessionID string) (string, er
 	sess.Events = newEvents
 	p.mu.Unlock()
 
-	// Kill the runner so it restarts with clean context on next Chat().
-	if closer, ok := r.(io.Closer); ok {
-		_ = closer.Close()
+	// Kill the runner so it restarts with clean context on next Chat() —
+	// unless the runner is stateful (maintains its own in-process context),
+	// in which case killing it would lose context for no benefit. The
+	// compacted history is persisted to disk for crash recovery either way.
+	if sf, ok := r.(runner.Stateful); !ok || !sf.Stateful() {
+		if closer, ok := r.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		p.mu.Lock()
+		sess.Runner = nil
+		p.mu.Unlock()
 	}
-	p.mu.Lock()
-	sess.Runner = nil
-	p.mu.Unlock()
 
 	p.log.Info("compaction complete", "session_id", sessionID,
 		"summary_len", len(summary), "new_events", len(newEvents))
