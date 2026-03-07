@@ -14,6 +14,7 @@ import (
 	"github.com/yuin/goldmark/parser"
 
 	"github.com/vaayne/anna/agent"
+	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/channel"
 	tele "gopkg.in/telebot.v4"
 )
@@ -31,13 +32,31 @@ const telegramMaxMessageLen = 4000
 // streamEditInterval controls how often we edit the message during streaming.
 const streamEditInterval = time.Second
 
+// typingInterval is how often we re-send the typing indicator. Telegram
+// expires typing status after ~5 seconds, so we resend every 4s.
+const typingInterval = 4 * time.Second
+
 // typingCursor is appended to the message while streaming to indicate activity.
 const typingCursor = " \u258D"
+
+// callbackModelPrefix is the prefix for model-selection callback data.
+const callbackModelPrefix = "model:"
+
+// toolEmoji maps known tool names to display emoji.
+var toolEmoji = map[string]string{
+	"bash":    "⚡",
+	"read":    "📖",
+	"write":   "✏️",
+	"edit":    "🔧",
+	"search":  "🔍",
+	"default": "🔧",
+}
 
 var log = slog.With("component", "telegram")
 
 func botCommands() []tele.Command {
 	return []tele.Command{
+		{Text: "start", Description: "Welcome & help"},
 		{Text: "new", Description: "Start a new session"},
 		{Text: "compact", Description: "Compact session history"},
 		{Text: "model", Description: "List or switch models"},
@@ -47,6 +66,15 @@ func botCommands() []tele.Command {
 func registerCommands(bot *tele.Bot) error {
 	return bot.SetCommands(botCommands())
 }
+
+const welcomeMessage = `👋 Hi! I'm Anna — your local AI assistant.
+
+*Commands*
+/new — Start a fresh session
+/compact — Compress conversation history
+/model — Switch between models
+
+Just send me a message to get started.`
 
 // Run starts a Telegram bot using long polling. It blocks until ctx is
 // cancelled.
@@ -66,6 +94,10 @@ func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFu
 	if err := registerCommands(bot); err != nil {
 		log.Warn("register telegram commands failed", "error", err)
 	}
+
+	bot.Handle("/start", func(c tele.Context) error {
+		return c.Send(welcomeMessage, tele.ModeMarkdown)
+	})
 
 	bot.Handle("/new", func(c tele.Context) error {
 		sessionID := strconv.FormatInt(c.Chat().ID, 10)
@@ -93,43 +125,31 @@ func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFu
 		args := strings.TrimSpace(c.Message().Payload)
 		models := listFn()
 
-		// No argument: list available models.
+		// No argument: show inline keyboard.
 		if args == "" {
-			if len(models) == 0 {
-				return c.Send("No models configured.")
-			}
-			active, ok := chatModels[c.Chat().ID]
-			var sb strings.Builder
-			sb.WriteString("Available models:\n\n")
-			for i, m := range models {
-				label := fmt.Sprintf("%s/%s", m.Provider, m.Model)
-				if ok && m.Provider == active.Provider && m.Model == active.Model {
-					label += " (current)"
-				}
-				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, label))
-			}
-			sb.WriteString("\nUse /model <number> to switch.")
-			return c.Send(sb.String())
+			return sendModelKeyboard(c, models, chatModels)
 		}
 
 		// Argument provided: switch to that model.
-		idx, err := strconv.Atoi(args)
-		if err != nil || idx < 1 || idx > len(models) {
-			return c.Send(fmt.Sprintf("Invalid selection. Use a number between 1 and %d.", len(models)))
+		return switchModel(c, pool, chatModels, models, switchFn, args)
+	})
+
+	// Handle inline keyboard callbacks for model selection.
+	bot.Handle(tele.OnCallback, func(c tele.Context) error {
+		data := c.Data()
+		if !strings.HasPrefix(data, callbackModelPrefix) {
+			return c.Respond()
 		}
-		selected := models[idx-1]
-		if switchFn != nil {
-			if err := switchFn(selected.Provider, selected.Model); err != nil {
-				return c.Send(fmt.Sprintf("Error switching model: %v", err))
-			}
+
+		idxStr := strings.TrimPrefix(data, callbackModelPrefix)
+		models := listFn()
+		if err := switchModel(c, pool, chatModels, models, switchFn, idxStr); err != nil {
+			return err
 		}
-		sessionID := strconv.FormatInt(c.Chat().ID, 10)
-		if err := pool.Reset(sessionID); err != nil {
-			log.Error("reset session after model switch failed", "session_id", sessionID, "error", err)
-		}
-		chatModels[c.Chat().ID] = selected
-		log.Info("model switched", "session_id", sessionID, "provider", selected.Provider, "model", selected.Model)
-		return c.Send(fmt.Sprintf("Switched to %s/%s. Session reset.", selected.Provider, selected.Model))
+
+		// Acknowledge the callback and remove the keyboard.
+		_ = c.Respond()
+		return c.Delete()
 	})
 
 	bot.Handle(tele.OnText, func(c tele.Context) error {
@@ -139,9 +159,13 @@ func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFu
 
 		log.Debug("message received", "chat_id", chatID, "text_len", len(text))
 
-		_ = c.Notify(tele.Typing)
+		// Start persistent typing indicator.
+		typingCtx, stopTyping := context.WithCancel(ctx)
+		go keepTyping(typingCtx, c)
 
 		response, streamErr := streamResponse(bot, c, pool, ctx, sessionID, text)
+
+		stopTyping()
 
 		if streamErr != nil {
 			log.Error("agent stream error", "session_id", sessionID, "error", streamErr)
@@ -173,6 +197,90 @@ func Run(ctx context.Context, token string, pool *agent.Pool, listFn ModelListFu
 	return ctx.Err()
 }
 
+// keepTyping sends the typing indicator repeatedly until ctx is cancelled.
+func keepTyping(ctx context.Context, c tele.Context) {
+	_ = c.Notify(tele.Typing)
+	ticker := time.NewTicker(typingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = c.Notify(tele.Typing)
+		}
+	}
+}
+
+// sendModelKeyboard sends an inline keyboard with model selection buttons.
+func sendModelKeyboard(c tele.Context, models []ModelOption, chatModels map[int64]ModelOption) error {
+	if len(models) == 0 {
+		return c.Send("No models configured.")
+	}
+
+	active, hasActive := chatModels[c.Chat().ID]
+	markup := &tele.ReplyMarkup{}
+
+	var rows []tele.Row
+	for i, m := range models {
+		label := fmt.Sprintf("%s/%s", m.Provider, m.Model)
+		if hasActive && m.Provider == active.Provider && m.Model == active.Model {
+			label = "✅ " + label
+		}
+		btn := markup.Data(label, "model_select", fmt.Sprintf("model:%d", i+1))
+		rows = append(rows, markup.Row(btn))
+	}
+
+	markup.Inline(rows...)
+	return c.Send("Select a model:", markup)
+}
+
+// switchModel handles model switching by index string. Used by both /model
+// command and inline keyboard callback.
+func switchModel(c tele.Context, pool *agent.Pool, chatModels map[int64]ModelOption, models []ModelOption, switchFn channel.ModelSwitchFunc, idxStr string) error {
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 1 || idx > len(models) {
+		return c.Send(fmt.Sprintf("Invalid selection. Use a number between 1 and %d.", len(models)))
+	}
+	selected := models[idx-1]
+	if switchFn != nil {
+		if err := switchFn(selected.Provider, selected.Model); err != nil {
+			return c.Send(fmt.Sprintf("Error switching model: %v", err))
+		}
+	}
+	sessionID := strconv.FormatInt(c.Chat().ID, 10)
+	if err := pool.Reset(sessionID); err != nil {
+		log.Error("reset session after model switch failed", "session_id", sessionID, "error", err)
+	}
+	chatModels[c.Chat().ID] = selected
+	log.Info("model switched", "session_id", sessionID, "provider", selected.Provider, "model", selected.Model)
+	return c.Send(fmt.Sprintf("Switched to %s/%s. Session reset.", selected.Provider, selected.Model))
+}
+
+// toolLine returns a short status line for a tool-use event.
+func toolLine(t *runner.ToolUseEvent) string {
+	emoji, ok := toolEmoji[t.Tool]
+	if !ok {
+		emoji = toolEmoji["default"]
+	}
+	switch t.Status {
+	case "running":
+		input := t.Input
+		if len(input) > 60 {
+			input = input[:57] + "..."
+		}
+		if input != "" {
+			return fmt.Sprintf("%s %s: %s", emoji, t.Tool, input)
+		}
+		return fmt.Sprintf("%s %s", emoji, t.Tool)
+	case "error":
+		return fmt.Sprintf("❌ %s failed", t.Tool)
+	default:
+		return ""
+	}
+}
+
 // streamResponse consumes the agent stream, sending and editing a Telegram
 // message in place as tokens arrive. It returns the final accumulated text
 // and any stream error. The sent message (if any) is deleted before returning
@@ -181,6 +289,7 @@ func streamResponse(bot *tele.Bot, c tele.Context, pool *agent.Pool, ctx context
 	var sb strings.Builder
 	var sentMsg *tele.Message
 	var streamErr error
+	var currentTool string
 	lastEdit := time.Time{}
 
 	for evt := range pool.Chat(ctx, sessionID, prompt) {
@@ -188,6 +297,19 @@ func streamResponse(bot *tele.Bot, c tele.Context, pool *agent.Pool, ctx context
 			streamErr = evt.Err
 			break
 		}
+
+		// Track tool-use events for display.
+		if evt.ToolUse != nil {
+			line := toolLine(evt.ToolUse)
+			if line != "" {
+				currentTool = line
+			} else {
+				currentTool = ""
+			}
+			// Force an immediate update to show tool status.
+			lastEdit = time.Time{}
+		}
+
 		sb.WriteString(evt.Text)
 
 		now := time.Now()
@@ -196,25 +318,31 @@ func streamResponse(bot *tele.Bot, c tele.Context, pool *agent.Pool, ctx context
 		}
 
 		current := sb.String()
-		if strings.TrimSpace(current) == "" {
+		// Show tool status even if no text yet.
+		if strings.TrimSpace(current) == "" && currentTool == "" {
 			continue
 		}
 
-		// Truncate display text if it exceeds the message limit.
+		// Build display: text + tool indicator + cursor.
 		display := current
-		if len(display)+len(typingCursor) > telegramMaxMessageLen {
-			display = display[:telegramMaxMessageLen-len(typingCursor)-3] + "..."
+		suffix := typingCursor
+		if currentTool != "" {
+			suffix = "\n\n_" + currentTool + "_" + typingCursor
+		}
+
+		if len(display)+len(suffix) > telegramMaxMessageLen {
+			display = display[:telegramMaxMessageLen-len(suffix)-3] + "..."
 		}
 
 		if sentMsg == nil {
-			msg, err := bot.Send(c.Chat(), display+typingCursor)
+			msg, err := bot.Send(c.Chat(), display+suffix)
 			if err != nil {
 				log.Warn("stream send failed", "error", err)
 			} else {
 				sentMsg = msg
 			}
 		} else {
-			if _, err := bot.Edit(sentMsg, display+typingCursor); err != nil {
+			if _, err := bot.Edit(sentMsg, display+suffix); err != nil {
 				log.Warn("stream edit failed", "error", err)
 			}
 		}
