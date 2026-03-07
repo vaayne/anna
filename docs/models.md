@@ -2,23 +2,19 @@
 
 ## Tiered Models
 
-anna supports three model tiers for different workloads:
+anna supports two model tiers for different workloads:
 
 | Tier | Use Case |
 |------|----------|
 | `strong` | Heavy reasoning, complex tasks |
-| `worker` | Standard tasks |
 | `fast` | Quick responses, simple queries |
 
-Fallback chain: `fast` -> `worker` -> `strong` -> `model` (top-level default).
+Each tier falls back independently to `model` (top-level default) when not set.
 
 ```yaml
 model: claude-sonnet-4-6
-
-models:
-  strong: claude-sonnet-4-6
-  worker: claude-haiku-4-5
-  fast: claude-haiku-4-5
+model_strong: claude-opus-4-6
+model_fast: claude-haiku-4-5
 ```
 
 ## CLI Commands
@@ -34,7 +30,7 @@ anna models search <q>  # Search models by name
 
 ### Model Cache
 
-`anna models update` queries all configured provider APIs and saves results to `.agents/models.json`. The cache is used by `list`, `search`, and the Telegram model picker.
+`anna models update` queries all configured provider APIs and saves results to `~/.anna/cache/models.json`. The cache is used by `list`, `search`, and the Telegram model picker.
 
 If no cache exists, only models explicitly listed in the config are shown.
 

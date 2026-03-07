@@ -38,7 +38,7 @@ agent/
     go/
       runner.go                     Go runner: native LLM provider calls
       prompt.go                     System prompt builder (memory, tools, context)
-      skill.go                      Skill loading from .agents/skills/
+      skill.go                      Skill loading from ~/.anna/workspace/skills/
       tool/                         Built-in tools
         read.go                     Read file contents
         bash.go                     Execute shell commands

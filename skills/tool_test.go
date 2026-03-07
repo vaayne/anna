@@ -539,7 +539,7 @@ description: A great skill
 
 	// Create tool with a fake cloner that just sets up the cache
 	tool := &SkillsTool{
-		agentsDir: filepath.Join(projectDir, ".agents"),
+		workspace: filepath.Join(projectDir, ".agents"),
 		cwd:       projectDir,
 		cloner: func(_ context.Context, _, _, _, cacheDir string) error {
 			// Copy our fake repo into the cache dir

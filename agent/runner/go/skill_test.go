@@ -145,38 +145,38 @@ func TestLoadSkillsFallbackName(t *testing.T) {
 }
 
 func TestLoadSkillsDedup(t *testing.T) {
-	// Same skill name in both agentsDir (project) and cwd/.agents (project alt) — first wins.
-	agentsDir := t.TempDir()
+	// Same skill name in project .agents/ and workspace — project wins (highest priority).
+	wsDir := t.TempDir()
 	projectDir := t.TempDir()
 
-	// agentsDir/skills/dupe-skill (loaded as "project" source)
-	if err := os.MkdirAll(filepath.Join(agentsDir, "skills", "dupe-skill"), 0o755); err != nil {
+	// workspace/skills/dupe-skill
+	if err := os.MkdirAll(filepath.Join(wsDir, "skills", "dupe-skill"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(agentsDir, "skills", "dupe-skill", "SKILL.md"),
-		[]byte("---\nname: dupe-skill\ndescription: AgentsDir version\n---\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "skills", "dupe-skill", "SKILL.md"),
+		[]byte("---\nname: dupe-skill\ndescription: Workspace version\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// cwd/.agents/skills/dupe-skill (would also be "project" source)
+	// cwd/.agents/skills/dupe-skill (project-level, highest priority)
 	projAgents := filepath.Join(projectDir, ".agents")
 	if err := os.MkdirAll(filepath.Join(projAgents, "skills", "dupe-skill"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(projAgents, "skills", "dupe-skill", "SKILL.md"),
-		[]byte("---\nname: dupe-skill\ndescription: CWD version\n---\n"), 0o644); err != nil {
+		[]byte("---\nname: dupe-skill\ndescription: Project version\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	skills := loadSkills("/nonexistent/home", agentsDir, projectDir)
+	skills := loadSkills("/nonexistent/home", wsDir, projectDir)
 
 	count := 0
 	for _, s := range skills {
 		if s.Name == "dupe-skill" {
 			count++
-			// agentsDir is scanned before cwd, so it wins
-			if s.Description != "AgentsDir version" {
-				t.Errorf("expected agentsDir version to win, got description %q", s.Description)
+			// project .agents/ is scanned first, so it wins
+			if s.Description != "Project version" {
+				t.Errorf("expected project version to win, got description %q", s.Description)
 			}
 		}
 	}
@@ -274,22 +274,22 @@ func TestValidateSkillName(t *testing.T) {
 	}
 }
 
-func TestLoadSkillsUserLevelPriority(t *testing.T) {
-	homeDir := t.TempDir()
-	agentsDir := t.TempDir()
+func TestLoadSkillsProjectPriority(t *testing.T) {
+	wsDir := t.TempDir()
+	projectDir := t.TempDir()
 
-	// User-level skill: homeDir/.agents/skills/my-skill
-	userSkill := filepath.Join(homeDir, ".agents", "skills", "my-skill")
-	if err := os.MkdirAll(userSkill, 0o755); err != nil {
+	// Workspace skill: wsDir/skills/my-skill
+	wsSkill := filepath.Join(wsDir, "skills", "my-skill")
+	if err := os.MkdirAll(wsSkill, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"),
-		[]byte("---\nname: my-skill\ndescription: User version\n---\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsSkill, "SKILL.md"),
+		[]byte("---\nname: my-skill\ndescription: Workspace version\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Project-level skill with same name: agentsDir/skills/my-skill
-	projSkill := filepath.Join(agentsDir, "skills", "my-skill")
+	// Project-level skill with same name: projectDir/.agents/skills/my-skill
+	projSkill := filepath.Join(projectDir, ".agents", "skills", "my-skill")
 	if err := os.MkdirAll(projSkill, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -298,17 +298,17 @@ func TestLoadSkillsUserLevelPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	skills := loadSkills(homeDir, agentsDir, "")
+	skills := loadSkills("/nonexistent/home", wsDir, projectDir)
 
 	count := 0
 	for _, s := range skills {
 		if s.Name == "my-skill" {
 			count++
-			if s.Source != "user" {
-				t.Errorf("expected user-level to win, got source %q", s.Source)
+			if s.Source != "project" {
+				t.Errorf("expected project-level to win, got source %q", s.Source)
 			}
-			if s.Description != "User version" {
-				t.Errorf("expected user description, got %q", s.Description)
+			if s.Description != "Project version" {
+				t.Errorf("expected project description, got %q", s.Description)
 			}
 		}
 	}
@@ -326,11 +326,11 @@ func TestLoadSkillsNonexistentDir(t *testing.T) {
 
 func TestBuildSystemPromptIncludesSkills(t *testing.T) {
 	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
+	wsDir := filepath.Join(dir, "workspace")
 	projectDir := filepath.Join(dir, "project")
 
-	// Create a skill in the agents dir
-	skillDir := filepath.Join(agentsDir, "skills", "test-skill")
+	// Create a skill in the workspace dir
+	skillDir := filepath.Join(wsDir, "skills", "test-skill")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -340,8 +340,8 @@ func TestBuildSystemPromptIncludesSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	memStore := memory.NewStore(filepath.Join(agentsDir, "memory"))
-	prompt := BuildSystemPrompt(memStore, agentsDir, projectDir)
+	memStore := memory.NewStore(filepath.Join(wsDir, "memory"))
+	prompt := BuildSystemPrompt(memStore, wsDir, projectDir)
 	if !strings.Contains(prompt, "<available_skills>") {
 		t.Error("expected skills section in system prompt")
 	}
@@ -437,7 +437,7 @@ func TestLoadProjectContextFiles(t *testing.T) {
 
 func TestBuildSystemPromptIncludesContextFiles(t *testing.T) {
 	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
+	wsDir := filepath.Join(dir, "workspace")
 	projectDir := filepath.Join(dir, "project")
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -448,13 +448,99 @@ func TestBuildSystemPromptIncludesContextFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	memStore := memory.NewStore(filepath.Join(agentsDir, "memory"))
-	prompt := BuildSystemPrompt(memStore, agentsDir, projectDir)
+	memStore := memory.NewStore(filepath.Join(wsDir, "memory"))
+	prompt := BuildSystemPrompt(memStore, wsDir, projectDir)
 
 	if !strings.Contains(prompt, "# Project Context") {
 		t.Error("expected Project Context section in system prompt")
 	}
 	if !strings.Contains(prompt, "Always use snake_case.") {
 		t.Error("expected AGENTS.md content in system prompt")
+	}
+}
+
+func TestBuildSystemPromptProjectOverrides(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, "workspace")
+	projectDir := filepath.Join(dir, "project")
+	projectAgents := filepath.Join(projectDir, ".agents")
+
+	// Create workspace memory with SOUL.md
+	memDir := filepath.Join(wsDir, "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "SOUL.md"),
+		[]byte("Workspace soul"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create project-level .agents/SOUL.md (should override workspace)
+	if err := os.MkdirAll(projectAgents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectAgents, "SOUL.md"),
+		[]byte("Project soul override"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	memStore := memory.NewStore(memDir)
+	prompt := BuildSystemPrompt(memStore, wsDir, projectDir)
+
+	if !strings.Contains(prompt, "Project soul override") {
+		t.Error("expected project-level SOUL.md to override workspace SOUL.md")
+	}
+	if strings.Contains(prompt, "Workspace soul") {
+		t.Error("workspace SOUL.md should be overridden by project-level")
+	}
+}
+
+func TestLoadSkillsThreeTierPriority(t *testing.T) {
+	homeDir := t.TempDir()
+	wsDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	mkSkill := func(dir, name, desc string) {
+		sd := filepath.Join(dir, name)
+		if err := os.MkdirAll(sd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sd, "SKILL.md"),
+			[]byte("---\nname: "+name+"\ndescription: "+desc+"\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Common skill (~/.agents/skills/)
+	mkSkill(filepath.Join(homeDir, ".agents", "skills"), "shared-skill", "Common version")
+	mkSkill(filepath.Join(homeDir, ".agents", "skills"), "common-only", "Only in common")
+
+	// Workspace skill
+	mkSkill(filepath.Join(wsDir, "skills"), "shared-skill", "Workspace version")
+	mkSkill(filepath.Join(wsDir, "skills"), "ws-only", "Only in workspace")
+
+	// Project skill (.agents/skills/)
+	mkSkill(filepath.Join(projectDir, ".agents", "skills"), "shared-skill", "Project version")
+	mkSkill(filepath.Join(projectDir, ".agents", "skills"), "proj-only", "Only in project")
+
+	skills := loadSkills(homeDir, wsDir, projectDir)
+
+	byName := map[string]Skill{}
+	for _, s := range skills {
+		byName[s.Name] = s
+	}
+
+	// shared-skill: project wins
+	if s, ok := byName["shared-skill"]; !ok {
+		t.Error("expected shared-skill")
+	} else if s.Description != "Project version" {
+		t.Errorf("shared-skill: expected Project version, got %q", s.Description)
+	}
+
+	// All three unique skills present
+	for _, name := range []string{"common-only", "ws-only", "proj-only"} {
+		if _, ok := byName[name]; !ok {
+			t.Errorf("expected %s to be loaded", name)
+		}
 	}
 }

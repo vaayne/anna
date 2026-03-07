@@ -144,17 +144,17 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	}
 
 	// Memory store + tool — always available.
-	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
+	memStore := memory.NewStore(cfg.MemoryPath())
 	extraTools = append(extraTools, memory.NewTool(memStore))
 
 	// Skills tool — always available.
 	cwd, _ := os.Getwd()
-	extraTools = append(extraTools, skills.NewTool(configDir(), cwd))
+	extraTools = append(extraTools, skills.NewTool(cfg.Workspace, cwd))
 
 	// Notification dispatcher + tool — backends are registered later in
 	// runGateway(). Only expose the tool in gateway mode where backends exist.
 	dispatcher := channel.NewDispatcher()
-	if gateway && cfg.Telegram.Token != "" {
+	if gateway && cfg.Channels.Telegram.Token != "" {
 		extraTools = append(extraTools, channel.NewNotifyTool(dispatcher))
 	}
 
@@ -170,13 +170,14 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 		agent.WithDefaultModel(cfg.resolveModelID(ModelTierStrong)),
 		agent.WithFastModel(cfg.resolveModelID(ModelTierFast)),
 	}
-	if cfg.Sessions != "" {
-		s, err := store.NewFileStore(cfg.Sessions, cwd)
+	sessionsPath := cfg.SessionsPath()
+	if sessionsPath != "" {
+		s, err := store.NewFileStore(sessionsPath, cwd)
 		if err != nil {
 			return nil, fmt.Errorf("create session store: %w", err)
 		}
 		opts = append(opts, agent.WithStore(s))
-		slog.Info("session persistence enabled", "dir", cfg.Sessions)
+		slog.Info("session persistence enabled", "dir", sessionsPath)
 	}
 
 	pool := agent.NewPool(factory, opts...)
@@ -219,7 +220,7 @@ func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Too
 				API:         cfg.Provider,
 				Model:       model,
 				APIKey:      providerCfg.APIKey,
-				AgentsDir:   configDir(),
+				Workspace:   cfg.Workspace,
 				MemoryStore: memStore,
 				BaseURL:     providerCfg.BaseURL,
 				ExtraTools:  extraTools,
@@ -242,7 +243,7 @@ func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraT
 		}
 		pool.SetFactory(factory)
 		pool.SetDefaultModel(model)
-		if err := SaveModelSelection(provider, model); err != nil {
+		if err := SaveModelSelection(cfg.Workspace, provider, model); err != nil {
 			slog.Warn("failed to persist model selection", "error", err)
 		}
 		return nil
@@ -250,7 +251,7 @@ func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraT
 }
 
 func setupLogFile() error {
-	logPath := filepath.Join(configDir(), "anna.log")
+	logPath := filepath.Join(annaHome(), "anna.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return err
 	}
@@ -267,25 +268,26 @@ func setupLogFile() error {
 func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFunc, switchFn channel.ModelSwitchFunc) error {
 	started := 0
 
-	if s.cfg.Telegram.Token != "" {
+	tg := s.cfg.Channels.Telegram
+	if tg.Token != "" {
 		started++
 		slog.Info("starting telegram bot")
 
 		tgBot, err := telegram.New(telegram.Config{
-			Token:      s.cfg.Telegram.Token,
-			NotifyChat: s.cfg.Telegram.NotifyChat,
-			ChannelID:  s.cfg.Telegram.ChannelID,
-			GroupMode:  s.cfg.Telegram.GroupMode,
-			AllowedIDs: s.cfg.Telegram.AllowedIDs,
+			Token:      tg.Token,
+			NotifyChat: tg.NotifyChat,
+			ChannelID:  tg.ChannelID,
+			GroupMode:  tg.GroupMode,
+			AllowedIDs: tg.AllowedIDs,
 		}, s.pool, listFn, switchFn)
 		if err != nil {
 			return fmt.Errorf("create telegram bot: %w", err)
 		}
 
 		// Register Telegram as a notification backend.
-		defaultChat := s.cfg.Telegram.NotifyChat
+		defaultChat := tg.NotifyChat
 		if defaultChat == "" {
-			defaultChat = s.cfg.Telegram.ChannelID
+			defaultChat = tg.ChannelID
 		}
 		s.notifier.Register(tgBot, defaultChat)
 
@@ -305,7 +307,7 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 	}
 
 	if started == 0 {
-		return fmt.Errorf("no gateway services configured. Check .agents/config.yaml")
+		return fmt.Errorf("no gateway services configured. Check %s", configPath())
 	}
 
 	slog.Info("gateway stopped")

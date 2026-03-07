@@ -86,8 +86,11 @@ func skillsInstallCommand() *ucli.Command {
 				return fmt.Errorf("usage: anna skills install <owner/repo@skill-name>")
 			}
 
-			cwd, _ := os.Getwd()
-			targetDir := filepath.Join(cwd, ".agents", "skills")
+			cfg, err := LoadConfig()
+			if err != nil {
+				return err
+			}
+			targetDir := cfg.SkillsPath()
 
 			fmt.Fprintf(os.Stderr, "Installing from %s...\n", source)
 
@@ -122,8 +125,12 @@ func skillsListCommand() *ucli.Command {
 }
 
 func skillsListAction() error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
 	cwd, _ := os.Getwd()
-	loaded := gorunner.LoadSkills(configDir(), cwd)
+	loaded := gorunner.LoadSkills(cfg.Workspace, cwd)
 	if len(loaded) == 0 {
 		fmt.Println("No skills installed.")
 		return nil
@@ -157,8 +164,12 @@ func skillsListAction() error {
 }
 
 func skillsListJSON() error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
 	cwd, _ := os.Getwd()
-	loaded := gorunner.LoadSkills(configDir(), cwd)
+	loaded := gorunner.LoadSkills(cfg.Workspace, cwd)
 
 	type entry struct {
 		Name        string `json:"name"`
@@ -194,8 +205,11 @@ func skillsRemoveCommand() *ucli.Command {
 				return fmt.Errorf("usage: anna skills remove <name>")
 			}
 
-			cwd, _ := os.Getwd()
-			skillDir := filepath.Join(cwd, ".agents", "skills", name)
+			cfg, err := LoadConfig()
+			if err != nil {
+				return err
+			}
+			skillDir := filepath.Join(cfg.SkillsPath(), name)
 
 			if err := skills.Remove(name, skillDir); err != nil {
 				return err

@@ -5,11 +5,12 @@ anna includes a Telegram bot that runs via long polling -- no webhook or public 
 ## Setup
 
 1. Create a bot via [@BotFather](https://t.me/BotFather)
-2. Add the token to config:
+2. Add the token to `~/.anna/config.yaml`:
 
 ```yaml
-telegram:
-  token: "BOT_TOKEN"
+channels:
+  telegram:
+    token: "BOT_TOKEN"
 ```
 
 Or via environment: `ANNA_TELEGRAM_TOKEN=BOT_TOKEN`
@@ -49,10 +50,11 @@ During tool execution, the stream shows status with emoji indicators:
 Configure how the bot responds in group chats:
 
 ```yaml
-telegram:
-  group_mode: "mention"   # Only respond when @mentioned (default)
-  # group_mode: "always"  # Respond to all messages
-  # group_mode: "disabled" # Ignore group messages entirely
+channels:
+  telegram:
+    group_mode: "mention"   # Only respond when @mentioned (default)
+    # group_mode: "always"  # Respond to all messages
+    # group_mode: "disabled" # Ignore group messages entirely
 ```
 
 ## Access Control
@@ -60,9 +62,10 @@ telegram:
 Restrict which Telegram users can interact with the bot:
 
 ```yaml
-telegram:
-  allowed_ids:
-    - 136345060           # Your Telegram user ID
+channels:
+  telegram:
+    allowed_ids:
+      - 136345060           # Your Telegram user ID
 ```
 
 Leave empty to allow all users.
@@ -72,9 +75,10 @@ Leave empty to allow all users.
 The bot doubles as a notification backend. Configure a default chat for proactive messages:
 
 ```yaml
-telegram:
-  notify_chat: "123456789"   # Chat ID for notifications
-  channel_id: "@my_channel"  # Optional broadcast channel
+channels:
+  telegram:
+    notify_chat: "123456789"   # Chat ID for notifications
+    channel_id: "@my_channel"  # Optional broadcast channel
 ```
 
 Used by:

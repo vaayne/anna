@@ -29,7 +29,7 @@ type Config struct {
 	APIKey      string
 	BaseURL     string        // optional provider base URL override
 	WorkDir     string        // working directory for tool execution
-	AgentsDir   string        // .agents dir for skills discovery
+	Workspace   string        // workspace dir for skills/memory (e.g. ~/.anna/workspace)
 	MemoryStore *memory.Store // persistent memory (soul, user, facts, journal)
 	System      string        // optional system prompt override (bypasses BuildSystemPrompt)
 	ExtraTools  []tool.Tool   // additional tools to register
@@ -69,7 +69,7 @@ func New(_ context.Context, cfg Config) (*Runner, error) {
 	system := cfg.System
 	if system == "" {
 		if cfg.MemoryStore != nil {
-			system = BuildSystemPrompt(cfg.MemoryStore, cfg.AgentsDir, cfg.WorkDir)
+			system = BuildSystemPrompt(cfg.MemoryStore, cfg.Workspace, cfg.WorkDir)
 		} else {
 			system = defaultBasicPrompt
 		}

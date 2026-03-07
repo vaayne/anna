@@ -71,7 +71,7 @@ type Job struct {
 
 ### Persistence
 
-Jobs are stored as a JSON array in `{dataDir}/jobs.json` (default: `.agents/cron/jobs.json`). Writes are atomic (temp file + rename).
+Jobs are stored as a JSON array in `{dataDir}/jobs.json` (default: `~/.anna/workspace/cron/jobs.json`). Writes are atomic (temp file + rename).
 
 ### One-Time Jobs
 
@@ -92,12 +92,12 @@ Each cron job's session behavior is controlled by its `session_mode`:
 
 ## Configuration
 
-Add to `.agents/config.yaml`:
+Add to `~/.anna/config.yaml`:
 
 ```yaml
 cron:
   enabled: true
-  data_dir: .agents/cron  # optional, this is the default
+  data_dir: ~/.anna/workspace/cron  # optional, this is the default
 ```
 
 Cron is only active when:

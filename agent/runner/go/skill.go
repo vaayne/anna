@@ -34,15 +34,15 @@ const (
 
 var validNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-// LoadSkills discovers skills from user-level, project-level, and the agents dir.
-// agentsDir is the project agents dir (e.g. ".agents"), cwd is the working directory.
-// User-level skills come from ~/.agents/skills/ and take priority.
-func LoadSkills(agentsDir, cwd string) []Skill {
+// LoadSkills discovers skills from project, workspace, and common directories.
+// workspace is the workspace dir (e.g. ~/.anna/workspace), cwd is the working directory.
+// Priority order: cwd/.agents/skills/ > workspace/skills/ > ~/.agents/skills/
+func LoadSkills(workspace, cwd string) []Skill {
 	home, _ := os.UserHomeDir()
-	return loadSkills(home, agentsDir, cwd)
+	return loadSkills(home, workspace, cwd)
 }
 
-func loadSkills(homeDir, agentsDir, cwd string) []Skill {
+func loadSkills(homeDir, workspace, cwd string) []Skill {
 	seen := map[string]bool{} // name → already loaded
 	var skills []Skill
 
@@ -54,33 +54,31 @@ func loadSkills(homeDir, agentsDir, cwd string) []Skill {
 		skills = append(skills, s)
 	}
 
-	// 1. User-level skills: homeDir/.agents/skills/
-	if homeDir != "" {
-		for _, s := range loadSkillsFromDir(filepath.Join(homeDir, ".agents", "skills"), "user") {
+	dedupPaths := map[string]bool{}
+	addDir := func(dir, source string) {
+		abs, _ := filepath.Abs(dir)
+		if dedupPaths[abs] {
+			return
+		}
+		dedupPaths[abs] = true
+		for _, s := range loadSkillsFromDir(dir, source) {
 			add(s)
 		}
 	}
 
-	// 2. Project skills: agentsDir/skills/ (typically .agents/skills/)
-	if agentsDir != "" {
-		for _, s := range loadSkillsFromDir(filepath.Join(agentsDir, "skills"), "project") {
-			add(s)
-		}
-	}
-
-	// 3. Also check cwd/.agents/skills/ if it differs from agentsDir
+	// 1. Project-local skills: cwd/.agents/skills/ (highest priority)
 	if cwd != "" {
-		projectSkills := filepath.Join(cwd, ".agents", "skills")
-		agentSkills := ""
-		if agentsDir != "" {
-			agentSkills, _ = filepath.Abs(filepath.Join(agentsDir, "skills"))
-		}
-		absProject, _ := filepath.Abs(projectSkills)
-		if absProject != agentSkills {
-			for _, s := range loadSkillsFromDir(projectSkills, "project") {
-				add(s)
-			}
-		}
+		addDir(filepath.Join(cwd, ".agents", "skills"), "project")
+	}
+
+	// 2. Workspace skills: workspace/skills/ (e.g. ~/.anna/workspace/skills/)
+	if workspace != "" {
+		addDir(filepath.Join(workspace, "skills"), "user")
+	}
+
+	// 3. Common skills: ~/.agents/skills/ (legacy/shared)
+	if homeDir != "" {
+		addDir(filepath.Join(homeDir, ".agents", "skills"), "common")
 	}
 
 	return skills

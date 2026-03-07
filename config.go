@@ -2,43 +2,44 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/pkg/ai/types"
 	"gopkg.in/yaml.v3"
 )
 
+// Config is the top-level configuration for anna.
+// Env vars use ANNA_ prefix (e.g. ANNA_PROVIDER, ANNA_MODEL).
 type Config struct {
-	Provider  string                    `yaml:"provider"`
-	Model     string                    `yaml:"model"`
-	Models    ModelsConfig              `yaml:"models"`
-	Providers map[string]ProviderConfig `yaml:"providers"`
-	Runner    RunnerConfig              `yaml:"runner"`
-	Telegram  TelegramConfig            `yaml:"telegram"`
-	Sessions  string                    `yaml:"sessions"`
-	Cron      CronConfig                `yaml:"cron"`
+	Provider    string                    `yaml:"provider"     env:"PROVIDER"`
+	Model       string                    `yaml:"model"        env:"MODEL"`
+	ModelStrong string                    `yaml:"model_strong" env:"MODEL_STRONG"`
+	ModelFast   string                    `yaml:"model_fast"   env:"MODEL_FAST"`
+	Workspace   string                    `yaml:"workspace"    env:"WORKSPACE"`
+	Runner      RunnerConfig              `yaml:"runner"       envPrefix:"RUNNER_"`
+	Cron        CronConfig                `yaml:"cron"         envPrefix:"CRON_"`
+	Providers   map[string]ProviderConfig `yaml:"providers"`
+	Channels    ChannelsConfig            `yaml:"channels"`
 }
 
 // Model tier constants.
 const (
 	ModelTierStrong = "strong"
-	ModelTierWorker = "worker"
 	ModelTierFast   = "fast"
 )
 
-// ModelsConfig holds tiered model IDs.
-// Fallback chain: fast → worker → strong → Config.Model (backward compat).
-type ModelsConfig struct {
-	Strong string `yaml:"strong"`
-	Worker string `yaml:"worker"`
-	Fast   string `yaml:"fast"`
+// ChannelsConfig groups all channel (interface) configurations.
+type ChannelsConfig struct {
+	Telegram TelegramConfig `yaml:"telegram" envPrefix:"TELEGRAM_"`
 }
 
 type CronConfig struct {
-	Enabled *bool  `yaml:"enabled"`
-	DataDir string `yaml:"data_dir"`
+	Enabled *bool  `yaml:"enabled"  env:"ENABLED"`
+	DataDir string `yaml:"data_dir" env:"DATA_DIR"`
 }
 
 // CronEnabled returns whether cron is enabled (defaults to true).
@@ -72,34 +73,54 @@ type ModelCostConfig struct {
 }
 
 type RunnerConfig struct {
-	Type        string           `yaml:"type"`
-	System      string           `yaml:"system"`
-	IdleTimeout int              `yaml:"idle_timeout"`
-	Compaction  CompactionConfig `yaml:"compaction"`
+	Type        string           `yaml:"type"         env:"TYPE"`
+	System      string           `yaml:"system"       env:"SYSTEM"`
+	IdleTimeout int              `yaml:"idle_timeout" env:"IDLE_TIMEOUT"`
+	Compaction  CompactionConfig `yaml:"compaction"   envPrefix:"COMPACTION_"`
 }
 
 // CompactionConfig is an alias for agent.CompactionConfig for config YAML binding.
 type CompactionConfig = agent.CompactionConfig
 
 type TelegramConfig struct {
-	Token      string  `yaml:"token"`
-	NotifyChat string  `yaml:"notify_chat"` // chat ID for proactive notifications
-	ChannelID  string  `yaml:"channel_id"`  // broadcast channel (@name or numeric ID)
-	GroupMode  string  `yaml:"group_mode"`  // "mention" | "always" | "disabled"
-	AllowedIDs []int64 `yaml:"allowed_ids"` // user IDs allowed to use the bot (empty = allow all)
+	Token      string  `yaml:"token"       env:"TOKEN"`
+	NotifyChat string  `yaml:"notify_chat" env:"NOTIFY_CHAT"`
+	ChannelID  string  `yaml:"channel_id"  env:"CHANNEL_ID"`
+	GroupMode  string  `yaml:"group_mode"  env:"GROUP_MODE"`
+	AllowedIDs []int64 `yaml:"allowed_ids" env:"ALLOWED_IDS"`
 }
 
-func configDir() string {
-	return filepath.Join(".", ".agents")
+// annaHome returns the anna home directory.
+// Priority: ANNA_HOME env → ~/.anna
+func annaHome() string {
+	if v := os.Getenv("ANNA_HOME"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".anna")
+	}
+	return filepath.Join(home, ".anna")
 }
 
+// configPath returns the path to config.yaml inside the anna home.
 func configPath() string {
-	return filepath.Join(configDir(), "config.yaml")
+	return filepath.Join(annaHome(), "config.yaml")
 }
 
-// LoadConfig loads config from the default path (.agents/config.yaml).
+// StatePath returns the path to state.yaml (mutable runtime state) inside the workspace.
+func (cfg *Config) StatePath() string {
+	return filepath.Join(cfg.Workspace, "state.yaml")
+}
+
+// cachePath returns the cache directory inside the anna home.
+func cachePath() string {
+	return filepath.Join(annaHome(), "cache")
+}
+
+// LoadConfig loads config from the default anna home (~/.anna/config.yaml).
 func LoadConfig() (*Config, error) {
-	return loadConfigFrom(configDir())
+	return loadConfigFrom(annaHome())
 }
 
 // loadConfigFrom loads config from the given directory.
@@ -120,36 +141,24 @@ func loadConfigFrom(dir string) (*Config, error) {
 		}
 	}
 
-	// Apply environment variable overrides.
-	if v := os.Getenv("ANNA_TELEGRAM_TOKEN"); v != "" {
-		cfg.Telegram.Token = v
+	// Resolve workspace early so state.yaml can be found.
+	// Priority: ANNA_WORKSPACE env → yaml → default.
+	if cfg.Workspace == "" {
+		if v := os.Getenv("ANNA_WORKSPACE"); v != "" {
+			cfg.Workspace = v
+		} else {
+			cfg.Workspace = filepath.Join(dir, "workspace")
+		}
 	}
-	if v := os.Getenv("ANNA_TELEGRAM_NOTIFY_CHAT"); v != "" {
-		cfg.Telegram.NotifyChat = v
-	}
-	if v := os.Getenv("ANNA_TELEGRAM_CHANNEL_ID"); v != "" {
-		cfg.Telegram.ChannelID = v
-	}
-	if v := os.Getenv("ANNA_TELEGRAM_GROUP_MODE"); v != "" {
-		cfg.Telegram.GroupMode = v
-	}
-	if v := os.Getenv("ANNA_RUNNER_TYPE"); v != "" {
-		cfg.Runner.Type = v
-	}
-	if v := os.Getenv("ANNA_PROVIDER"); v != "" {
-		cfg.Provider = v
-	}
-	if v := os.Getenv("ANNA_MODEL"); v != "" {
-		cfg.Model = v
-	}
-	if v := os.Getenv("ANNA_MODEL_STRONG"); v != "" {
-		cfg.Models.Strong = v
-	}
-	if v := os.Getenv("ANNA_MODEL_WORKER"); v != "" {
-		cfg.Models.Worker = v
-	}
-	if v := os.Getenv("ANNA_MODEL_FAST"); v != "" {
-		cfg.Models.Fast = v
+
+	// Apply runtime state overrides (state.yaml) — mutable values like
+	// current provider/model set by "anna models set" or /model command.
+	applyState(cfg)
+
+	// Apply environment variable overrides (ANNA_ prefix).
+	// Uses caarlos0/env struct tags; only set env vars override YAML values.
+	if err := env.ParseWithOptions(cfg, env.Options{Prefix: "ANNA_"}); err != nil {
+		return nil, fmt.Errorf("parse env vars: %w", err)
 	}
 
 	// Initialize providers map if nil.
@@ -158,6 +167,7 @@ func loadConfigFrom(dir string) (*Config, error) {
 	}
 
 	// Resolve provider env vars for known providers.
+	// These use standard env var names (ANTHROPIC_API_KEY, etc.) not ANNA_ prefix.
 	resolveProviderEnv(cfg, "anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")
 	resolveProviderEnv(cfg, "openai", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 	resolveProviderEnv(cfg, "openai-response", "OPENAI_API_KEY", "OPENAI_BASE_URL")
@@ -175,11 +185,8 @@ func loadConfigFrom(dir string) (*Config, error) {
 	if cfg.Runner.IdleTimeout == 0 {
 		cfg.Runner.IdleTimeout = 10
 	}
-	if cfg.Sessions == "" {
-		cfg.Sessions = filepath.Join(dir, "workspace", "sessions")
-	}
 	if cfg.Cron.DataDir == "" {
-		cfg.Cron.DataDir = filepath.Join(dir, "cron")
+		cfg.Cron.DataDir = filepath.Join(cfg.Workspace, "cron")
 	}
 
 	return cfg, nil
@@ -202,14 +209,36 @@ func resolveProviderEnv(cfg *Config, name, keyEnv, urlEnv string) {
 	cfg.Providers[name] = p
 }
 
+// Workspace path helpers — all data lives under Workspace.
+
+func (cfg *Config) SessionsPath() string {
+	return filepath.Join(cfg.Workspace, "sessions")
+}
+
+func (cfg *Config) MemoryPath() string {
+	return filepath.Join(cfg.Workspace, "memory")
+}
+
+func (cfg *Config) SkillsPath() string {
+	return filepath.Join(cfg.Workspace, "skills")
+}
+
+func (cfg *Config) ModelsPath() string {
+	return filepath.Join(cachePath(), "models.json")
+}
+
+func (cfg *Config) LogPath() string {
+	return filepath.Join(cfg.Workspace, "anna.log")
+}
+
 // ResolveModel returns the types.Model for the default provider/model,
 // looking up from the provider's model list config.
 func (cfg *Config) ResolveModel() types.Model {
 	return cfg.ResolveModelTier(ModelTierStrong)
 }
 
-// ResolveModelTier returns the model ID for the given tier after applying
-// the fallback chain: fast → worker → strong → Config.Model.
+// ResolveModelTier returns the model for the given tier after applying
+// the fallback: strong → model, fast → model.
 func (cfg *Config) ResolveModelTier(tier string) types.Model {
 	modelID := cfg.resolveModelID(tier)
 	providerCfg := cfg.Providers[cfg.Provider]
@@ -229,55 +258,43 @@ func (cfg *Config) ResolveModelTier(tier string) types.Model {
 }
 
 // resolveModelID returns the model ID string for the given tier,
-// walking the fallback chain: fast → worker → strong → Config.Model.
+// falling back to Model if the tier-specific value is not set.
 func (cfg *Config) resolveModelID(tier string) string {
 	switch tier {
-	case ModelTierFast:
-		if cfg.Models.Fast != "" {
-			return cfg.Models.Fast
-		}
-		if cfg.Models.Worker != "" {
-			return cfg.Models.Worker
-		}
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
-		}
-		return cfg.Model
-	case ModelTierWorker:
-		if cfg.Models.Worker != "" {
-			return cfg.Models.Worker
-		}
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
-		}
-		return cfg.Model
 	case ModelTierStrong:
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
+		if cfg.ModelStrong != "" {
+			return cfg.ModelStrong
+		}
+		return cfg.Model
+	case ModelTierFast:
+		if cfg.ModelFast != "" {
+			return cfg.ModelFast
 		}
 		return cfg.Model
 	default:
-		// Unknown tier, treat as strong.
-		if cfg.Models.Strong != "" {
-			return cfg.Models.Strong
+		if cfg.ModelStrong != "" {
+			return cfg.ModelStrong
 		}
 		return cfg.Model
 	}
 }
 
-// SaveModelSelection persists the provider and model to the config file,
-// preserving all other fields.
-func SaveModelSelection(provider, model string) error {
-	path := configPath()
+// SaveModelSelection persists the provider and model to state.yaml
+// in the given workspace, keeping config.yaml as a static, user-edited file.
+func SaveModelSelection(workspace, provider, model string) error {
+	path := filepath.Join(workspace, "state.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
 
 	raw := make(map[string]any)
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read config: %w", err)
+		return fmt.Errorf("read state: %w", err)
 	}
 	if err == nil {
 		if err := yaml.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("parse config: %w", err)
+			return fmt.Errorf("parse state: %w", err)
 		}
 	}
 
@@ -286,12 +303,37 @@ func SaveModelSelection(provider, model string) error {
 
 	out, err := yaml.Marshal(raw)
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return fmt.Errorf("marshal state: %w", err)
 	}
 	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write config: %w", err)
+		return fmt.Errorf("write state: %w", err)
 	}
 	return nil
+}
+
+// applyState loads state.yaml from the workspace and overrides provider/model in cfg.
+func applyState(cfg *Config) {
+	path := cfg.StatePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("failed to read state file", "path", path, "error", err)
+		}
+		return
+	}
+	var state struct {
+		Provider string `yaml:"provider"`
+		Model    string `yaml:"model"`
+	}
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return
+	}
+	if state.Provider != "" {
+		cfg.Provider = state.Provider
+	}
+	if state.Model != "" {
+		cfg.Model = state.Model
+	}
 }
 
 func modelConfigToType(provider string, m ModelConfig) types.Model {

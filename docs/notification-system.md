@@ -144,22 +144,23 @@ In CLI mode (`anna chat`), no notification backends are registered, so the `noti
 ### Telegram
 
 ```yaml
-telegram:
-  token: "BOT_TOKEN"
-  notify_chat: "123456789"    # default chat for notifications
-  channel_id: "@my_channel"   # fallback if notify_chat is empty
-  group_mode: "mention"       # mention | always | disabled
-  allowed_ids:                # restrict bot to these user IDs
-    - 136345060
+channels:
+  telegram:
+    token: "BOT_TOKEN"
+    notify_chat: "123456789"    # default chat for notifications
+    channel_id: "@my_channel"   # fallback if notify_chat is empty
+    group_mode: "mention"       # mention | always | disabled
+    allowed_ids:                # restrict bot to these user IDs
+      - 136345060
 ```
 
 Environment variable overrides:
 
 | Variable | Field |
 |----------|-------|
-| `ANNA_TELEGRAM_NOTIFY_CHAT` | `telegram.notify_chat` |
-| `ANNA_TELEGRAM_CHANNEL_ID` | `telegram.channel_id` |
-| `ANNA_TELEGRAM_GROUP_MODE` | `telegram.group_mode` |
+| `ANNA_TELEGRAM_NOTIFY_CHAT` | `channels.telegram.notify_chat` |
+| `ANNA_TELEGRAM_CHANNEL_ID` | `channels.telegram.channel_id` |
+| `ANNA_TELEGRAM_GROUP_MODE` | `channels.telegram.group_mode` |
 
 ### Notify Target Resolution
 

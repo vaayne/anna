@@ -21,7 +21,7 @@ Agent (via tool call)
                           |
               +-----------+-----------+
               |                       |
-     .agents/memory/            .agents/memory/
+     ~/.anna/memory/            ~/.anna/memory/
      SOUL.md                    JOURNAL.jsonl
      USER.md                    (events -- searchable)
      FACT.md
@@ -42,7 +42,7 @@ Three persistent markdown files, always loaded into the system prompt under `<me
 
 - Written as a whole (full replacement via atomic write)
 - Case-insensitive file lookup (resolves existing files regardless of case)
-- Location: `.agents/memory/`
+- Location: `~/.anna/memory/`
 
 ### Journal (`JOURNAL.jsonl`)
 
@@ -55,7 +55,7 @@ Three persistent markdown files, always loaded into the system prompt under `<me
 {"ts":"2026-03-06T10:30:00Z","tags":["deploy","staging"],"text":"Deployed v2.1 to staging. User confirmed it works."}
 ```
 
-- Location: `.agents/memory/JOURNAL.jsonl`
+- Location: `~/.anna/memory/JOURNAL.jsonl` (or `$ANNA_HOME/memory/JOURNAL.jsonl`)
 
 ## Tool Interface
 

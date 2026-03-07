@@ -127,7 +127,7 @@ history — it never blocks the user's message.
 
 ## Configuration
 
-In `.agents/config.yaml` under `runner`:
+In `~/.anna/config.yaml` under `runner:`:
 
 ```yaml
 runner:
