@@ -52,5 +52,10 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	if err != nil {
 		return result, err
 	}
+	// Skip truncation for read tool so the agent can retrieve full
+	// outputs from temp files written by truncateIfNeeded.
+	if name == "read" {
+		return result, nil
+	}
 	return truncateIfNeeded(result), nil
 }

@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -111,6 +112,25 @@ func TestTruncateEnvInvalid(t *testing.T) {
 	n := maxOutputWords()
 	if n != defaultMaxOutputWords {
 		t.Errorf("invalid env should fall back to default, got %d", n)
+	}
+}
+
+func TestTruncateSkipsReadTool(t *testing.T) {
+	// Write a large file and verify that reading it via the registry
+	// returns the full content without truncation.
+	t.Setenv("ANNA_TOOL_MAX_WORDS", "5")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	os.WriteFile(path, []byte("one two three four five six seven eight"), 0o644)
+
+	reg := NewRegistry("")
+	result, err := reg.Execute(context.Background(), "read", map[string]any{"file_path": path})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.HasPrefix(result, "[Output truncated") {
+		t.Error("read tool output should not be truncated")
 	}
 }
 
