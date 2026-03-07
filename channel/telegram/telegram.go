@@ -171,7 +171,9 @@ func (b *Bot) Notify(_ context.Context, n channel.Notification) error {
 		opts.DisableNotification = true
 	}
 
-	b.sendChunkedMarkdown(chat, n.Text, n.Silent, opts)
+	if err := b.sendChunkedMarkdown(chat, n.Text, n.Silent, opts); err != nil {
+		return fmt.Errorf("send notification: %w", err)
+	}
 	logger().Debug("notification sent successfully", "chat_id", chatID)
 	return nil
 }
@@ -580,25 +582,24 @@ func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, 
 	events := b.pool.Chat(b.ctx, sessionID, prompt)
 
 	if !isGroup(c) {
-		text, err := b.streamDraft(c, events)
-		if err == errDraftUnsupported {
+		text, fallback, err := b.streamDraft(c, events)
+		if fallback {
 			// Draft failed on first attempt — the event channel is still
-			// open, so fall through to edit-based streaming seamlessly.
+			// open. Continue with edit-based streaming, preserving any
+			// text already buffered from consumed events.
 			logger().Info("sendMessageDraft not supported, falling back to edit mode")
-			return b.streamEditEvents(c, events)
+			return b.streamEditEvents(c, events, text)
 		}
 		return text, err
 	}
-	return b.streamEditEvents(c, events)
+	return b.streamEditEvents(c, events, "")
 }
 
-// errDraftUnsupported signals that the sendMessageDraft API is not available.
-var errDraftUnsupported = fmt.Errorf("sendMessageDraft not supported")
-
 // streamDraft uses Telegram's sendMessageDraft API for smooth streaming
-// in private chats. If the first draft call fails, it returns
-// errDraftUnsupported so the caller can fall back to edit mode.
-func (b *Bot) streamDraft(c tele.Context, events <-chan runner.Event) (string, error) {
+// in private chats. If the first draft call fails, it returns fallback=true
+// so the caller can switch to edit mode. The buffered text is returned so
+// no consumed events are lost.
+func (b *Bot) streamDraft(c tele.Context, events <-chan runner.Event) (text string, fallback bool, err error) {
 	var sb strings.Builder
 	var streamErr error
 	var currentTool string
@@ -639,7 +640,7 @@ func (b *Bot) streamDraft(c tele.Context, events <-chan runner.Event) (string, e
 
 		if err := b.sendDraftRaw(chatID, draftID, display); err != nil {
 			if firstDraft {
-				return "", errDraftUnsupported
+				return sb.String(), true, nil
 			}
 			// Mid-stream failure: log and continue without updates
 			// rather than breaking the stream.
@@ -649,14 +650,16 @@ func (b *Bot) streamDraft(c tele.Context, events <-chan runner.Event) (string, e
 		lastSend = now
 	}
 
-	return sb.String(), streamErr
+	return sb.String(), false, streamErr
 }
 
 // streamEditEvents uses the traditional edit-in-place approach for streaming,
 // consuming from an existing event channel. Required for group chats where
-// sendMessageDraft is not available.
-func (b *Bot) streamEditEvents(c tele.Context, events <-chan runner.Event) (string, error) {
+// sendMessageDraft is not available. Any already-buffered text from a prior
+// draft attempt is preserved via the initial parameter.
+func (b *Bot) streamEditEvents(c tele.Context, events <-chan runner.Event, initial string) (string, error) {
 	var sb strings.Builder
+	sb.WriteString(initial)
 	var sentMsg *tele.Message
 	var streamErr error
 	var currentTool string
@@ -760,13 +763,16 @@ func (b *Bot) sendDraftRaw(chatID, draftID int64, text string) error {
 // sendFinalResponse sends the completed response with markdown rendering,
 // splitting into chunks if necessary.
 func (b *Bot) sendFinalResponse(c tele.Context, response string) {
-	b.sendChunkedMarkdown(c.Chat(), response, false, nil)
+	if err := b.sendChunkedMarkdown(c.Chat(), response, false, nil); err != nil {
+		logger().Error("sendFinalResponse failed", "chat_id", c.Chat().ID, "error", err)
+	}
 }
 
 // sendChunkedMarkdown splits text into chunks, renders each as Telegram
 // MarkdownV2, and falls back to plain text on error. If sendOpts is non-nil
-// it is used for the markdown send attempt.
-func (b *Bot) sendChunkedMarkdown(chat tele.Recipient, text string, silent bool, sendOpts *tele.SendOptions) {
+// it is used for the markdown send attempt. Returns the first send error
+// that could not be recovered via plain-text fallback.
+func (b *Bot) sendChunkedMarkdown(chat tele.Recipient, text string, silent bool, sendOpts *tele.SendOptions) error {
 	if sendOpts == nil {
 		sendOpts = &tele.SendOptions{ParseMode: tele.ModeMarkdownV2}
 	}
@@ -777,10 +783,11 @@ func (b *Bot) sendChunkedMarkdown(chat tele.Recipient, text string, silent bool,
 			logger().Warn("markdown send failed, falling back to plain text", "error", err)
 			plainOpts := &tele.SendOptions{DisableNotification: silent}
 			if _, err := b.bot.Send(chat, chunk, plainOpts); err != nil {
-				logger().Error("plain text send failed", "chat_id", chat.Recipient(), "error", err)
+				return fmt.Errorf("send message: %w", err)
 			}
 		}
 	}
+	return nil
 }
 
 // keepTyping sends the typing indicator repeatedly until ctx is cancelled.
