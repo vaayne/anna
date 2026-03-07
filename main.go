@@ -157,7 +157,10 @@ func setup(parent context.Context) (*setupResult, error) {
 		return nil, fmt.Errorf("create runner factory: %w", err)
 	}
 
-	opts := []agent.PoolOption{agent.WithIdleTimeout(idleTimeout)}
+	opts := []agent.PoolOption{
+		agent.WithIdleTimeout(idleTimeout),
+		agent.WithCompaction(cfg.Runner.Compaction.WithDefaults()),
+	}
 	if cfg.Sessions != "" {
 		cwd, _ := os.Getwd()
 		s, err := store.NewFileStore(cfg.Sessions, cwd)

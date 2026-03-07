@@ -209,20 +209,15 @@ func (p *Pool) CompactSession(ctx context.Context, sessionID string) (string, er
 		return "", fmt.Errorf("compaction requires a persistent store")
 	}
 
-	p.mu.Lock()
-	sess, ok := p.sessions[sessionID]
-	if !ok {
-		p.mu.Unlock()
-		return "", fmt.Errorf("session %q not found", sessionID)
+	sess, r, err := p.getOrCreateRunner(ctx, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("get runner: %w", err)
 	}
-	r := sess.Runner
+
+	p.mu.Lock()
 	events := make([]runner.RPCEvent, len(sess.Events))
 	copy(events, sess.Events)
 	p.mu.Unlock()
-
-	if r == nil {
-		return "", fmt.Errorf("session %q has no active runner", sessionID)
-	}
 
 	p.log.Info("compaction started", "session_id", sessionID, "events", len(events))
 
