@@ -71,6 +71,17 @@ anna models set <p/m>   # Switch model (e.g. anna models set openai/gpt-4o)
 anna models search <q>  # Search models by name
 ```
 
+### Skill Management
+
+```bash
+anna skills              # List installed skills (alias for list)
+anna skills list         # List installed skills grouped by source
+anna skills list --json  # List as JSON
+anna skills search <q>   # Search skills.sh ecosystem
+anna skills install <s>  # Install (e.g. anna skills install owner/repo@skill-name)
+anna skills remove <n>   # Remove an installed skill
+```
+
 ## Configuration
 
 Config file: `.agents/config.yaml` -- see [docs/configuration.md](docs/configuration.md) for full reference.
