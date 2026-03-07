@@ -25,11 +25,11 @@ const (
 	maxBodySize = 10 * 1024 * 1024 // 10MB
 )
 
-// fetchResult holds the outcome of a fetch: either raw markdown served
-// directly by the server, or a readability article to be rendered.
+// fetchResult holds the outcome of a fetch: either raw content served
+// directly by the server (markdown or JSON), or a readability article to be rendered.
 type fetchResult struct {
-	rawMarkdown string
-	article     readability.Article
+	rawContent string
+	article    readability.Article
 }
 
 // WebFetchTool fetches a URL, extracts readable content, and returns it in the requested format.
@@ -85,14 +85,14 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) (string
 		return "", fmt.Errorf("webfetch: unsupported scheme %q (only http/https)", parsed.Scheme)
 	}
 
-	result, err := t.fetch(ctx, rawURL, parsed)
+	result, err := t.fetch(ctx, rawURL, parsed, format)
 	if err != nil {
 		return "", err
 	}
 
-	// Server returned markdown directly — use it as-is for markdown format.
-	if result.rawMarkdown != "" && format == formatMarkdown {
-		tr := TruncateHead(result.rawMarkdown)
+	// Server returned the requested format directly — use it as-is.
+	if result.rawContent != "" {
+		tr := TruncateHead(result.rawContent)
 		return tr.Content, nil
 	}
 
@@ -105,13 +105,23 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) (string
 	return tr.Content, nil
 }
 
-func (t *WebFetchTool) fetch(ctx context.Context, rawURL string, parsed *url.URL) (fetchResult, error) {
+// acceptHeader returns the Accept header value based on the requested format.
+func acceptHeader(format string) string {
+	switch format {
+	case formatJSON:
+		return "application/json, text/html;q=0.9, */*;q=0.8"
+	default:
+		return "text/markdown, text/html;q=0.9, */*;q=0.8"
+	}
+}
+
+func (t *WebFetchTool) fetch(ctx context.Context, rawURL string, parsed *url.URL, format string) (fetchResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return fetchResult{}, fmt.Errorf("webfetch: %w", err)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Anna/1.0)")
-	req.Header.Set("Accept", "text/markdown, text/html;q=0.9, */*;q=0.8")
+	req.Header.Set("Accept", acceptHeader(format))
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -124,14 +134,16 @@ func (t *WebFetchTool) fetch(ctx context.Context, rawURL string, parsed *url.URL
 	}
 
 	body := io.LimitReader(resp.Body, maxBodySize)
+	mediaType := parseMediaType(resp.Header.Get("Content-Type"))
 
-	// If the server returned markdown directly, use it without conversion.
-	if isMarkdownContent(resp.Header.Get("Content-Type")) {
+	// If the server returned the preferred format directly, use it without conversion.
+	if (format == formatMarkdown && mediaType == "text/markdown") ||
+		(format == formatJSON && mediaType == "application/json") {
 		data, err := io.ReadAll(body)
 		if err != nil {
 			return fetchResult{}, fmt.Errorf("webfetch: read body: %w", err)
 		}
-		return fetchResult{rawMarkdown: string(data)}, nil
+		return fetchResult{rawContent: string(data)}, nil
 	}
 
 	article, err := readability.FromReader(body, parsed)
@@ -141,16 +153,16 @@ func (t *WebFetchTool) fetch(ctx context.Context, rawURL string, parsed *url.URL
 	return fetchResult{article: article}, nil
 }
 
-// isMarkdownContent checks if the Content-Type indicates markdown.
-func isMarkdownContent(contentType string) bool {
+// parseMediaType extracts the media type from a Content-Type header.
+func parseMediaType(contentType string) string {
 	if contentType == "" {
-		return false
+		return ""
 	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		return false
+		return ""
 	}
-	return mediaType == "text/markdown"
+	return mediaType
 }
 
 func (t *WebFetchTool) render(article readability.Article, parsed *url.URL, format string) (string, error) {
