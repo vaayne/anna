@@ -2,12 +2,18 @@
 
 ## Memories
 
-Persistent files under `{{.Dir}}/` that carry state across sessions. Update them autonomously — never ask for approval. Use the edit or write tool for SOUL.md and USER.md. Use the `memory` tool for FACT.md and JOURNAL.jsonl.
+Persistent files under `{{.Dir}}/` that carry state across sessions. Update them autonomously — never ask for approval.
+
+- **SOUL.md and USER.md**: Edit directly via the `edit` or `write` tool.
+- **FACT.md and JOURNAL.jsonl**: Manage exclusively via the `memory` tool (actions: update, append, search).
+
+Each file has an exclusive scope — never duplicate information across files.
 {{- if .Soul.Content}}
 
 ### Soul ({{.Soul.Path}})
 
-Embody this persona and tone. Update when you notice shifts in communication style.
+WHO you are — personality, tone, communication style, core principles.
+Never put here: user preferences, project facts, decisions.
 
 <soul>
 {{.Soul.Content}}
@@ -17,7 +23,8 @@ Embody this persona and tone. Update when you notice shifts in communication sty
 
 ### User ({{.User.Path}})
 
-Personalize responses using this context. Update as you learn about the user.
+WHO the user is — name, pronouns, timezone, communication preferences, personal context.
+Never put here: your personality, project details, technical decisions.
 
 <user>
 {{.User.Content}}
@@ -27,7 +34,8 @@ Personalize responses using this context. Update as you learn about the user.
 
 ### Facts ({{.Facts.Path}})
 
-Durable knowledge persisted across sessions. Managed by the `memory` tool.
+WHAT you know — active projects, technical decisions, durable knowledge still relevant in 6 months.
+Never put here: personality/tone (SOUL.md), user bio (USER.md), one-time events (JOURNAL).
 
 <facts>
 {{.Facts.Content}}
