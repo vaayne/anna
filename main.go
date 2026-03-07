@@ -66,7 +66,7 @@ func chatCommand() *ucli.Command {
 				}
 			}
 
-			s, err := setup(c.Context)
+			s, err := setup(c.Context, false)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func gatewayCommand() *ucli.Command {
 		Name:  "gateway",
 		Usage: "Start daemon services (Telegram, etc.) based on config",
 		Action: func(c *ucli.Context) error {
-			s, err := setup(c.Context)
+			s, err := setup(c.Context, true)
 			if err != nil {
 				return err
 			}
@@ -124,7 +124,7 @@ type setupResult struct {
 	notifier   *channel.Dispatcher
 }
 
-func setup(parent context.Context) (*setupResult, error) {
+func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
@@ -150,9 +150,9 @@ func setup(parent context.Context) (*setupResult, error) {
 	extraTools = append(extraTools, memory.NewTool(memStore))
 
 	// Notification dispatcher + tool — backends are registered later in
-	// runGateway(). Only expose the tool when a notification backend is configured.
+	// runGateway(). Only expose the tool in gateway mode where backends exist.
 	dispatcher := channel.NewDispatcher()
-	if cfg.Telegram.Token != "" {
+	if gateway && cfg.Telegram.Token != "" {
 		extraTools = append(extraTools, channel.NewNotifyTool(dispatcher))
 	}
 

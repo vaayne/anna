@@ -254,7 +254,9 @@ func (b *Bot) registerHandlers() {
 func (b *Bot) guard(h tele.HandlerFunc) tele.HandlerFunc {
 	return func(c tele.Context) error {
 		if !b.isAllowed(c) {
-			log.Warn("unauthorized access", "user_id", c.Sender().ID)
+			if s := c.Sender(); s != nil {
+				log.Warn("unauthorized access", "user_id", s.ID)
+			}
 			return nil
 		}
 		if isGroup(c) && !b.shouldRespondInGroup(c) {
