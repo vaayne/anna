@@ -82,7 +82,10 @@ type RunnerConfig struct {
 type CompactionConfig = agent.CompactionConfig
 
 type TelegramConfig struct {
-	Token string `yaml:"token"`
+	Token      string `yaml:"token"`
+	NotifyChat string `yaml:"notify_chat"`  // chat ID for proactive notifications
+	ChannelID  string `yaml:"channel_id"`   // broadcast channel (@name or numeric ID)
+	GroupMode  string `yaml:"group_mode"`   // "mention" | "always" | "disabled"
 }
 
 func configDir() string {
@@ -119,6 +122,15 @@ func loadConfigFrom(dir string) (*Config, error) {
 	// Apply environment variable overrides.
 	if v := os.Getenv("ANNA_TELEGRAM_TOKEN"); v != "" {
 		cfg.Telegram.Token = v
+	}
+	if v := os.Getenv("ANNA_TELEGRAM_NOTIFY_CHAT"); v != "" {
+		cfg.Telegram.NotifyChat = v
+	}
+	if v := os.Getenv("ANNA_TELEGRAM_CHANNEL_ID"); v != "" {
+		cfg.Telegram.ChannelID = v
+	}
+	if v := os.Getenv("ANNA_TELEGRAM_GROUP_MODE"); v != "" {
+		cfg.Telegram.GroupMode = v
 	}
 	if v := os.Getenv("ANNA_RUNNER_TYPE"); v != "" {
 		cfg.Runner.Type = v
