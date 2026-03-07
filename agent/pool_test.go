@@ -657,4 +657,57 @@ func TestPoolFastModelForCompaction(t *testing.T) {
 	if !found {
 		t.Errorf("compaction did not use fast model, models = %v", models)
 	}
+
+	// After compaction, session model should be restored to strong-model
+	// so subsequent chats don't stay on the fast tier.
+	pool.mu.Lock()
+	sessModel := pool.sessions[info.ID].Model
+	pool.mu.Unlock()
+
+	if sessModel != "strong-model" {
+		t.Errorf("session model after compaction = %q, want %q", sessModel, "strong-model")
+	}
+}
+
+func TestSetDefaultModelAffectsNewSessions(t *testing.T) {
+	var models []string
+	var mu sync.Mutex
+	factory := func(_ context.Context, model string) (runner.Runner, error) {
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+		return newMockRunner([]runner.Event{{Text: "ok"}}), nil
+	}
+
+	pool := NewPool(factory, WithDefaultModel("initial-model"))
+	defer pool.Close()
+
+	ctx := context.Background()
+
+	// First session uses initial default.
+	info1, _ := pool.CreateSession()
+	stream := pool.Chat(ctx, info1.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	if models[0] != "initial-model" {
+		t.Fatalf("first session model = %q, want initial-model", models[0])
+	}
+	mu.Unlock()
+
+	// Switch default model at runtime.
+	pool.SetDefaultModel("switched-model")
+
+	// New session should use the switched model.
+	info2, _ := pool.CreateSession()
+	stream = pool.Chat(ctx, info2.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	if models[1] != "switched-model" {
+		t.Fatalf("second session model = %q, want switched-model", models[1])
+	}
+	mu.Unlock()
 }

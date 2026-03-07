@@ -230,6 +230,7 @@ func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraT
 			return err
 		}
 		pool.SetFactory(factory)
+		pool.SetDefaultModel(model)
 		if err := SaveModelSelection(provider, model); err != nil {
 			slog.Warn("failed to persist model selection", "error", err)
 		}

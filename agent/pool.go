@@ -240,9 +240,24 @@ func (p *Pool) CompactSession(ctx context.Context, sessionID string) (string, er
 		return "", fmt.Errorf("compaction requires a persistent store")
 	}
 
+	// Remember the session's original model so we can restore it after
+	// compaction — the fast model is only for generating the summary.
+	p.mu.Lock()
+	sess, ok := p.sessions[sessionID]
+	origModel := ""
+	if ok {
+		origModel = sess.Model
+	}
+	p.mu.Unlock()
+
 	sess, r, err := p.getOrCreateRunner(ctx, sessionID, p.fastModel)
 	if err != nil {
 		return "", fmt.Errorf("get runner: %w", err)
+	}
+
+	// If the session was new (no prior model), fall back to the pool default.
+	if origModel == "" {
+		origModel = p.defaultModel
 	}
 
 	p.mu.Lock()
@@ -283,6 +298,7 @@ func (p *Pool) CompactSession(ctx context.Context, sessionID string) (string, er
 		}
 		p.mu.Lock()
 		sess.Runner = nil
+		sess.Model = origModel // restore so next Chat uses the original model
 		p.mu.Unlock()
 	}
 
@@ -484,6 +500,14 @@ func (p *Pool) Reset(sessionID string) error {
 func (p *Pool) SetFactory(factory runner.NewRunnerFunc) {
 	p.mu.Lock()
 	p.factory = factory
+	p.mu.Unlock()
+}
+
+// SetDefaultModel updates the default model used for new runners.
+// Call this alongside SetFactory when the user switches models at runtime.
+func (p *Pool) SetDefaultModel(model string) {
+	p.mu.Lock()
+	p.defaultModel = model
 	p.mu.Unlock()
 }
 
