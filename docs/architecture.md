@@ -73,6 +73,13 @@ memory/
   memory.go                         Store: Read/Write files, Append/Search journal
   tool.go                           Agent memory tool (update/append/search)
 
+skills/
+  tool.go                           Agent skills tool (search/install/list/remove)
+  search.go                         Skills ecosystem search via skills.sh API
+  install.go                        Git clone + copy install flow (go-git)
+  list.go                           List installed skills
+  remove.go                         Remove installed skills
+
 pkg/
   ai/
     types/                          Shared types (Model, Message, ToolDefinition, events)
@@ -128,6 +135,7 @@ type Tool interface {
 | Tool | Condition | Description |
 |------|-----------|-------------|
 | `memory` | Always | Persistent memory (update facts, append journal, search) |
+| `skills` | Always | Skill management (search/install/list/remove from skills.sh) |
 | `cron` | `cron.enabled: true` | Schedule tasks (add/list/remove jobs) |
 | `notify` | Gateway mode + Telegram configured | Send notifications via dispatcher |
 

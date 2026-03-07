@@ -22,6 +22,7 @@ import (
 	"github.com/vaayne/anna/channel/telegram"
 	"github.com/vaayne/anna/cron"
 	"github.com/vaayne/anna/memory"
+	"github.com/vaayne/anna/skills"
 )
 
 func main() {
@@ -45,6 +46,7 @@ func newApp() *ucli.App {
 			chatCommand(),
 			gatewayCommand(),
 			modelsCommand(),
+			skillsCommand(),
 		},
 	}
 }
@@ -145,6 +147,10 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
 	extraTools = append(extraTools, memory.NewTool(memStore))
 
+	// Skills tool — always available.
+	cwd, _ := os.Getwd()
+	extraTools = append(extraTools, skills.NewTool(configDir(), cwd))
+
 	// Notification dispatcher + tool — backends are registered later in
 	// runGateway(). Only expose the tool in gateway mode where backends exist.
 	dispatcher := channel.NewDispatcher()
@@ -165,7 +171,6 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 		agent.WithFastModel(cfg.resolveModelID(ModelTierFast)),
 	}
 	if cfg.Sessions != "" {
-		cwd, _ := os.Getwd()
 		s, err := store.NewFileStore(cfg.Sessions, cwd)
 		if err != nil {
 			return nil, fmt.Errorf("create session store: %w", err)
