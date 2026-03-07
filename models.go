@@ -175,17 +175,14 @@ func modelsCommand() *ucli.Command {
 			modelsSetCommand(),
 			modelsSearchCommand(),
 		},
-		Action: func(c *ucli.Context) error {
-			// Default: list
-			return modelsListAction(c)
-		},
+		Action: modelsListAction,
 	}
 }
 
 func modelsListCommand() *ucli.Command {
 	return &ucli.Command{
-		Name:  "list",
-		Usage: "List all available models grouped by provider",
+		Name:   "list",
+		Usage:  "List all available models grouped by provider",
 		Action: modelsListAction,
 	}
 }

@@ -68,11 +68,11 @@ func renderModelPicker(models []modelOption, cursor int, activeProvider, activeM
 		case i == cursor && isActive:
 			line = modelCursorStyle.Render(prefix) + modelActiveStyle.Render(label+" (current)")
 		case i == cursor:
-			line = modelCursorStyle.Render(prefix+label)
+			line = modelCursorStyle.Render(prefix + label)
 		case isActive:
-			line = modelActiveStyle.Render(prefix+label+" (current)")
+			line = modelActiveStyle.Render(prefix + label + " (current)")
 		default:
-			line = modelItemStyle.Render(prefix+label)
+			line = modelItemStyle.Render(prefix + label)
 		}
 
 		sb.WriteString(line + "\n")

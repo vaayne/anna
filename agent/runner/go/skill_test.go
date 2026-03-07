@@ -9,7 +9,6 @@ import (
 	"github.com/vaayne/anna/memory"
 )
 
-
 func TestParseFrontmatter(t *testing.T) {
 	tests := []struct {
 		name    string

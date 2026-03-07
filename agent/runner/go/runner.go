@@ -24,8 +24,8 @@ const maxToolIterations = 40
 
 // Config configures the Go runner.
 type Config struct {
-	API         string        // provider key: "anthropic", "openai"
-	Model       string        // e.g. "claude-sonnet-4-20250514"
+	API         string // provider key: "anthropic", "openai"
+	Model       string // e.g. "claude-sonnet-4-20250514"
 	APIKey      string
 	BaseURL     string        // optional provider base URL override
 	WorkDir     string        // working directory for tool execution

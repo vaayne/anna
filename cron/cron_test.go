@@ -250,7 +250,7 @@ func TestCronToolAddListRemove(t *testing.T) {
 	}
 
 	// Remove via tool.
-	result, err = ct.Execute(context.Background(), map[string]any{
+	_, err = ct.Execute(context.Background(), map[string]any{
 		"action": "remove",
 		"id":     jobs[0].ID,
 	})

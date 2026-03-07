@@ -223,10 +223,8 @@ func TestConvertHistoryWithToolEvents(t *testing.T) {
 	}
 	if tc, ok := am.Content[1].(aitypes.ToolCall); !ok {
 		t.Errorf("expected ToolCall second, got %T", am.Content[1])
-	} else {
-		if tc.Name != "bash" {
-			t.Errorf("tool call name = %q, want %q", tc.Name, "bash")
-		}
+	} else if tc.Name != "bash" {
+		t.Errorf("tool call name = %q, want %q", tc.Name, "bash")
 	}
 
 	// Tool result.

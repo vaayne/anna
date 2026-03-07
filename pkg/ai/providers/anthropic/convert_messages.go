@@ -29,8 +29,7 @@ func userContentBlocks(content any) []sdk.ContentBlockParamUnion {
 	case []types.ContentBlock:
 		blocks := make([]sdk.ContentBlockParamUnion, 0, len(c))
 		for _, block := range c {
-			switch b := block.(type) {
-			case types.TextContent:
+			if b, ok := block.(types.TextContent); ok {
 				blocks = append(blocks, sdk.NewTextBlock(b.Text))
 			}
 		}

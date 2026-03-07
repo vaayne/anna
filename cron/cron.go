@@ -28,7 +28,7 @@ type OnJobFunc func(ctx context.Context, job Job)
 type Service struct {
 	scheduler gocron.Scheduler
 	onJob     OnJobFunc
-	dataPath  string // directory containing jobs.json
+	dataPath  string          // directory containing jobs.json
 	ctx       context.Context // lifecycle context from Start
 	mu        sync.Mutex
 	jobs      map[string]Job

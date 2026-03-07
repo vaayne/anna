@@ -59,7 +59,7 @@ func renderCompletions(completions []slashCommand, cursor int) string {
 			descStr = completionDescStyle.Render(cmd.description)
 		}
 
-		sb.WriteString(fmt.Sprintf("    %s%s%s", nameStr, gap, descStr))
+		fmt.Fprintf(&sb, "    %s%s%s", nameStr, gap, descStr)
 		if i < len(completions)-1 {
 			sb.WriteString("\n")
 		}

@@ -84,10 +84,10 @@ func WithModel(model string) ChatOption {
 // NewPool creates a new Pool with the given runner factory.
 func NewPool(factory runner.NewRunnerFunc, opts ...PoolOption) *Pool {
 	p := &Pool{
-		factory:      factory,
-		sessions:     make(map[string]*Session),
-		idleTimeout:  10 * time.Minute,
-		log:          slog.With("component", "pool"),
+		factory:     factory,
+		sessions:    make(map[string]*Session),
+		idleTimeout: 10 * time.Minute,
+		log:         slog.With("component", "pool"),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -156,9 +156,7 @@ func (p *Pool) ListSessions(includeArchived bool) ([]SessionInfo, error) {
 		return nil, err
 	}
 	result := make([]SessionInfo, len(items))
-	for i, si := range items {
-		result[i] = si
-	}
+	copy(result, items)
 	return result, nil
 }
 

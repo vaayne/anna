@@ -17,7 +17,6 @@ import (
 	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/agent/runner"
 	"github.com/vaayne/anna/channel"
-
 )
 
 // streamStartMsg carries the stream channel from the agent.
@@ -76,12 +75,12 @@ type chatModel struct {
 	toolStartTime time.Time
 
 	// Markdown rendering: track current response segments
-	historyPrefix string                // rendered history before current response
-	currentRaw    *strings.Builder      // raw markdown text of current streaming segment
+	historyPrefix string           // rendered history before current response
+	currentRaw    *strings.Builder // raw markdown text of current streaming segment
 	mdRenderer    *glamour.TermRenderer
 
 	// Model picker
-	picking bool
+	picking        bool
 	models         []modelOption
 	filteredModels []modelOption
 	modelCursor    int
@@ -697,11 +696,12 @@ func (m chatModel) View() string {
 
 	// Help bar below input
 	var helpText string
-	if m.picking {
+	switch {
+	case m.picking:
 		helpText = helpStyle.Render("↑↓ · enter · esc")
-	} else if m.completing {
+	case m.completing:
 		helpText = helpStyle.Render("↑↓ · tab · enter · esc")
-	} else {
+	default:
 		helpText = helpAccentStyle.Render("/new") + helpStyle.Render(" · ") +
 			helpAccentStyle.Render("/model") + helpStyle.Render(" · ") +
 			helpAccentStyle.Render("/quit")

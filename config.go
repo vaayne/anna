@@ -47,9 +47,9 @@ func (c CronConfig) CronEnabled() bool {
 }
 
 type ProviderConfig struct {
-	APIKey  string             `yaml:"api_key"`
-	BaseURL string             `yaml:"base_url"`
-	Models  []ModelConfig      `yaml:"models"`
+	APIKey  string        `yaml:"api_key"`
+	BaseURL string        `yaml:"base_url"`
+	Models  []ModelConfig `yaml:"models"`
 }
 
 type ModelConfig struct {
@@ -83,10 +83,10 @@ type CompactionConfig = agent.CompactionConfig
 
 type TelegramConfig struct {
 	Token      string  `yaml:"token"`
-	NotifyChat string  `yaml:"notify_chat"`  // chat ID for proactive notifications
-	ChannelID  string  `yaml:"channel_id"`   // broadcast channel (@name or numeric ID)
-	GroupMode  string  `yaml:"group_mode"`   // "mention" | "always" | "disabled"
-	AllowedIDs []int64 `yaml:"allowed_ids"`  // user IDs allowed to use the bot (empty = allow all)
+	NotifyChat string  `yaml:"notify_chat"` // chat ID for proactive notifications
+	ChannelID  string  `yaml:"channel_id"`  // broadcast channel (@name or numeric ID)
+	GroupMode  string  `yaml:"group_mode"`  // "mention" | "always" | "disabled"
+	AllowedIDs []int64 `yaml:"allowed_ids"` // user IDs allowed to use the bot (empty = allow all)
 }
 
 func configDir() string {
