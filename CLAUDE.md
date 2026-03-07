@@ -30,6 +30,7 @@ mise run format   # gofmt + go mod tidy
 - Use `unicode/utf8` for safe string truncation.
 - Conventional commits: `✨ feat:`, `🐛 fix:`, `♻️ refactor:`, `📝 docs:`
 - Tests with `-race`, >80% coverage.
+- Before committing, always run `mise run format` then `mise run lint` and fix any issues.
 
 ## Documentation
 
