@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	git "github.com/go-git/go-git/v5"
@@ -107,8 +108,27 @@ func parseSource(source string) (owner, repo, skillName, ref string, err error) 
 		return "", "", "", "", fmt.Errorf("invalid source %q: skill name is empty", source)
 	}
 
+	// Validate all segments to prevent path traversal in cache/install paths.
+	for _, seg := range []struct{ name, val string }{
+		{"owner", parts[0]},
+		{"repo", parts[1]},
+		{"skill", skillName},
+		{"ref", ref},
+	} {
+		if seg.val == "" {
+			continue
+		}
+		if !safeSegmentRe.MatchString(seg.val) {
+			return "", "", "", "", fmt.Errorf("invalid %s %q: must be alphanumeric, hyphens, dots, or underscores", seg.name, seg.val)
+		}
+	}
+
 	return parts[0], parts[1], skillName, ref, nil
 }
+
+// safeSegmentRe matches path-safe segments: alphanumeric, hyphens, dots, underscores.
+// Rejects "..", leading dots, slashes, and other path traversal patterns.
+var safeSegmentRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 func getCacheDir(owner, repo, ref string) (string, error) {
 	home, err := os.UserHomeDir()

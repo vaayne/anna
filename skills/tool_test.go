@@ -208,6 +208,12 @@ func TestParseSource(t *testing.T) {
 		{"owner/@skill", "", "", "", "", true},
 		{"/repo@skill", "", "", "", "", true},
 		{"owner/repo@", "", "", "", "", true},
+		// Path traversal attempts
+		{"../evil/repo@skill", "", "", "", "", true},
+		{"owner/../../etc@skill", "", "", "", "", true},
+		{"owner/repo@../../../etc", "", "", "", "", true},
+		{"owner/repo@skill#../../main", "", "", "", "", true},
+		{"owner/repo@skill#..", "", "", "", "", true},
 	}
 
 	for _, tt := range tests {

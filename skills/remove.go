@@ -41,7 +41,7 @@ func (t *SkillsTool) remove(args map[string]any) (string, error) {
 
 	skillDir := fmt.Sprintf("%s/.agents/skills/%s", t.cwd, name)
 	if err := Remove(name, skillDir); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w (only project-local skills in .agents/skills/ can be removed; user-level skills must be removed manually)", err)
 	}
 
 	return fmt.Sprintf("Skill %q removed from %s.", name, skillDir), nil

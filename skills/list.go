@@ -11,21 +11,23 @@ type installedSkill struct {
 	Description string `json:"description"`
 	Source      string `json:"source"`
 	Path        string `json:"path"`
+	Removable   bool   `json:"removable"`
 }
 
 func (t *SkillsTool) list() (string, error) {
-	skills := gorunner.LoadSkills(t.agentsDir, t.cwd)
-	if len(skills) == 0 {
+	all := gorunner.LoadSkills(t.agentsDir, t.cwd)
+	if len(all) == 0 {
 		return "No skills installed.", nil
 	}
 
-	results := make([]installedSkill, len(skills))
-	for i, s := range skills {
+	results := make([]installedSkill, len(all))
+	for i, s := range all {
 		results[i] = installedSkill{
 			Name:        s.Name,
 			Description: s.Description,
 			Source:      s.Source,
 			Path:        s.FilePath,
+			Removable:   s.Source == "project",
 		}
 	}
 
