@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vaayne/anna/agent/runner"
+
 	tgmd "github.com/Mad-Pixels/goldmark-tgmd"
 )
 
@@ -109,11 +111,101 @@ func TestRenderMarkdownFallback(t *testing.T) {
 
 func TestBotCommands(t *testing.T) {
 	commands := botCommands()
-	if len(commands) != 3 {
-		t.Fatalf("len(commands) = %d, want 3", len(commands))
+	if len(commands) != 4 {
+		t.Fatalf("len(commands) = %d, want 4", len(commands))
 	}
 
-	if commands[0].Text != "new" || commands[1].Text != "compact" || commands[2].Text != "model" {
-		t.Fatalf("commands = %#v, want new/compact/model", commands)
+	want := []string{"start", "new", "compact", "model"}
+	for i, cmd := range commands {
+		if cmd.Text != want[i] {
+			t.Errorf("commands[%d].Text = %q, want %q", i, cmd.Text, want[i])
+		}
+	}
+}
+
+func TestToolLine(t *testing.T) {
+	tests := []struct {
+		name string
+		evt  runner.ToolUseEvent
+		want string
+	}{
+		{
+			name: "bash running",
+			evt:  runner.ToolUseEvent{Tool: "bash", Status: "running", Input: "ls -la"},
+			want: "⚡ bash: ls -la",
+		},
+		{
+			name: "read running",
+			evt:  runner.ToolUseEvent{Tool: "read", Status: "running", Input: "main.go"},
+			want: "📖 read: main.go",
+		},
+		{
+			name: "unknown tool running",
+			evt:  runner.ToolUseEvent{Tool: "custom", Status: "running", Input: "something"},
+			want: "🔧 custom: something",
+		},
+		{
+			name: "tool error",
+			evt:  runner.ToolUseEvent{Tool: "bash", Status: "error"},
+			want: "❌ bash failed",
+		},
+		{
+			name: "tool done returns empty",
+			evt:  runner.ToolUseEvent{Tool: "bash", Status: "done"},
+			want: "",
+		},
+		{
+			name: "running no input",
+			evt:  runner.ToolUseEvent{Tool: "edit", Status: "running"},
+			want: "🔧 edit",
+		},
+		{
+			name: "long input truncated",
+			evt:  runner.ToolUseEvent{Tool: "bash", Status: "running", Input: strings.Repeat("x", 80)},
+			want: "⚡ bash: " + strings.Repeat("x", 57) + "...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toolLine(&tt.evt)
+			if got != tt.want {
+				t.Errorf("toolLine() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToolLineLongToolName(t *testing.T) {
+	// A very long tool name should not cause toolLine to produce something
+	// that would panic during stream truncation.
+	evt := runner.ToolUseEvent{
+		Tool:   strings.Repeat("x", 5000),
+		Status: "running",
+		Input:  "test",
+	}
+	line := toolLine(&evt)
+	if line == "" {
+		t.Error("expected non-empty line for running tool")
+	}
+	// The suffix built from this would exceed telegramMaxMessageLen.
+	// Verify the guard logic: suffix falls back to typingCursor.
+	suffix := "\n\n_" + line + "_" + typingCursor
+	if len(suffix) < telegramMaxMessageLen {
+		t.Skip("tool name not long enough to trigger guard")
+	}
+	// The production code would replace this with just typingCursor.
+	// This test just ensures toolLine itself doesn't panic.
+}
+
+func TestToolEmojiDefaults(t *testing.T) {
+	// Verify all documented tools have emoji entries.
+	for _, tool := range []string{"bash", "read", "write", "edit", "search"} {
+		if _, ok := toolEmoji[tool]; !ok {
+			t.Errorf("missing emoji for tool %q", tool)
+		}
+	}
+	if _, ok := toolEmoji["default"]; !ok {
+		t.Error("missing default emoji")
 	}
 }
