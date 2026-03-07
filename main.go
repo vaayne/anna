@@ -86,7 +86,7 @@ func chatCommand() *ucli.Command {
 			}
 			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
 			switchFn := modelSwitcher(s.cfg, s.pool, s.memStore, s.extraTools)
-			return clicmd.RunChat(s.ctx, s.pool, s.cfg.Agents.Provider, s.cfg.Agents.Model, listFn, switchFn)
+			return clicmd.RunChat(s.ctx, s.pool, s.cfg.Provider, s.cfg.Model, listFn, switchFn)
 		},
 	}
 }
@@ -135,8 +135,8 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	// can be injected into the Go runner.
 	var cronSvc *cron.Service
 	var extraTools []tool.Tool
-	if cfg.Agents.Cron.CronEnabled() {
-		cronSvc, err = cron.New(cfg.Agents.Cron.DataDir)
+	if cfg.Cron.CronEnabled() {
+		cronSvc, err = cron.New(cfg.Cron.DataDir)
 		if err != nil {
 			return nil, fmt.Errorf("create cron service: %w", err)
 		}
@@ -149,7 +149,7 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 
 	// Skills tool — always available.
 	cwd, _ := os.Getwd()
-	extraTools = append(extraTools, skills.NewTool(cfg.Agents.Workspace, cwd))
+	extraTools = append(extraTools, skills.NewTool(cfg.Workspace, cwd))
 
 	// Notification dispatcher + tool — backends are registered later in
 	// runGateway(). Only expose the tool in gateway mode where backends exist.
@@ -158,7 +158,7 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 		extraTools = append(extraTools, channel.NewNotifyTool(dispatcher))
 	}
 
-	idleTimeout := time.Duration(cfg.Agents.Runner.IdleTimeout) * time.Minute
+	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
 	factory, err := newRunnerFactory(cfg, memStore, extraTools)
 	if err != nil {
 		return nil, fmt.Errorf("create runner factory: %w", err)
@@ -166,7 +166,7 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 
 	opts := []agent.PoolOption{
 		agent.WithIdleTimeout(idleTimeout),
-		agent.WithCompaction(cfg.Agents.Runner.Compaction.WithDefaults()),
+		agent.WithCompaction(cfg.Runner.Compaction.WithDefaults()),
 		agent.WithDefaultModel(cfg.resolveModelID(ModelTierStrong)),
 		agent.WithFastModel(cfg.resolveModelID(ModelTierFast)),
 	}
@@ -209,25 +209,25 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 }
 
 func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Tool) (runner.NewRunnerFunc, error) {
-	switch cfg.Agents.Runner.Type {
+	switch cfg.Runner.Type {
 	case "go":
-		providerCfg := cfg.Providers[cfg.Agents.Provider]
+		providerCfg := cfg.Providers[cfg.Provider]
 		return func(ctx context.Context, model string) (runner.Runner, error) {
 			if model == "" {
-				model = cfg.Agents.Model
+				model = cfg.Model
 			}
 			return gorunner.New(ctx, gorunner.Config{
-				API:         cfg.Agents.Provider,
+				API:         cfg.Provider,
 				Model:       model,
 				APIKey:      providerCfg.APIKey,
-				AgentsDir:   cfg.Agents.Workspace,
+				AgentsDir:   cfg.Workspace,
 				MemoryStore: memStore,
 				BaseURL:     providerCfg.BaseURL,
 				ExtraTools:  extraTools,
 			})
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown runner type: %q", cfg.Agents.Runner.Type)
+		return nil, fmt.Errorf("unknown runner type: %q", cfg.Runner.Type)
 	}
 }
 
@@ -235,8 +235,8 @@ func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Too
 // to use a different provider/model combination.
 func modelSwitcher(cfg *Config, pool *agent.Pool, memStore *memory.Store, extraTools []tool.Tool) channel.ModelSwitchFunc {
 	return func(provider, model string) error {
-		cfg.Agents.Provider = provider
-		cfg.Agents.Model = model
+		cfg.Provider = provider
+		cfg.Model = model
 		factory, err := newRunnerFactory(cfg, memStore, extraTools)
 		if err != nil {
 			return err

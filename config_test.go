@@ -16,36 +16,35 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Runner.Type != "go" {
-		t.Errorf("Agents.Runner.Type = %q, want %q", cfg.Agents.Runner.Type, "go")
+	if cfg.Runner.Type != "go" {
+		t.Errorf("Runner.Type = %q, want %q", cfg.Runner.Type, "go")
 	}
-	if cfg.Agents.Runner.IdleTimeout != 10 {
-		t.Errorf("Agents.Runner.IdleTimeout = %d, want 10", cfg.Agents.Runner.IdleTimeout)
+	if cfg.Runner.IdleTimeout != 10 {
+		t.Errorf("Runner.IdleTimeout = %d, want 10", cfg.Runner.IdleTimeout)
 	}
-	if cfg.SessionsPath() != filepath.Join(dir, "sessions") {
-		t.Errorf("SessionsPath() = %q, want %q", cfg.SessionsPath(), filepath.Join(dir, "sessions"))
+	if cfg.SessionsPath() != filepath.Join(dir, "workspace", "sessions") {
+		t.Errorf("SessionsPath() = %q, want %q", cfg.SessionsPath(), filepath.Join(dir, "workspace", "sessions"))
 	}
 	if cfg.Channels.Telegram.Token != "" {
 		t.Errorf("Channels.Telegram.Token = %q, want empty", cfg.Channels.Telegram.Token)
 	}
-	if cfg.Agents.Provider != "anthropic" {
-		t.Errorf("Agents.Provider = %q, want %q", cfg.Agents.Provider, "anthropic")
+	if cfg.Provider != "anthropic" {
+		t.Errorf("Provider = %q, want %q", cfg.Provider, "anthropic")
 	}
-	if cfg.Agents.Model != "claude-sonnet-4-6" {
-		t.Errorf("Agents.Model = %q, want %q", cfg.Agents.Model, "claude-sonnet-4-6")
+	if cfg.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want %q", cfg.Model, "claude-sonnet-4-6")
 	}
-	if cfg.Agents.Workspace != dir {
-		t.Errorf("Agents.Workspace = %q, want %q", cfg.Agents.Workspace, dir)
+	if cfg.Workspace != filepath.Join(dir, "workspace") {
+		t.Errorf("Workspace = %q, want %q", cfg.Workspace, filepath.Join(dir, "workspace"))
 	}
 }
 
 func TestLoadConfigFromFile(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `
-agents:
-  runner:
-    type: go
-    idle_timeout: 5
+runner:
+  type: go
+  idle_timeout: 5
 channels:
   telegram:
     token: "test-token-123"
@@ -59,8 +58,8 @@ channels:
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Runner.IdleTimeout != 5 {
-		t.Errorf("Agents.Runner.IdleTimeout = %d, want 5", cfg.Agents.Runner.IdleTimeout)
+	if cfg.Runner.IdleTimeout != 5 {
+		t.Errorf("Runner.IdleTimeout = %d, want 5", cfg.Runner.IdleTimeout)
 	}
 	if cfg.Channels.Telegram.Token != "test-token-123" {
 		t.Errorf("Channels.Telegram.Token = %q, want %q", cfg.Channels.Telegram.Token, "test-token-123")
@@ -165,8 +164,8 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.Agents.Runner.Type == "" {
-		t.Error("Agents.Runner.Type should have a default")
+	if cfg.Runner.Type == "" {
+		t.Error("Runner.Type should have a default")
 	}
 }
 
@@ -210,9 +209,8 @@ func TestProviderEnvAnthropicAPIKey(t *testing.T) {
 func TestProviderEnvOpenAI(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `
-agents:
-  provider: openai
-  model: gpt-4o
+provider: openai
+model: gpt-4o
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -228,8 +226,8 @@ agents:
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Provider != "openai" {
-		t.Errorf("Agents.Provider = %q, want %q", cfg.Agents.Provider, "openai")
+	if cfg.Provider != "openai" {
+		t.Errorf("Provider = %q, want %q", cfg.Provider, "openai")
 	}
 	p := cfg.Providers["openai"]
 	if p.APIKey != "sk-openai-test" {
@@ -253,11 +251,11 @@ func TestProviderDefaultValues(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Provider != "anthropic" {
-		t.Errorf("Agents.Provider = %q, want default %q", cfg.Agents.Provider, "anthropic")
+	if cfg.Provider != "anthropic" {
+		t.Errorf("Provider = %q, want default %q", cfg.Provider, "anthropic")
 	}
-	if cfg.Agents.Model != "claude-sonnet-4-6" {
-		t.Errorf("Agents.Model = %q, want default %q", cfg.Agents.Model, "claude-sonnet-4-6")
+	if cfg.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want default %q", cfg.Model, "claude-sonnet-4-6")
 	}
 }
 
@@ -270,8 +268,8 @@ func TestRunnerTypeEnvOverride(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Runner.Type != "go" {
-		t.Errorf("Agents.Runner.Type = %q, want %q", cfg.Agents.Runner.Type, "go")
+	if cfg.Runner.Type != "go" {
+		t.Errorf("Runner.Type = %q, want %q", cfg.Runner.Type, "go")
 	}
 }
 
@@ -285,22 +283,20 @@ func TestProviderModelEnvOverrides(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Provider != "openai" {
-		t.Errorf("Agents.Provider = %q, want %q", cfg.Agents.Provider, "openai")
+	if cfg.Provider != "openai" {
+		t.Errorf("Provider = %q, want %q", cfg.Provider, "openai")
 	}
-	if cfg.Agents.Model != "gpt-4o" {
-		t.Errorf("Agents.Model = %q, want %q", cfg.Agents.Model, "gpt-4o")
+	if cfg.Model != "gpt-4o" {
+		t.Errorf("Model = %q, want %q", cfg.Model, "gpt-4o")
 	}
 }
 
 func TestNewRunnerFactoryGo(t *testing.T) {
 	cfg := &Config{
-		Agents: AgentsConfig{
-			Provider:  "anthropic",
-			Model:     "test-model",
-			Workspace: t.TempDir(),
-			Runner:    RunnerConfig{Type: "go"},
-		},
+		Provider:  "anthropic",
+		Model:     "test-model",
+		Workspace: t.TempDir(),
+		Runner:    RunnerConfig{Type: "go"},
 		Providers: map[string]ProviderConfig{
 			"anthropic": {APIKey: "test-key"},
 		},
@@ -323,9 +319,7 @@ func TestNewRunnerFactoryGo(t *testing.T) {
 
 func TestNewRunnerFactoryUnknown(t *testing.T) {
 	cfg := &Config{
-		Agents: AgentsConfig{
-			Runner: RunnerConfig{Type: "invalid"},
-		},
+		Runner: RunnerConfig{Type: "invalid"},
 	}
 
 	_, err := newRunnerFactory(cfg, nil, nil)
@@ -353,9 +347,8 @@ func TestRunGatewayNoServices(t *testing.T) {
 func TestProvidersFromYAML(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `
-agents:
-  provider: anthropic
-  model: claude-sonnet-4-6
+provider: anthropic
+model: claude-sonnet-4-6
 providers:
   anthropic:
     api_key: "yaml-key"
@@ -421,10 +414,8 @@ providers:
 
 func TestResolveModelFromConfig(t *testing.T) {
 	cfg := &Config{
-		Agents: AgentsConfig{
-			Provider: "anthropic",
-			Model:    "claude-sonnet-4-6",
-		},
+		Provider: "anthropic",
+		Model:    "claude-sonnet-4-6",
 		Providers: map[string]ProviderConfig{
 			"anthropic": {
 				APIKey: "key",
@@ -455,10 +446,8 @@ func TestResolveModelFromConfig(t *testing.T) {
 
 func TestResolveModelFallback(t *testing.T) {
 	cfg := &Config{
-		Agents: AgentsConfig{
-			Provider: "anthropic",
-			Model:    "claude-sonnet-4-6",
-		},
+		Provider:  "anthropic",
+		Model:     "claude-sonnet-4-6",
 		Providers: map[string]ProviderConfig{"anthropic": {APIKey: "key"}},
 	}
 
@@ -479,56 +468,32 @@ func TestResolveModelTierFallbackChain(t *testing.T) {
 		wantID string
 	}{
 		{
-			name:   "strong falls back to Model",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			name:   "strong falls back to model",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
 			tier:   "strong",
 			wantID: "default-model",
 		},
 		{
-			name:   "strong uses Models.Strong",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			name:   "strong uses model_strong",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", ModelStrong: "strong-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
 			tier:   "strong",
 			wantID: "strong-model",
 		},
 		{
-			name:   "worker falls back to strong",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
-			tier:   "worker",
-			wantID: "strong-model",
-		},
-		{
-			name:   "worker uses Models.Worker",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model", Worker: "worker-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
-			tier:   "worker",
-			wantID: "worker-model",
-		},
-		{
-			name:   "fast falls back to worker",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Worker: "worker-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
-			tier:   "fast",
-			wantID: "worker-model",
-		},
-		{
-			name:   "fast falls back to strong when no worker",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
-			tier:   "fast",
-			wantID: "strong-model",
-		},
-		{
-			name:   "fast falls back to Model when nothing set",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			name:   "fast falls back to model",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
 			tier:   "fast",
 			wantID: "default-model",
 		},
 		{
-			name:   "fast uses Models.Fast",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "s", Worker: "w", Fast: "fast-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			name:   "fast uses model_fast",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", ModelStrong: "s", ModelFast: "fast-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
 			tier:   "fast",
 			wantID: "fast-model",
 		},
 		{
 			name:   "unknown tier falls back like strong",
-			cfg:    Config{Agents: AgentsConfig{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			cfg:    Config{Provider: "anthropic", Model: "default-model", ModelStrong: "strong-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
 			tier:   "unknown",
 			wantID: "strong-model",
 		},
@@ -544,16 +509,13 @@ func TestResolveModelTierFallbackChain(t *testing.T) {
 	}
 }
 
-func TestModelsConfigFromYAML(t *testing.T) {
+func TestModelTiersFromYAML(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `
-agents:
-  provider: anthropic
-  model: claude-sonnet-4-6
-  models:
-    strong: claude-sonnet-4-6
-    worker: claude-haiku-3.5
-    fast: claude-haiku-3.5
+provider: anthropic
+model: claude-sonnet-4-6
+model_strong: claude-opus-4-6
+model_fast: claude-haiku-4-5
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -564,14 +526,11 @@ agents:
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Models.Strong != "claude-sonnet-4-6" {
-		t.Errorf("Agents.Models.Strong = %q, want %q", cfg.Agents.Models.Strong, "claude-sonnet-4-6")
+	if cfg.ModelStrong != "claude-opus-4-6" {
+		t.Errorf("ModelStrong = %q, want %q", cfg.ModelStrong, "claude-opus-4-6")
 	}
-	if cfg.Agents.Models.Worker != "claude-haiku-3.5" {
-		t.Errorf("Agents.Models.Worker = %q, want %q", cfg.Agents.Models.Worker, "claude-haiku-3.5")
-	}
-	if cfg.Agents.Models.Fast != "claude-haiku-3.5" {
-		t.Errorf("Agents.Models.Fast = %q, want %q", cfg.Agents.Models.Fast, "claude-haiku-3.5")
+	if cfg.ModelFast != "claude-haiku-4-5" {
+		t.Errorf("ModelFast = %q, want %q", cfg.ModelFast, "claude-haiku-4-5")
 	}
 }
 
@@ -579,7 +538,6 @@ func TestModelTierEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Setenv("ANNA_MODEL_STRONG", "env-strong")
-	t.Setenv("ANNA_MODEL_WORKER", "env-worker")
 	t.Setenv("ANNA_MODEL_FAST", "env-fast")
 
 	cfg, err := loadConfigFrom(dir)
@@ -587,14 +545,11 @@ func TestModelTierEnvOverrides(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.Agents.Models.Strong != "env-strong" {
-		t.Errorf("Agents.Models.Strong = %q, want %q", cfg.Agents.Models.Strong, "env-strong")
+	if cfg.ModelStrong != "env-strong" {
+		t.Errorf("ModelStrong = %q, want %q", cfg.ModelStrong, "env-strong")
 	}
-	if cfg.Agents.Models.Worker != "env-worker" {
-		t.Errorf("Agents.Models.Worker = %q, want %q", cfg.Agents.Models.Worker, "env-worker")
-	}
-	if cfg.Agents.Models.Fast != "env-fast" {
-		t.Errorf("Agents.Models.Fast = %q, want %q", cfg.Agents.Models.Fast, "env-fast")
+	if cfg.ModelFast != "env-fast" {
+		t.Errorf("ModelFast = %q, want %q", cfg.ModelFast, "env-fast")
 	}
 
 	// Verify tier resolution uses env values.
@@ -607,10 +562,8 @@ func TestModelTierEnvOverrides(t *testing.T) {
 func TestModelTierEnvOverridesYAML(t *testing.T) {
 	dir := t.TempDir()
 	yamlContent := `
-agents:
-  models:
-    strong: yaml-strong
-    fast: yaml-fast
+model_strong: yaml-strong
+model_fast: yaml-fast
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -624,12 +577,12 @@ agents:
 	}
 
 	// Env should override YAML.
-	if cfg.Agents.Models.Strong != "env-strong" {
-		t.Errorf("Agents.Models.Strong = %q, want %q", cfg.Agents.Models.Strong, "env-strong")
+	if cfg.ModelStrong != "env-strong" {
+		t.Errorf("ModelStrong = %q, want %q", cfg.ModelStrong, "env-strong")
 	}
 	// YAML value should remain for non-overridden tiers.
-	if cfg.Agents.Models.Fast != "yaml-fast" {
-		t.Errorf("Agents.Models.Fast = %q, want %q", cfg.Agents.Models.Fast, "yaml-fast")
+	if cfg.ModelFast != "yaml-fast" {
+		t.Errorf("ModelFast = %q, want %q", cfg.ModelFast, "yaml-fast")
 	}
 }
 
@@ -665,24 +618,22 @@ providers:
 
 func TestWorkspacePaths(t *testing.T) {
 	cfg := &Config{
-		Agents: AgentsConfig{
-			Workspace: "/home/user/.anna",
-		},
+		Workspace: "/home/user/.anna/workspace",
 	}
 
-	if cfg.SessionsPath() != "/home/user/.anna/sessions" {
+	if cfg.SessionsPath() != "/home/user/.anna/workspace/sessions" {
 		t.Errorf("SessionsPath() = %q", cfg.SessionsPath())
 	}
-	if cfg.MemoryPath() != "/home/user/.anna/memory" {
+	if cfg.MemoryPath() != "/home/user/.anna/workspace/memory" {
 		t.Errorf("MemoryPath() = %q", cfg.MemoryPath())
 	}
-	if cfg.SkillsPath() != "/home/user/.anna/skills" {
+	if cfg.SkillsPath() != "/home/user/.anna/workspace/skills" {
 		t.Errorf("SkillsPath() = %q", cfg.SkillsPath())
 	}
-	if cfg.ModelsPath() != "/home/user/.anna/models.json" {
+	if cfg.ModelsPath() != "/home/user/.anna/workspace/models.json" {
 		t.Errorf("ModelsPath() = %q", cfg.ModelsPath())
 	}
-	if cfg.LogPath() != "/home/user/.anna/anna.log" {
+	if cfg.LogPath() != "/home/user/.anna/workspace/anna.log" {
 		t.Errorf("LogPath() = %q", cfg.LogPath())
 	}
 }

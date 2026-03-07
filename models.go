@@ -122,7 +122,7 @@ func collectModels(cfg *Config) []channel.ModelOption {
 	}
 
 	// Current model first.
-	add(cfg.Agents.Provider, cfg.Agents.Model)
+	add(cfg.Provider, cfg.Model)
 
 	// Load from cache.
 	if cache, err := LoadModelsCache(); err == nil {
@@ -141,7 +141,7 @@ func collectModels(cfg *Config) []channel.ModelOption {
 
 	for _, provName := range provNames {
 		prov := cfg.Providers[provName]
-		add(provName, cfg.Agents.Model)
+		add(provName, cfg.Model)
 		for _, m := range prov.Models {
 			add(provName, m.ID)
 		}
@@ -194,7 +194,7 @@ func modelsListAction(c *ucli.Context) error {
 	}
 
 	models := collectModels(cfg)
-	printModelsGrouped(models, cfg.Agents.Provider, cfg.Agents.Model)
+	printModelsGrouped(models, cfg.Provider, cfg.Model)
 	return nil
 }
 
@@ -235,7 +235,7 @@ func modelsCurrentCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s/%s\n", cfg.Agents.Provider, cfg.Agents.Model)
+			fmt.Printf("%s/%s\n", cfg.Provider, cfg.Model)
 			return nil
 		},
 	}
@@ -296,7 +296,7 @@ func modelsSearchCommand() *ucli.Command {
 				return nil
 			}
 
-			printModelsGrouped(matched, cfg.Agents.Provider, cfg.Agents.Model)
+			printModelsGrouped(matched, cfg.Provider, cfg.Model)
 			return nil
 		},
 	}

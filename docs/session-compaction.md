@@ -127,14 +127,13 @@ history — it never blocks the user's message.
 
 ## Configuration
 
-In `~/.anna/config.yaml` under `agents: runner:`:
+In `~/.anna/config.yaml` under `runner:`:
 
 ```yaml
-agents:
-  runner:
-    compaction:
-      max_tokens: 80000   # auto-compact threshold (0 = default 80k, -1 = disabled)
-      keep_tail: 20       # recent messages to preserve verbatim
+runner:
+  compaction:
+    max_tokens: 80000   # auto-compact threshold (0 = default 80k, -1 = disabled)
+    keep_tail: 20       # recent messages to preserve verbatim
 ```
 
 Both fields have defaults applied via `CompactionConfig.WithDefaults()`:

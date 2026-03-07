@@ -12,39 +12,26 @@ import (
 
 // Config is the top-level configuration for anna.
 type Config struct {
-	Providers map[string]ProviderConfig `yaml:"providers"`
-	Channels  ChannelsConfig            `yaml:"channels"`
-	Agents    AgentsConfig              `yaml:"agents"`
-}
-
-// ChannelsConfig groups all channel (interface) configurations.
-type ChannelsConfig struct {
-	Telegram TelegramConfig `yaml:"telegram"`
-}
-
-// AgentsConfig holds agent defaults and workspace settings.
-type AgentsConfig struct {
-	Provider  string           `yaml:"provider"`
-	Model     string           `yaml:"model"`
-	Models    ModelsConfig     `yaml:"models"`
-	Workspace string           `yaml:"workspace"`
-	Runner    RunnerConfig     `yaml:"runner"`
-	Cron      CronConfig       `yaml:"cron"`
+	Provider    string                    `yaml:"provider"`
+	Model       string                    `yaml:"model"`
+	ModelStrong string                    `yaml:"model_strong"`
+	ModelFast   string                    `yaml:"model_fast"`
+	Workspace   string                    `yaml:"workspace"`
+	Runner      RunnerConfig              `yaml:"runner"`
+	Cron        CronConfig                `yaml:"cron"`
+	Providers   map[string]ProviderConfig `yaml:"providers"`
+	Channels    ChannelsConfig            `yaml:"channels"`
 }
 
 // Model tier constants.
 const (
 	ModelTierStrong = "strong"
-	ModelTierWorker = "worker"
 	ModelTierFast   = "fast"
 )
 
-// ModelsConfig holds tiered model IDs.
-// Fallback chain: fast → worker → strong → AgentsConfig.Model (backward compat).
-type ModelsConfig struct {
-	Strong string `yaml:"strong"`
-	Worker string `yaml:"worker"`
-	Fast   string `yaml:"fast"`
+// ChannelsConfig groups all channel (interface) configurations.
+type ChannelsConfig struct {
+	Telegram TelegramConfig `yaml:"telegram"`
 }
 
 type CronConfig struct {
@@ -155,22 +142,19 @@ func loadConfigFrom(dir string) (*Config, error) {
 		cfg.Channels.Telegram.GroupMode = v
 	}
 	if v := os.Getenv("ANNA_RUNNER_TYPE"); v != "" {
-		cfg.Agents.Runner.Type = v
+		cfg.Runner.Type = v
 	}
 	if v := os.Getenv("ANNA_PROVIDER"); v != "" {
-		cfg.Agents.Provider = v
+		cfg.Provider = v
 	}
 	if v := os.Getenv("ANNA_MODEL"); v != "" {
-		cfg.Agents.Model = v
+		cfg.Model = v
 	}
 	if v := os.Getenv("ANNA_MODEL_STRONG"); v != "" {
-		cfg.Agents.Models.Strong = v
-	}
-	if v := os.Getenv("ANNA_MODEL_WORKER"); v != "" {
-		cfg.Agents.Models.Worker = v
+		cfg.ModelStrong = v
 	}
 	if v := os.Getenv("ANNA_MODEL_FAST"); v != "" {
-		cfg.Agents.Models.Fast = v
+		cfg.ModelFast = v
 	}
 
 	// Initialize providers map if nil.
@@ -184,23 +168,23 @@ func loadConfigFrom(dir string) (*Config, error) {
 	resolveProviderEnv(cfg, "openai-response", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 
 	// Apply defaults for missing values.
-	if cfg.Agents.Provider == "" {
-		cfg.Agents.Provider = "anthropic"
+	if cfg.Provider == "" {
+		cfg.Provider = "anthropic"
 	}
-	if cfg.Agents.Model == "" {
-		cfg.Agents.Model = "claude-sonnet-4-6"
+	if cfg.Model == "" {
+		cfg.Model = "claude-sonnet-4-6"
 	}
-	if cfg.Agents.Workspace == "" {
-		cfg.Agents.Workspace = dir
+	if cfg.Workspace == "" {
+		cfg.Workspace = filepath.Join(dir, "workspace")
 	}
-	if cfg.Agents.Runner.Type == "" {
-		cfg.Agents.Runner.Type = "go"
+	if cfg.Runner.Type == "" {
+		cfg.Runner.Type = "go"
 	}
-	if cfg.Agents.Runner.IdleTimeout == 0 {
-		cfg.Agents.Runner.IdleTimeout = 10
+	if cfg.Runner.IdleTimeout == 0 {
+		cfg.Runner.IdleTimeout = 10
 	}
-	if cfg.Agents.Cron.DataDir == "" {
-		cfg.Agents.Cron.DataDir = filepath.Join(cfg.Agents.Workspace, "cron")
+	if cfg.Cron.DataDir == "" {
+		cfg.Cron.DataDir = filepath.Join(cfg.Workspace, "cron")
 	}
 
 	return cfg, nil
@@ -223,26 +207,26 @@ func resolveProviderEnv(cfg *Config, name, keyEnv, urlEnv string) {
 	cfg.Providers[name] = p
 }
 
-// Workspace path helpers — all data lives under Agents.Workspace.
+// Workspace path helpers — all data lives under Workspace.
 
 func (cfg *Config) SessionsPath() string {
-	return filepath.Join(cfg.Agents.Workspace, "sessions")
+	return filepath.Join(cfg.Workspace, "sessions")
 }
 
 func (cfg *Config) MemoryPath() string {
-	return filepath.Join(cfg.Agents.Workspace, "memory")
+	return filepath.Join(cfg.Workspace, "memory")
 }
 
 func (cfg *Config) SkillsPath() string {
-	return filepath.Join(cfg.Agents.Workspace, "skills")
+	return filepath.Join(cfg.Workspace, "skills")
 }
 
 func (cfg *Config) ModelsPath() string {
-	return filepath.Join(cfg.Agents.Workspace, "models.json")
+	return filepath.Join(cfg.Workspace, "models.json")
 }
 
 func (cfg *Config) LogPath() string {
-	return filepath.Join(cfg.Agents.Workspace, "anna.log")
+	return filepath.Join(cfg.Workspace, "anna.log")
 }
 
 // ResolveModel returns the types.Model for the default provider/model,
@@ -251,60 +235,45 @@ func (cfg *Config) ResolveModel() types.Model {
 	return cfg.ResolveModelTier(ModelTierStrong)
 }
 
-// ResolveModelTier returns the model ID for the given tier after applying
-// the fallback chain: fast → worker → strong → Agents.Model.
+// ResolveModelTier returns the model for the given tier after applying
+// the fallback: strong → model, fast → model.
 func (cfg *Config) ResolveModelTier(tier string) types.Model {
 	modelID := cfg.resolveModelID(tier)
-	providerCfg := cfg.Providers[cfg.Agents.Provider]
+	providerCfg := cfg.Providers[cfg.Provider]
 	for _, m := range providerCfg.Models {
 		if m.ID == modelID {
-			return modelConfigToType(cfg.Agents.Provider, m)
+			return modelConfigToType(cfg.Provider, m)
 		}
 	}
 	// Fallback: construct a minimal Model from defaults.
 	return types.Model{
 		ID:       modelID,
 		Name:     modelID,
-		API:      cfg.Agents.Provider,
-		Provider: cfg.Agents.Provider,
+		API:      cfg.Provider,
+		Provider: cfg.Provider,
 		BaseURL:  providerCfg.BaseURL,
 	}
 }
 
 // resolveModelID returns the model ID string for the given tier,
-// walking the fallback chain: fast → worker → strong → Agents.Model.
+// falling back to Model if the tier-specific value is not set.
 func (cfg *Config) resolveModelID(tier string) string {
 	switch tier {
-	case ModelTierFast:
-		if cfg.Agents.Models.Fast != "" {
-			return cfg.Agents.Models.Fast
-		}
-		if cfg.Agents.Models.Worker != "" {
-			return cfg.Agents.Models.Worker
-		}
-		if cfg.Agents.Models.Strong != "" {
-			return cfg.Agents.Models.Strong
-		}
-		return cfg.Agents.Model
-	case ModelTierWorker:
-		if cfg.Agents.Models.Worker != "" {
-			return cfg.Agents.Models.Worker
-		}
-		if cfg.Agents.Models.Strong != "" {
-			return cfg.Agents.Models.Strong
-		}
-		return cfg.Agents.Model
 	case ModelTierStrong:
-		if cfg.Agents.Models.Strong != "" {
-			return cfg.Agents.Models.Strong
+		if cfg.ModelStrong != "" {
+			return cfg.ModelStrong
 		}
-		return cfg.Agents.Model
+		return cfg.Model
+	case ModelTierFast:
+		if cfg.ModelFast != "" {
+			return cfg.ModelFast
+		}
+		return cfg.Model
 	default:
-		// Unknown tier, treat as strong.
-		if cfg.Agents.Models.Strong != "" {
-			return cfg.Agents.Models.Strong
+		if cfg.ModelStrong != "" {
+			return cfg.ModelStrong
 		}
-		return cfg.Agents.Model
+		return cfg.Model
 	}
 }
 
@@ -324,14 +293,8 @@ func SaveModelSelection(provider, model string) error {
 		}
 	}
 
-	// Ensure agents section exists.
-	agents, _ := raw["agents"].(map[string]any)
-	if agents == nil {
-		agents = make(map[string]any)
-	}
-	agents["provider"] = provider
-	agents["model"] = model
-	raw["agents"] = agents
+	raw["provider"] = provider
+	raw["model"] = model
 
 	out, err := yaml.Marshal(raw)
 	if err != nil {

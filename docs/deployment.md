@@ -32,13 +32,12 @@ Create a config file at `~/.anna/config.yaml` (see [configuration.md](configurat
 ```bash
 mkdir -p ~/.anna
 cat > ~/.anna/config.yaml <<'EOF'
+provider: anthropic
+model: claude-sonnet-4-6
+
 providers:
   anthropic:
     api_key: "sk-..."
-
-agents:
-  provider: anthropic
-  model: claude-sonnet-4-6
 EOF
 ```
 
@@ -143,13 +142,13 @@ docker buildx build --platform linux/amd64,linux/arm64 -t anna .
 | Path | Purpose |
 |------|---------|
 | `~/.anna/config.yaml` | Configuration |
-| `~/.anna/sessions/` | Chat session history |
-| `~/.anna/cron/` | Cron job persistence |
-| `~/.anna/memory/` | Persistent memory (facts + journal) |
-| `~/.anna/skills/` | Installed skills |
-| `~/.anna/models.json` | Model cache |
+| `~/.anna/workspace/sessions/` | Chat session history |
+| `~/.anna/workspace/cron/` | Cron job persistence |
+| `~/.anna/workspace/memory/` | Persistent memory (facts + journal) |
+| `~/.anna/workspace/skills/` | Installed skills |
+| `~/.anna/workspace/models.json` | Model cache |
 
-All paths are under the workspace root (`~/.anna` by default, configurable via `ANNA_HOME`).
+All paths are under the workspace root (`~/.anna/workspace` by default, configurable via `ANNA_HOME`).
 
 ## Environment Variables
 
@@ -159,7 +158,7 @@ Key variables for deployment:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANNA_HOME` | No | Workspace root (default `~/.anna`) |
+| `ANNA_HOME` | No | Workspace root (default `~/.anna/workspace`) |
 | `ANTHROPIC_API_KEY` | Yes* | Anthropic provider key |
 | `OPENAI_API_KEY` | Yes* | OpenAI provider key |
 | `ANNA_TELEGRAM_TOKEN` | For Telegram | Bot token from @BotFather |

@@ -95,9 +95,8 @@ providers:
   anthropic:
     api_key: "sk-..."
 
-agents:
-  provider: anthropic
-  model: claude-sonnet-4-6
+provider: anthropic
+model: claude-sonnet-4-6
 ```
 
 Or use environment variables:

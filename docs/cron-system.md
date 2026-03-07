@@ -71,7 +71,7 @@ type Job struct {
 
 ### Persistence
 
-Jobs are stored as a JSON array in `{dataDir}/jobs.json` (default: `~/.anna/cron/jobs.json`). Writes are atomic (temp file + rename).
+Jobs are stored as a JSON array in `{dataDir}/jobs.json` (default: `~/.anna/workspace/cron/jobs.json`). Writes are atomic (temp file + rename).
 
 ### One-Time Jobs
 
@@ -92,18 +92,17 @@ Each cron job's session behavior is controlled by its `session_mode`:
 
 ## Configuration
 
-Add to `~/.anna/config.yaml` under `agents:`:
+Add to `~/.anna/config.yaml`:
 
 ```yaml
-agents:
-  cron:
-    enabled: true
-    data_dir: ~/.anna/cron  # optional, this is the default
+cron:
+  enabled: true
+  data_dir: ~/.anna/workspace/cron  # optional, this is the default
 ```
 
 Cron is only active when:
-- `agents.cron.enabled` is `true`
-- `agents.runner.type` is `go` (the Pi runner doesn't support custom tools)
+- `cron.enabled` is `true`
+- `runner.type` is `go` (the Pi runner doesn't support custom tools)
 
 ## Agent Tool
 
