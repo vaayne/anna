@@ -107,6 +107,16 @@ func configPath() string {
 	return filepath.Join(annaHome(), "config.yaml")
 }
 
+// statePath returns the path to state.yaml (mutable runtime state).
+func statePath() string {
+	return filepath.Join(annaHome(), "state.yaml")
+}
+
+// cachePath returns the cache directory inside the anna home.
+func cachePath() string {
+	return filepath.Join(annaHome(), "cache")
+}
+
 // LoadConfig loads config from the default anna home (~/.anna/config.yaml).
 func LoadConfig() (*Config, error) {
 	return loadConfigFrom(annaHome())
@@ -129,6 +139,10 @@ func loadConfigFrom(dir string) (*Config, error) {
 			return nil, fmt.Errorf("parse config: %w", err)
 		}
 	}
+
+	// Apply runtime state overrides (state.yaml) — mutable values like
+	// current provider/model set by "anna models set" or /model command.
+	applyState(cfg)
 
 	// Apply environment variable overrides (ANNA_ prefix).
 	// Uses caarlos0/env struct tags; only set env vars override YAML values.
@@ -202,7 +216,7 @@ func (cfg *Config) SkillsPath() string {
 }
 
 func (cfg *Config) ModelsPath() string {
-	return filepath.Join(cfg.Workspace, "models.json")
+	return filepath.Join(cachePath(), "models.json")
 }
 
 func (cfg *Config) LogPath() string {
@@ -257,19 +271,19 @@ func (cfg *Config) resolveModelID(tier string) string {
 	}
 }
 
-// SaveModelSelection persists the provider and model to the config file,
-// preserving all other fields.
+// SaveModelSelection persists the provider and model to state.yaml,
+// keeping config.yaml as a static, user-edited file.
 func SaveModelSelection(provider, model string) error {
-	path := configPath()
+	path := statePath()
 
 	raw := make(map[string]any)
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read config: %w", err)
+		return fmt.Errorf("read state: %w", err)
 	}
 	if err == nil {
 		if err := yaml.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("parse config: %w", err)
+			return fmt.Errorf("parse state: %w", err)
 		}
 	}
 
@@ -278,12 +292,33 @@ func SaveModelSelection(provider, model string) error {
 
 	out, err := yaml.Marshal(raw)
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return fmt.Errorf("marshal state: %w", err)
 	}
 	if err := os.WriteFile(path, out, 0o644); err != nil {
-		return fmt.Errorf("write config: %w", err)
+		return fmt.Errorf("write state: %w", err)
 	}
 	return nil
+}
+
+// applyState loads state.yaml and overrides provider/model in cfg.
+func applyState(cfg *Config) {
+	data, err := os.ReadFile(statePath())
+	if err != nil {
+		return
+	}
+	var state struct {
+		Provider string `yaml:"provider"`
+		Model    string `yaml:"model"`
+	}
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return
+	}
+	if state.Provider != "" {
+		cfg.Provider = state.Provider
+	}
+	if state.Model != "" {
+		cfg.Model = state.Model
+	}
 }
 
 func modelConfigToType(provider string, m ModelConfig) types.Model {

@@ -2,7 +2,7 @@
 
 Config file: `~/.anna/config.yaml`
 
-The workspace root defaults to `~/.anna/workspace` and can be changed by setting the `ANNA_HOME` environment variable. All data paths (sessions, memory, skills, models cache, cron) live under this workspace root.
+The workspace root defaults to `~/.anna/workspace` and can be changed by setting the `ANNA_HOME` environment variable. Session, memory, skills, and cron data live under the workspace root. The model cache lives in `~/.anna/cache/`, and runtime state (current provider/model) is stored in `~/.anna/state.yaml` — separate from the static config.
 
 ## Full Reference
 
@@ -68,24 +68,28 @@ cron:
   data_dir: "~/.anna/workspace/cron"  # Job persistence directory
 ```
 
-## Workspace Layout
+## Directory Layout
 
-All data lives under the workspace root (`~/.anna/workspace` by default):
+| Path | Purpose | Category |
+|------|---------|----------|
+| `~/.anna/config.yaml` | Static configuration (user-edited) | Config |
+| `~/.anna/state.yaml` | Runtime state: current provider/model (program-managed) | State |
+| `~/.anna/cache/models.json` | Cached model list (safe to delete) | Cache |
+| `~/.anna/workspace/sessions/` | Chat session history | Data |
+| `~/.anna/workspace/memory/` | Persistent memory (facts + journal) | Data |
+| `~/.anna/workspace/skills/` | Installed skills | Data |
+| `~/.anna/workspace/cron/` | Cron job persistence | Data |
 
-| Path | Purpose |
-|------|---------|
-| `~/.anna/config.yaml` | Configuration file |
-| `~/.anna/workspace/sessions/` | Chat session history |
-| `~/.anna/workspace/cron/` | Cron job persistence |
-| `~/.anna/workspace/memory/` | Persistent memory (facts + journal) |
-| `~/.anna/workspace/skills/` | Installed skills |
-| `~/.anna/workspace/models.json` | Model cache |
-
-Sessions are derived from `workspace` as `<workspace>/sessions` and no longer have a separate config key.
+- **config.yaml** is static and user-edited — safe to version control.
+- **state.yaml** is written by `anna models set` and the `/model` command. It overrides `provider` and `model` from config.yaml.
+- **cache/** contains regenerable data. Run `anna models update` to rebuild.
+- **workspace/** contains all persistent application data.
 
 ## Environment Variable Overrides
 
-All config fields support env var overrides using the `ANNA_` prefix. Nested structs add their own prefix segment (e.g. `runner.type` → `ANNA_RUNNER_TYPE`). Env vars always override YAML values.
+All config fields support env var overrides using the `ANNA_` prefix. Nested structs add their own prefix segment (e.g. `runner.type` → `ANNA_RUNNER_TYPE`).
+
+**Priority order** (highest wins): env vars → state.yaml → config.yaml → defaults.
 
 | Variable | Overrides | Notes |
 |----------|-----------|-------|

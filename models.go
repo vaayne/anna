@@ -32,7 +32,7 @@ type ModelsCache struct {
 }
 
 func modelsCachePath() string {
-	return filepath.Join(annaHome(), "models.json")
+	return filepath.Join(cachePath(), "models.json")
 }
 
 // LoadModelsCache reads the cached models from the workspace models.json.
@@ -48,13 +48,17 @@ func LoadModelsCache() (*ModelsCache, error) {
 	return &cache, nil
 }
 
-// SaveModelsCache writes the models cache to the workspace models.json.
+// SaveModelsCache writes the models cache to the cache directory.
 func SaveModelsCache(cache *ModelsCache) error {
+	path := modelsCachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create cache dir: %w", err)
+	}
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal models cache: %w", err)
 	}
-	return os.WriteFile(modelsCachePath(), data, 0o644)
+	return os.WriteFile(path, data, 0o644)
 }
 
 // fetchModelsFromAPIs queries all configured providers for their model lists.

@@ -616,6 +616,89 @@ providers:
 	}
 }
 
+func TestStateOverridesConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANNA_HOME", dir)
+
+	configYAML := `
+provider: anthropic
+model: claude-sonnet-4-6
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stateYAML := `
+provider: openai
+model: gpt-4o
+`
+	if err := os.WriteFile(filepath.Join(dir, "state.yaml"), []byte(stateYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Provider != "openai" {
+		t.Errorf("Provider = %q, want %q (state should override config)", cfg.Provider, "openai")
+	}
+	if cfg.Model != "gpt-4o" {
+		t.Errorf("Model = %q, want %q (state should override config)", cfg.Model, "gpt-4o")
+	}
+}
+
+func TestEnvOverridesState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANNA_HOME", dir)
+	t.Setenv("ANNA_PROVIDER", "anthropic")
+	t.Setenv("ANNA_MODEL", "claude-opus-4-6")
+
+	stateYAML := `
+provider: openai
+model: gpt-4o
+`
+	if err := os.WriteFile(filepath.Join(dir, "state.yaml"), []byte(stateYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Provider != "anthropic" {
+		t.Errorf("Provider = %q, want %q (env should override state)", cfg.Provider, "anthropic")
+	}
+	if cfg.Model != "claude-opus-4-6" {
+		t.Errorf("Model = %q, want %q (env should override state)", cfg.Model, "claude-opus-4-6")
+	}
+}
+
+func TestSaveModelSelectionWritesState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANNA_HOME", dir)
+
+	if err := SaveModelSelection("openai", "gpt-4o"); err != nil {
+		t.Fatalf("SaveModelSelection: %v", err)
+	}
+
+	// state.yaml should exist.
+	data, err := os.ReadFile(filepath.Join(dir, "state.yaml"))
+	if err != nil {
+		t.Fatalf("read state.yaml: %v", err)
+	}
+	if !strings.Contains(string(data), "openai") {
+		t.Errorf("state.yaml should contain provider, got: %s", data)
+	}
+
+	// config.yaml should NOT exist (SaveModelSelection doesn't touch it).
+	if _, err := os.Stat(filepath.Join(dir, "config.yaml")); err == nil {
+		t.Error("config.yaml should not be created by SaveModelSelection")
+	}
+}
+
 func TestWorkspacePaths(t *testing.T) {
 	cfg := &Config{
 		Workspace: "/home/user/.anna/workspace",
@@ -630,8 +713,9 @@ func TestWorkspacePaths(t *testing.T) {
 	if cfg.SkillsPath() != "/home/user/.anna/workspace/skills" {
 		t.Errorf("SkillsPath() = %q", cfg.SkillsPath())
 	}
-	if cfg.ModelsPath() != "/home/user/.anna/workspace/models.json" {
-		t.Errorf("ModelsPath() = %q", cfg.ModelsPath())
+	wantModels := filepath.Join(cachePath(), "models.json")
+	if cfg.ModelsPath() != wantModels {
+		t.Errorf("ModelsPath() = %q, want %q", cfg.ModelsPath(), wantModels)
 	}
 	if cfg.LogPath() != "/home/user/.anna/workspace/anna.log" {
 		t.Errorf("LogPath() = %q", cfg.LogPath())
