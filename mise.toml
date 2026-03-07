@@ -1,12 +1,26 @@
 [tools]
-go = "1.23"
+go = "1.24"
+"github:golangci/golangci-lint" = "2.11.1"
+"github:goreleaser/goreleaser" = "2.14.1"
 
 [env]
 BINARY_NAME = "anna"
 
+# ============================================================================
+# Build Tasks
+# ============================================================================
+
 [tasks.build]
 description = "Build anna binary"
 run = "go build -o bin/$BINARY_NAME ."
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "rm -rf bin/"
+
+# ============================================================================
+# Run Tasks
+# ============================================================================
 
 [tasks.run]
 description = "Run anna (pass args after --)"
@@ -28,18 +42,38 @@ description = "Run gateway daemon (Telegram, etc.)"
 depends = ["build"]
 run = "./bin/$BINARY_NAME gateway"
 
+# ============================================================================
+# Code Quality Tasks
+# ============================================================================
+
+[tasks.lint]
+description = "Lint Go code"
+run = "golangci-lint run"
+
 [tasks.test]
 description = "Run all tests with race detection"
 run = "go test -v -race ./..."
 
-[tasks.lint]
-description = "Run go vet"
-run = "go vet ./..."
+[tasks."test:coverage"]
+description = "Run tests with coverage report"
+run = "go test -v -race -coverprofile=coverage.out ./..."
 
 [tasks.format]
 description = "Format Go code and tidy modules"
 run = "gofmt -w . && go mod tidy"
 
-[tasks.clean]
-description = "Remove build artifacts"
-run = "rm -rf bin/"
+# ============================================================================
+# Release Tasks
+# ============================================================================
+
+[tasks.release]
+description = "Create production release with GoReleaser"
+run = "goreleaser release --clean"
+
+[tasks."release:check"]
+description = "Validate GoReleaser configuration"
+run = "goreleaser check"
+
+[tasks."release:snapshot"]
+description = "Create snapshot release for testing"
+run = "goreleaser release --snapshot --clean"

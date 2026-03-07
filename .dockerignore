@@ -1,0 +1,8 @@
+bin/
+.agents/
+.git/
+.github/
+*.md
+cover.out
+docs/issues/
+handoff.md
