@@ -36,3 +36,6 @@ release:
     name: anna
   draft: false
   prerelease: auto
+  footer: |
+    ---
+    **Full Changelog**: See [CHANGELOG.md](https://github.com/vaayne/anna/blob/main/CHANGELOG.md) for categorized details.

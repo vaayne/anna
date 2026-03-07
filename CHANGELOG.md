@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-07
+
 ### ✨ Features
 
 - **CI/CD**: Add CI/CD workflows, Docker, and release infrastructure (#25)
@@ -48,3 +50,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 📦 Dependencies
 
 - Bump github.com/cloudflare/circl from 1.6.1 to 1.6.3 (#24)
+
+**Full Changelog**: [v0.1.0](https://github.com/vaayne/anna/commits/v0.1.0)
