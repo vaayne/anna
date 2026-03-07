@@ -61,16 +61,12 @@ func BuildSystemPrompt(store *memory.Store, agentsDir string, cwd ...string) str
 
 	// Basic prompt: project .agents/system.md > workspace system.md > embedded default.
 	basic := defaultBasicPrompt
-	if path := resolveFile(agentsDir, "system.md"); path != "" {
-		if custom, err := os.ReadFile(path); err == nil {
-			basic = string(custom)
-		}
+	if content := readFileIfExists(agentsDir, "system.md"); content != "" {
+		basic = content
 	}
 	if projectDir != "" {
-		if path := resolveFile(projectDir, "system.md"); path != "" {
-			if custom, err := os.ReadFile(path); err == nil {
-				basic = string(custom)
-			}
+		if content := readFileIfExists(projectDir, "system.md"); content != "" {
+			basic = content
 		}
 	}
 

@@ -146,7 +146,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t anna .
 | `~/.anna/workspace/cron/` | Cron job persistence |
 | `~/.anna/workspace/memory/` | Persistent memory (facts + journal) |
 | `~/.anna/workspace/skills/` | Installed skills |
-| `~/.anna/workspace/models.json` | Model cache |
+| `~/.anna/cache/models.json` | Model cache |
 
 All paths are under the workspace root (`~/.anna/workspace` by default, configurable via `ANNA_HOME`).
 
@@ -158,7 +158,7 @@ Key variables for deployment:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANNA_HOME` | No | Workspace root (default `~/.anna/workspace`) |
+| `ANNA_HOME` | No | Anna home directory (default `~/.anna`) |
 | `ANTHROPIC_API_KEY` | Yes* | Anthropic provider key |
 | `OPENAI_API_KEY` | Yes* | OpenAI provider key |
 | `ANNA_TELEGRAM_TOKEN` | For Telegram | Bot token from @BotFather |

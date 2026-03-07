@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -275,6 +276,9 @@ func (cfg *Config) resolveModelID(tier string) string {
 // keeping config.yaml as a static, user-edited file.
 func SaveModelSelection(provider, model string) error {
 	path := statePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
 
 	raw := make(map[string]any)
 	data, err := os.ReadFile(path)
@@ -304,6 +308,9 @@ func SaveModelSelection(provider, model string) error {
 func applyState(cfg *Config) {
 	data, err := os.ReadFile(statePath())
 	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("failed to read state file", "path", statePath(), "error", err)
+		}
 		return
 	}
 	var state struct {

@@ -47,7 +47,7 @@ provider: anthropic
 # Default model ID
 model: claude-sonnet-4-6
 # Tiered models (optional)
-# Fallback chain: fast -> strong -> model
+# Each tier falls back independently to model when not set
 model_strong: claude-opus-4-6
 model_fast: claude-haiku-4-5
 # Workspace root (default: ANNA_HOME or ~/.anna/workspace)

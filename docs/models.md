@@ -9,7 +9,7 @@ anna supports two model tiers for different workloads:
 | `strong` | Heavy reasoning, complex tasks |
 | `fast` | Quick responses, simple queries |
 
-Fallback chain: `fast` -> `strong` -> `model` (top-level default).
+Each tier falls back independently to `model` (top-level default) when not set.
 
 ```yaml
 model: claude-sonnet-4-6
@@ -30,7 +30,7 @@ anna models search <q>  # Search models by name
 
 ### Model Cache
 
-`anna models update` queries all configured provider APIs and saves results to `~/.anna/workspace/models.json`. The cache is used by `list`, `search`, and the Telegram model picker.
+`anna models update` queries all configured provider APIs and saves results to `~/.anna/cache/models.json`. The cache is used by `list`, `search`, and the Telegram model picker.
 
 If no cache exists, only models explicitly listed in the config are shown.
 
