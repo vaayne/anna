@@ -6,6 +6,7 @@ import "time"
 type Schedule struct {
 	Cron  string `json:"cron,omitempty"`  // "0 9 * * 1-5"
 	Every string `json:"every,omitempty"` // "30m", "2h"
+	At    string `json:"at,omitempty"`    // RFC3339: "2024-01-15T14:30:00+08:00"
 }
 
 // Job is the persisted job definition.

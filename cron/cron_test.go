@@ -73,6 +73,7 @@ func TestAddJobValidation(t *testing.T) {
 	}
 	defer svc.Stop()
 
+	pastTime := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
 	tests := []struct {
 		name    string
 		jName   string
@@ -83,7 +84,12 @@ func TestAddJobValidation(t *testing.T) {
 		{"empty message", "test", "", Schedule{Every: "1h"}},
 		{"no schedule", "test", "msg", Schedule{}},
 		{"both cron and every", "test", "msg", Schedule{Cron: "* * * * *", Every: "1h"}},
+		{"both cron and at", "test", "msg", Schedule{Cron: "* * * * *", At: time.Now().Add(time.Hour).Format(time.RFC3339)}},
+		{"both every and at", "test", "msg", Schedule{Every: "1h", At: time.Now().Add(time.Hour).Format(time.RFC3339)}},
+		{"all three set", "test", "msg", Schedule{Cron: "* * * * *", Every: "1h", At: time.Now().Add(time.Hour).Format(time.RFC3339)}},
 		{"invalid duration", "test", "msg", Schedule{Every: "bogus"}},
+		{"invalid at format", "test", "msg", Schedule{At: "not-a-timestamp"}},
+		{"past at timestamp", "test", "msg", Schedule{At: pastTime}},
 	}
 
 	for _, tt := range tests {
@@ -261,6 +267,184 @@ func TestCronToolAddListRemove(t *testing.T) {
 	}
 	if result != "No scheduled jobs." {
 		t.Errorf("expected no jobs, got %q", result)
+	}
+}
+
+func TestOneTimeJobCreation(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.Stop()
+
+	futureTime := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	job, err := svc.AddJob("one-time-test", "do something once", Schedule{At: futureTime})
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	if job.Schedule.At != futureTime {
+		t.Errorf("At = %q, want %q", job.Schedule.At, futureTime)
+	}
+
+	jobs := svc.ListJobs()
+	if len(jobs) != 1 {
+		t.Fatalf("ListJobs: got %d, want 1", len(jobs))
+	}
+}
+
+func TestOneTimeJobFiresAndAutoRemoves(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var mu sync.Mutex
+	var fired []string
+	svc.SetOnJob(func(_ context.Context, job Job) {
+		mu.Lock()
+		fired = append(fired, job.ID)
+		mu.Unlock()
+	})
+
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.Stop()
+
+	// Schedule 200ms from now.
+	at := time.Now().Add(200 * time.Millisecond).Format(time.RFC3339Nano)
+	job, err := svc.AddJob("fire-once", "ping once", Schedule{At: at})
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+
+	// Wait for the callback to fire and cleanup to happen.
+	deadline := time.After(3 * time.Second)
+	for {
+		mu.Lock()
+		n := len(fired)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("callback did not fire within 3s")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	// Verify the callback fired with the right job.
+	mu.Lock()
+	if fired[0] != job.ID {
+		t.Errorf("fired job ID = %q, want %q", fired[0], job.ID)
+	}
+	mu.Unlock()
+
+	// Wait a bit for the async cleanup goroutine.
+	time.Sleep(200 * time.Millisecond)
+
+	// Job should be auto-removed.
+	jobs := svc.ListJobs()
+	if len(jobs) != 0 {
+		t.Errorf("ListJobs after one-time fire: got %d, want 0", len(jobs))
+	}
+}
+
+func TestOneTimeJobSkippedOnRestartIfPast(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a service and add a one-time job in the future.
+	svc1, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc1.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	futureTime := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	_, err = svc1.AddJob("restart-test", "do once", Schedule{At: futureTime})
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	svc1.Stop()
+
+	// Manually tamper the job to have a past timestamp to simulate missed window.
+	jobs, err := svc1.loadJobs()
+	if err != nil {
+		t.Fatalf("loadJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	jobs[0].Schedule.At = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	svc1.mu.Lock()
+	svc1.jobs[jobs[0].ID] = jobs[0]
+	_ = svc1.saveJobsLocked()
+	svc1.mu.Unlock()
+
+	// Restart: the past one-time job should be loaded but not scheduled (silently skipped).
+	svc2, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc2.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc2.Stop()
+
+	// Job is still in the list (persisted) but not scheduled with gocron.
+	listed := svc2.ListJobs()
+	if len(listed) != 1 {
+		t.Fatalf("expected 1 persisted job, got %d", len(listed))
+	}
+
+	svc2.mu.Lock()
+	_, hasGID := svc2.gids[listed[0].ID]
+	svc2.mu.Unlock()
+	if hasGID {
+		t.Error("expected past one-time job to not be scheduled with gocron")
+	}
+}
+
+func TestCronToolAddOneTimeJob(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.Stop()
+
+	ct := NewTool(svc)
+
+	futureTime := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	result, err := ct.Execute(context.Background(), map[string]any{
+		"action":  "add",
+		"name":    "reminder",
+		"message": "check the weather",
+		"at":      futureTime,
+	})
+	if err != nil {
+		t.Fatalf("Execute add one-time: %v", err)
+	}
+	if result == "" {
+		t.Fatal("expected non-empty result")
+	}
+
+	jobs := svc.ListJobs()
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Schedule.At != futureTime {
+		t.Errorf("At = %q, want %q", jobs[0].Schedule.At, futureTime)
 	}
 }
 

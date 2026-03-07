@@ -46,6 +46,7 @@ Top-level package (sibling to `agent/`, `channel/`). Three files:
 
 - `cron` — a cron expression (e.g. `"0 9 * * 1-5"` for weekdays at 9am)
 - `every` — a Go duration (e.g. `"30m"`, `"2h"`, `"24h"`)
+- `at` — an RFC3339 timestamp for a one-time job (e.g. `"2024-01-15T14:30:00+08:00"`)
 
 **Job** is the persisted definition:
 
@@ -70,6 +71,16 @@ type Job struct {
 ### Persistence
 
 Jobs are stored as a JSON array in `{dataDir}/jobs.json` (default: `.agents/cron/jobs.json`). Writes are atomic (temp file + rename).
+
+### One-Time Jobs
+
+Jobs scheduled with `at` run exactly once at the specified time and are automatically removed from both the scheduler and `jobs.json` after execution. This keeps the job list clean without stale entries.
+
+Behavior details:
+- The `at` field must be a valid RFC3339 timestamp with timezone offset
+- Timestamps in the past are rejected at creation time
+- If Anna restarts and a one-time job's timestamp has already passed, the job is silently skipped (not scheduled) but remains in persistence until manually removed
+- On successful execution, the cleanup runs asynchronously to avoid blocking the scheduler
 
 ### Session Model
 
@@ -98,12 +109,18 @@ The `cron` tool is automatically registered with the Go runner when cron is enab
 Parameters:
 - `name` (required) — human-readable name
 - `message` (required) — the instruction to execute on each run
-- `cron` — cron expression (use this OR `every`)
-- `every` — Go duration (use this OR `cron`)
+- `cron` — cron expression (use this OR `every` OR `at`)
+- `every` — Go duration (use this OR `cron` OR `at`)
+- `at` — RFC3339 timestamp for a one-time job (use this OR `cron` OR `every`)
 
-Example: _"Set a reminder every 30 minutes to check my email"_ triggers:
+Example (recurring): _"Set a reminder every 30 minutes to check my email"_ triggers:
 ```json
 {"action": "add", "name": "email check", "message": "Check my email and summarize new messages", "every": "30m"}
+```
+
+Example (one-time): _"Remind me at 2:40 PM to check Beijing weather"_ triggers:
+```json
+{"action": "add", "name": "weather reminder", "message": "Check Beijing weather and send me a summary", "at": "2024-01-15T14:40:00+08:00"}
 ```
 
 ### `list` — List all jobs
@@ -130,10 +147,14 @@ The cron system resolves a circular dependency (service needs pool for the callb
 Tests are in `cron/cron_test.go` covering:
 
 - Add, list, remove lifecycle
-- Input validation (empty name, missing schedule, invalid duration, etc.)
+- Input validation (empty name, missing schedule, invalid duration, conflicting schedule fields, invalid/past timestamps)
 - Remove non-existent job
 - Persistence across service restart
 - Callback firing on schedule
+- One-time job creation and validation
+- One-time job fires exactly once and auto-removes
+- One-time job with past timestamp skipped on restart
+- Tool interface for one-time jobs
 - Full tool interface (add/list/remove via `Execute`)
 - Error cases (invalid action, missing ID)
 
