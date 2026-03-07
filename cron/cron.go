@@ -10,9 +10,16 @@ import (
 	"sync"
 	"time"
 
+	"errors"
+
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 )
+
+// errOneTimeJobPast is returned by scheduleJob when a one-time job's timestamp
+// has already elapsed. Start suppresses this for persisted jobs; AddJob treats
+// it as a hard failure.
+var errOneTimeJobPast = errors.New("one-time job timestamp is in the past")
 
 // OnJobFunc is called when a scheduled job fires.
 type OnJobFunc func(ctx context.Context, job Job)
@@ -64,7 +71,11 @@ func (s *Service) Start(ctx context.Context) error {
 		s.jobs[j.ID] = j
 		if j.Enabled {
 			if err := s.scheduleJob(ctx, j); err != nil {
-				s.log.Warn("failed to schedule persisted job", "id", j.ID, "name", j.Name, "error", err)
+				if errors.Is(err, errOneTimeJobPast) {
+					s.log.Info("skipping one-time job with past timestamp", "id", j.ID, "at", j.Schedule.At)
+				} else {
+					s.log.Warn("failed to schedule persisted job", "id", j.ID, "name", j.Name, "error", err)
+				}
 			}
 		}
 	}
@@ -81,18 +92,29 @@ func (s *Service) Stop() error {
 }
 
 // AddJob creates, persists, and schedules a new job.
-func (s *Service) AddJob(name, message string, sched Schedule) (Job, error) {
+// sessionMode controls session reuse: "reuse" (default) or "new".
+func (s *Service) AddJob(name, message string, sched Schedule, sessionMode string) (Job, error) {
 	if name == "" {
 		return Job{}, fmt.Errorf("name is required")
 	}
 	if message == "" {
 		return Job{}, fmt.Errorf("message is required")
 	}
-	if sched.Cron == "" && sched.Every == "" {
-		return Job{}, fmt.Errorf("schedule requires either cron or every")
+	setCount := 0
+	if sched.Cron != "" {
+		setCount++
 	}
-	if sched.Cron != "" && sched.Every != "" {
-		return Job{}, fmt.Errorf("schedule must have exactly one of cron or every")
+	if sched.Every != "" {
+		setCount++
+	}
+	if sched.At != "" {
+		setCount++
+	}
+	if setCount == 0 {
+		return Job{}, fmt.Errorf("schedule requires one of cron, every, or at")
+	}
+	if setCount > 1 {
+		return Job{}, fmt.Errorf("schedule must have exactly one of cron, every, or at")
 	}
 
 	// Validate schedule before persisting.
@@ -101,14 +123,31 @@ func (s *Service) AddJob(name, message string, sched Schedule) (Job, error) {
 			return Job{}, fmt.Errorf("invalid duration %q: %w", sched.Every, err)
 		}
 	}
+	if sched.At != "" {
+		t, err := time.Parse(time.RFC3339, sched.At)
+		if err != nil {
+			return Job{}, fmt.Errorf("invalid at timestamp %q: must be RFC3339 format: %w", sched.At, err)
+		}
+		if !t.After(time.Now()) {
+			return Job{}, fmt.Errorf("at timestamp %q is in the past", sched.At)
+		}
+	}
+
+	if sessionMode == "" {
+		sessionMode = SessionReuse
+	}
+	if sessionMode != SessionReuse && sessionMode != SessionNew {
+		return Job{}, fmt.Errorf("invalid session_mode %q: must be %q or %q", sessionMode, SessionReuse, SessionNew)
+	}
 
 	job := Job{
-		ID:        uuid.New().String()[:8],
-		Name:      name,
-		Schedule:  sched,
-		Message:   message,
-		Enabled:   true,
-		CreatedAt: time.Now(),
+		ID:          uuid.New().String()[:8],
+		Name:        name,
+		Schedule:    sched,
+		Message:     message,
+		SessionMode: sessionMode,
+		Enabled:     true,
+		CreatedAt:   time.Now(),
 	}
 
 	s.mu.Lock()
@@ -186,23 +225,37 @@ func (s *Service) ListJobs() []Job {
 // scheduleJob registers a job with gocron. Caller must hold s.mu.
 func (s *Service) scheduleJob(ctx context.Context, job Job) error {
 	var jobDef gocron.JobDefinition
-	if job.Schedule.Cron != "" {
+	switch {
+	case job.Schedule.Cron != "":
 		jobDef = gocron.CronJob(job.Schedule.Cron, false)
-	} else {
+	case job.Schedule.Every != "":
 		d, err := time.ParseDuration(job.Schedule.Every)
 		if err != nil {
 			return fmt.Errorf("parse duration: %w", err)
 		}
 		jobDef = gocron.DurationJob(d)
+	case job.Schedule.At != "":
+		t, err := time.Parse(time.RFC3339, job.Schedule.At)
+		if err != nil {
+			return fmt.Errorf("parse at timestamp: %w", err)
+		}
+		if !t.After(time.Now()) {
+			return errOneTimeJobPast
+		}
+		jobDef = gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(t))
 	}
 
 	captured := job
+	isOneTime := job.Schedule.At != ""
 	gj, err := s.scheduler.NewJob(jobDef, gocron.NewTask(func() {
 		s.mu.Lock()
 		fn := s.onJob
 		s.mu.Unlock()
 		if fn != nil {
 			fn(ctx, captured)
+		}
+		if isOneTime {
+			go s.removeOneTimeJob(captured.ID)
 		}
 	}))
 	if err != nil {
@@ -211,6 +264,23 @@ func (s *Service) scheduleJob(ctx context.Context, job Job) error {
 
 	s.gids[job.ID] = gj.ID()
 	return nil
+}
+
+// removeOneTimeJob cleans up a one-time job after it fires.
+func (s *Service) removeOneTimeJob(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if gid, ok := s.gids[id]; ok {
+		_ = s.scheduler.RemoveJob(gid)
+		delete(s.gids, id)
+	}
+	delete(s.jobs, id)
+	if err := s.saveJobsLocked(); err != nil {
+		s.log.Warn("failed to remove one-time job after execution", "id", id, "error", err)
+	} else {
+		s.log.Info("one-time job auto-removed after execution", "id", id)
+	}
 }
 
 // jobsFile returns the path to the jobs JSON file.

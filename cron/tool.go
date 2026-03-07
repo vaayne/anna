@@ -34,6 +34,15 @@ var cronInputSchema = func() map[string]any {
       "type": "string",
       "description": "Go duration, e.g. '30m', '2h', '24h' (use every OR cron, not both)"
     },
+    "at": {
+      "type": "string",
+      "description": "RFC3339 timestamp for a one-time job, e.g. '2024-01-15T14:30:00+08:00' (use at OR cron OR every, not combined)"
+    },
+    "session_mode": {
+      "type": "string",
+      "enum": ["reuse", "new"],
+      "description": "Session behavior: 'reuse' (default) keeps conversation history across executions, 'new' starts a fresh session each time"
+    },
     "id": {
       "type": "string",
       "description": "Job ID (required for remove)"
@@ -58,7 +67,7 @@ func NewTool(service *Service) *CronTool {
 func (t *CronTool) Definition() aitypes.ToolDefinition {
 	return aitypes.ToolDefinition{
 		Name:        "cron",
-		Description: "Manage scheduled tasks. Use action 'add' to create a recurring job, 'list' to see all jobs, or 'remove' to delete a job.",
+		Description: "Manage scheduled tasks. Use action 'add' to create a recurring or one-time job, 'list' to see all jobs, or 'remove' to delete a job. For one-time jobs, use the 'at' field with an RFC3339 timestamp.",
 		InputSchema: cronInputSchema,
 	}
 }
@@ -84,8 +93,10 @@ func (t *CronTool) add(args map[string]any) (string, error) {
 	cronExpr, _ := args["cron"].(string)
 	every, _ := args["every"].(string)
 
-	sched := Schedule{Cron: cronExpr, Every: every}
-	job, err := t.service.AddJob(name, message, sched)
+	at, _ := args["at"].(string)
+	sessionMode, _ := args["session_mode"].(string)
+	sched := Schedule{Cron: cronExpr, Every: every, At: at}
+	job, err := t.service.AddJob(name, message, sched, sessionMode)
 	if err != nil {
 		return "", err
 	}

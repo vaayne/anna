@@ -180,7 +180,7 @@ func setup(parent context.Context, gateway bool) (*setupResult, error) {
 	// Wire the cron callback now that pool exists.
 	if cronSvc != nil {
 		cronSvc.SetOnJob(func(ctx context.Context, job cron.Job) {
-			sessionID := "cron:" + job.ID
+			sessionID := job.SessionID()
 			msg := fmt.Sprintf("[Scheduled Task] %s\n\nInstruction: %s", job.Name, job.Message)
 			ch := pool.Chat(ctx, sessionID, msg)
 			for evt := range ch {
@@ -311,7 +311,7 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 // and broadcast it via the notification dispatcher.
 func wireCronNotifier(cronSvc *cron.Service, pool *agent.Pool, dispatcher *channel.Dispatcher) {
 	cronSvc.SetOnJob(func(ctx context.Context, job cron.Job) {
-		sessionID := "cron:" + job.ID
+		sessionID := job.SessionID()
 		msg := fmt.Sprintf("[Scheduled Task] %s\n\nInstruction: %s", job.Name, job.Message)
 		var result strings.Builder
 		for evt := range pool.Chat(ctx, sessionID, msg) {
