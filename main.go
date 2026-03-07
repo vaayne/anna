@@ -275,6 +275,7 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 			NotifyChat: s.cfg.Telegram.NotifyChat,
 			ChannelID:  s.cfg.Telegram.ChannelID,
 			GroupMode:  s.cfg.Telegram.GroupMode,
+			AllowedIDs: s.cfg.Telegram.AllowedIDs,
 		}, s.pool, listFn, switchFn)
 		if err != nil {
 			return fmt.Errorf("create telegram bot: %w", err)

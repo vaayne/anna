@@ -53,10 +53,11 @@ var log = slog.With("component", "telegram")
 
 // Config holds Telegram bot settings.
 type Config struct {
-	Token      string // bot token
-	NotifyChat string // default chat ID for proactive notifications
-	ChannelID  string // broadcast channel ID or @username
-	GroupMode  string // "mention" | "always" | "disabled"
+	Token      string  // bot token
+	NotifyChat string  // default chat ID for proactive notifications
+	ChannelID  string  // broadcast channel ID or @username
+	GroupMode  string  // "mention" | "always" | "disabled"
+	AllowedIDs []int64 // user IDs allowed to use the bot (empty = allow all)
 }
 
 // Bot wraps a Telegram bot with agent pool integration.
@@ -67,6 +68,7 @@ type Bot struct {
 	switchFn   channel.ModelSwitchFunc
 	md         goldmarkMD
 	chatModels map[int64]ModelOption
+	allowed    map[int64]struct{} // empty map = allow all
 	cfg        Config
 	ctx        context.Context
 }
@@ -85,6 +87,11 @@ func New(cfg Config, pool *agent.Pool, listFn ModelListFunc, switchFn channel.Mo
 		cfg.GroupMode = "mention"
 	}
 
+	allowed := make(map[int64]struct{}, len(cfg.AllowedIDs))
+	for _, id := range cfg.AllowedIDs {
+		allowed[id] = struct{}{}
+	}
+
 	b := &Bot{
 		bot:        bot,
 		pool:       pool,
@@ -92,6 +99,7 @@ func New(cfg Config, pool *agent.Pool, listFn ModelListFunc, switchFn channel.Mo
 		switchFn:   switchFn,
 		md:         tgmd.TGMD(),
 		chatModels: make(map[int64]ModelOption),
+		allowed:    allowed,
 		cfg:        cfg,
 	}
 
@@ -189,11 +197,11 @@ const welcomeMessage = `👋 Hi! I'm Anna — your local AI assistant.
 Just send me a message to get started.`
 
 func (b *Bot) registerHandlers() {
-	b.bot.Handle("/start", b.groupGuard(func(c tele.Context) error {
+	b.bot.Handle("/start", b.guard(func(c tele.Context) error {
 		return c.Send(welcomeMessage, tele.ModeMarkdown)
 	}))
 
-	b.bot.Handle("/new", b.groupGuard(func(c tele.Context) error {
+	b.bot.Handle("/new", b.guard(func(c tele.Context) error {
 		sessionID := sessionIDFor(c)
 		if err := b.pool.Reset(sessionID); err != nil {
 			log.Error("reset session failed", "session_id", sessionID, "error", err)
@@ -203,7 +211,7 @@ func (b *Bot) registerHandlers() {
 		return c.Send("New session started.")
 	}))
 
-	b.bot.Handle("/compact", b.groupGuard(func(c tele.Context) error {
+	b.bot.Handle("/compact", b.guard(func(c tele.Context) error {
 		sessionID := sessionIDFor(c)
 		_ = c.Notify(tele.Typing)
 		summary, err := b.pool.CompactSession(b.ctx, sessionID)
@@ -215,7 +223,7 @@ func (b *Bot) registerHandlers() {
 		return c.Send("Session compacted.")
 	}))
 
-	b.bot.Handle("/model", b.groupGuard(func(c tele.Context) error {
+	b.bot.Handle("/model", b.guard(func(c tele.Context) error {
 		args := strings.TrimSpace(c.Message().Payload)
 		models := b.listFn()
 
@@ -227,7 +235,7 @@ func (b *Bot) registerHandlers() {
 
 	// Handle inline keyboard callbacks for model selection via unique handler.
 	// telebot strips the "\fmodel_select|" prefix, so c.Data() = "1", "2", etc.
-	b.bot.Handle("\fmodel_select", func(c tele.Context) error {
+	b.bot.Handle("\fmodel_select", b.guard(func(c tele.Context) error {
 		idxStr := c.Data()
 		models := b.listFn()
 		if err := b.switchModel(c, models, idxStr); err != nil {
@@ -235,22 +243,38 @@ func (b *Bot) registerHandlers() {
 		}
 		_ = c.Respond()
 		return c.Delete()
-	})
+	}))
 
-	b.bot.Handle(tele.OnText, func(c tele.Context) error {
+	b.bot.Handle(tele.OnText, b.guard(func(c tele.Context) error {
 		return b.handleText(c)
-	})
+	}))
 }
 
-// groupGuard wraps a handler so it respects group_mode settings.
-// In groups, the handler is skipped unless the bot should respond.
-func (b *Bot) groupGuard(h tele.HandlerFunc) tele.HandlerFunc {
+// guard wraps a handler with access control and group mode checks.
+func (b *Bot) guard(h tele.HandlerFunc) tele.HandlerFunc {
 	return func(c tele.Context) error {
+		if !b.isAllowed(c) {
+			log.Warn("unauthorized access", "user_id", c.Sender().ID)
+			return nil
+		}
 		if isGroup(c) && !b.shouldRespondInGroup(c) {
 			return nil
 		}
 		return h(c)
 	}
+}
+
+// isAllowed returns true if the sender is in the allowed list.
+// An empty allowed list means everyone is allowed.
+func (b *Bot) isAllowed(c tele.Context) bool {
+	if len(b.allowed) == 0 {
+		return true
+	}
+	if c.Sender() == nil {
+		return false
+	}
+	_, ok := b.allowed[c.Sender().ID]
+	return ok
 }
 
 // handleText processes incoming text messages.
