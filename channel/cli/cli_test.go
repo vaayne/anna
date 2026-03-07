@@ -45,7 +45,7 @@ func initModel(t *testing.T, pool *agent.Pool) chatModel {
 
 func TestChatModelQuit(t *testing.T) {
 	pool := newTestPool(nil)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	m := initModel(t, pool)
 
@@ -63,7 +63,7 @@ func TestChatModelQuit(t *testing.T) {
 
 func TestChatModelExit(t *testing.T) {
 	pool := newTestPool(nil)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	m := initModel(t, pool)
 
@@ -81,7 +81,7 @@ func TestChatModelExit(t *testing.T) {
 
 func TestChatModelNewSession(t *testing.T) {
 	pool := newTestPool(nil)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	m := initModel(t, pool)
 
@@ -96,7 +96,7 @@ func TestChatModelNewSession(t *testing.T) {
 
 func TestChatModelSkipsEmpty(t *testing.T) {
 	pool := newTestPool(nil)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	m := initModel(t, pool)
 
@@ -114,7 +114,7 @@ func TestChatModelSkipsEmpty(t *testing.T) {
 
 func TestChatModelStreaming(t *testing.T) {
 	pool := newTestPool(nil)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	m := initModel(t, pool)
 
@@ -159,7 +159,7 @@ func TestChatModelStreaming(t *testing.T) {
 
 func TestChatModelCtrlCQuits(t *testing.T) {
 	pool := newTestPool(nil)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	m := initModel(t, pool)
 

@@ -217,7 +217,9 @@ func TestReadToolTruncatesOutput(t *testing.T) {
 	for i := range lines {
 		lines[i] = "line\n"
 	}
-	os.WriteFile(path, []byte(strings.Join(lines, "")), 0o644)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
@@ -235,7 +237,9 @@ func TestReadToolTruncatesOutput(t *testing.T) {
 func TestReadToolWithOffset(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lines.txt")
-	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+	if err := os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -256,7 +260,9 @@ func TestReadToolWithOffset(t *testing.T) {
 func TestReadToolWithLimit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lines.txt")
-	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+	if err := os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -280,7 +286,9 @@ func TestReadToolWithLimit(t *testing.T) {
 func TestReadToolWithOffsetAndLimit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lines.txt")
-	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
+	if err := os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -302,7 +310,9 @@ func TestReadToolWithOffsetAndLimit(t *testing.T) {
 func TestReadToolPaginationHintNotShownAtEnd(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lines.txt")
-	os.WriteFile(path, []byte("line1\nline2\n"), 0o644)
+	if err := os.WriteFile(path, []byte("line1\nline2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
@@ -324,7 +334,9 @@ func TestReadToolTruncatedShowsPaginationHint(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		content += fmt.Sprintf("line%d\n", i)
 	}
-	os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
@@ -342,7 +354,9 @@ func TestReadToolLongLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "longline.txt")
 	longLine := strings.Repeat("x", 2*1024*1024) // 2MB single line
-	os.WriteFile(path, []byte(longLine), 0o644)
+	if err := os.WriteFile(path, []byte(longLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
@@ -363,7 +377,9 @@ func TestReadToolPaginationAdvancesOnZeroOutputLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.txt")
 	// Single line of 50 bytes + a second line.
-	os.WriteFile(path, []byte(strings.Repeat("x", 50)+"\nline2\n"), 0o644)
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 50)+"\nline2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
@@ -415,5 +431,5 @@ func verifyTempFileInContent(t *testing.T, content, expectedContent string) {
 	if string(data) != expectedContent {
 		t.Error("temp file should contain the full original output")
 	}
-	t.Cleanup(func() { os.Remove(tmpPath) })
+	t.Cleanup(func() { _ = os.Remove(tmpPath) })
 }

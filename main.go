@@ -72,13 +72,13 @@ func chatCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-			defer s.pool.Close()
+			defer func() { _ = s.pool.Close() }()
 
 			if s.cronSvc != nil {
 				if err := s.cronSvc.Start(s.ctx); err != nil {
 					return fmt.Errorf("start cron: %w", err)
 				}
-				defer s.cronSvc.Stop()
+				defer func() { _ = s.cronSvc.Stop() }()
 			}
 
 			if c.Bool("stream") {
@@ -100,7 +100,7 @@ func gatewayCommand() *ucli.Command {
 			if err != nil {
 				return err
 			}
-			defer s.pool.Close()
+			defer func() { _ = s.pool.Close() }()
 
 			// Cron is started inside runGateway after notification wiring,
 			// so early-firing jobs already have the dispatcher callback.
@@ -296,7 +296,7 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 			if err := s.cronSvc.Start(ctx); err != nil {
 				return fmt.Errorf("start cron: %w", err)
 			}
-			defer s.cronSvc.Stop()
+			defer func() { _ = s.cronSvc.Stop() }()
 		}
 
 		if err := tgBot.Start(ctx); err != nil && ctx.Err() == nil {

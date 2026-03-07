@@ -209,7 +209,7 @@ func (s *FileStore) ensureHeader(sessionID string) (string, error) {
 }
 
 // Append appends events to the session file in Pi JSONL format.
-func (s *FileStore) Append(sessionID string, events ...runner.RPCEvent) error {
+func (s *FileStore) Append(sessionID string, events ...runner.RPCEvent) (err error) {
 	p, err := s.ensureHeader(sessionID)
 	if err != nil {
 		return err
@@ -219,7 +219,11 @@ func (s *FileStore) Append(sessionID string, events ...runner.RPCEvent) error {
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	for _, evt := range events {
 		entry, ok := rpcEventToEntry(evt, s.lastParentID[sessionID])
@@ -250,7 +254,7 @@ func (s *FileStore) Load(sessionID string) ([]runner.RPCEvent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open session file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var events []runner.RPCEvent
 	var lastEntryID string
@@ -354,7 +358,7 @@ func (s *FileStore) EstimateTokens(sessionID string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open session file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	totalBytes := 0
 	scanner := bufio.NewScanner(f)

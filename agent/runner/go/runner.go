@@ -115,11 +115,13 @@ func (r *Runner) Chat(ctx context.Context, history []runner.RPCEvent, message st
 			System:          r.system,
 		}
 
-		r.engine.Run(ctx, cfg, messages, func(e agenttypes.Event) {
+		if _, err := r.engine.Run(ctx, cfg, messages, func(e agenttypes.Event) {
 			for _, evt := range convertEvent(e) {
 				out <- evt
 			}
-		})
+		}); err != nil {
+			out <- runner.Event{Err: err}
+		}
 	}()
 
 	return out

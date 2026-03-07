@@ -129,8 +129,12 @@ func TestLoadSkillsFromDir(t *testing.T) {
 func TestLoadSkillsFallbackName(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, "fallback-name")
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\ndescription: No name field\n---\n"), 0o644)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\ndescription: No name field\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	skills := loadSkillsFromDir(dir, "test")
 	if len(skills) != 1 {
@@ -147,15 +151,23 @@ func TestLoadSkillsDedup(t *testing.T) {
 	projectDir := t.TempDir()
 
 	// agentsDir/skills/dupe-skill (loaded as "project" source)
-	os.MkdirAll(filepath.Join(agentsDir, "skills", "dupe-skill"), 0o755)
-	os.WriteFile(filepath.Join(agentsDir, "skills", "dupe-skill", "SKILL.md"),
-		[]byte("---\nname: dupe-skill\ndescription: AgentsDir version\n---\n"), 0o644)
+	if err := os.MkdirAll(filepath.Join(agentsDir, "skills", "dupe-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "skills", "dupe-skill", "SKILL.md"),
+		[]byte("---\nname: dupe-skill\ndescription: AgentsDir version\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// cwd/.agents/skills/dupe-skill (would also be "project" source)
 	projAgents := filepath.Join(projectDir, ".agents")
-	os.MkdirAll(filepath.Join(projAgents, "skills", "dupe-skill"), 0o755)
-	os.WriteFile(filepath.Join(projAgents, "skills", "dupe-skill", "SKILL.md"),
-		[]byte("---\nname: dupe-skill\ndescription: CWD version\n---\n"), 0o644)
+	if err := os.MkdirAll(filepath.Join(projAgents, "skills", "dupe-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projAgents, "skills", "dupe-skill", "SKILL.md"),
+		[]byte("---\nname: dupe-skill\ndescription: CWD version\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	skills := loadSkills("/nonexistent/home", agentsDir, projectDir)
 
@@ -269,15 +281,23 @@ func TestLoadSkillsUserLevelPriority(t *testing.T) {
 
 	// User-level skill: homeDir/.agents/skills/my-skill
 	userSkill := filepath.Join(homeDir, ".agents", "skills", "my-skill")
-	os.MkdirAll(userSkill, 0o755)
-	os.WriteFile(filepath.Join(userSkill, "SKILL.md"),
-		[]byte("---\nname: my-skill\ndescription: User version\n---\n"), 0o644)
+	if err := os.MkdirAll(userSkill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"),
+		[]byte("---\nname: my-skill\ndescription: User version\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Project-level skill with same name: agentsDir/skills/my-skill
 	projSkill := filepath.Join(agentsDir, "skills", "my-skill")
-	os.MkdirAll(projSkill, 0o755)
-	os.WriteFile(filepath.Join(projSkill, "SKILL.md"),
-		[]byte("---\nname: my-skill\ndescription: Project version\n---\n"), 0o644)
+	if err := os.MkdirAll(projSkill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projSkill, "SKILL.md"),
+		[]byte("---\nname: my-skill\ndescription: Project version\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	skills := loadSkills(homeDir, agentsDir, "")
 
@@ -312,10 +332,14 @@ func TestBuildSystemPromptIncludesSkills(t *testing.T) {
 
 	// Create a skill in the agents dir
 	skillDir := filepath.Join(agentsDir, "skills", "test-skill")
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
 		[]byte("---\nname: test-skill\ndescription: A test skill for prompt integration\n---\n# Test"),
-		0o644)
+		0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	memStore := memory.NewStore(filepath.Join(agentsDir, "memory"))
 	prompt := BuildSystemPrompt(memStore, agentsDir, projectDir)
@@ -330,7 +354,9 @@ func TestBuildSystemPromptIncludesSkills(t *testing.T) {
 func TestLoadProjectContextFiles(t *testing.T) {
 	t.Run("finds AGENTS.md in cwd", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# Project Rules"), 0o644)
+		if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# Project Rules"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 
 		files := loadProjectContextFiles(dir)
 		if len(files) == 0 {
@@ -351,9 +377,15 @@ func TestLoadProjectContextFiles(t *testing.T) {
 	t.Run("walks ancestors in root-to-leaf order", func(t *testing.T) {
 		root := t.TempDir()
 		child := filepath.Join(root, "sub", "project")
-		os.MkdirAll(child, 0o755)
-		os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("root rules"), 0o644)
-		os.WriteFile(filepath.Join(child, "AGENTS.md"), []byte("project rules"), 0o644)
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("root rules"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(child, "AGENTS.md"), []byte("project rules"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 
 		files := loadProjectContextFiles(child)
 		if len(files) < 2 {
@@ -379,7 +411,9 @@ func TestLoadProjectContextFiles(t *testing.T) {
 
 	t.Run("case insensitive match", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "agents.md"), []byte("lowercase agents"), 0o644)
+		if err := os.WriteFile(filepath.Join(dir, "agents.md"), []byte("lowercase agents"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 
 		files := loadProjectContextFiles(dir)
 		found := false
@@ -406,10 +440,14 @@ func TestBuildSystemPromptIncludesContextFiles(t *testing.T) {
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, "agents")
 	projectDir := filepath.Join(dir, "project")
-	os.MkdirAll(projectDir, 0o755)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	os.WriteFile(filepath.Join(projectDir, "AGENTS.md"),
-		[]byte("Always use snake_case."), 0o644)
+	if err := os.WriteFile(filepath.Join(projectDir, "AGENTS.md"),
+		[]byte("Always use snake_case."), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	memStore := memory.NewStore(filepath.Join(agentsDir, "memory"))
 	prompt := BuildSystemPrompt(memStore, agentsDir, projectDir)

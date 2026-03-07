@@ -49,7 +49,7 @@ func searchAPI(ctx context.Context, baseURL, query string, limit int) ([]SearchR
 	if err != nil {
 		return nil, fmt.Errorf("search skills: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("search API returned status %d", resp.StatusCode)

@@ -46,7 +46,7 @@ func (c *indexCache) loadLocked() error {
 		}
 		return fmt.Errorf("open index: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 4096), 64*1024)
@@ -88,7 +88,7 @@ func (c *indexCache) save(info SessionInfo) error {
 	if err != nil {
 		return fmt.Errorf("open index for append: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("write index entry: %w", err)

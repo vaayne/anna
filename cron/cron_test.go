@@ -18,7 +18,7 @@ func TestAddListRemoveJob(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	// Add a job.
 	job, err := svc.AddJob("test", "say hello", Schedule{Every: "1h"}, "")
@@ -71,7 +71,7 @@ func TestAddJobValidation(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	pastTime := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
 	tests := []struct {
@@ -111,7 +111,7 @@ func TestRemoveJobNotFound(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	if err := svc.RemoveJob("nonexistent"); err == nil {
 		t.Error("expected error for nonexistent job")
@@ -133,7 +133,7 @@ func TestJobPersistenceAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddJob: %v", err)
 	}
-	svc1.Stop()
+	_ = svc1.Stop()
 
 	// Create a new service from the same directory.
 	svc2, err := New(dir)
@@ -143,7 +143,7 @@ func TestJobPersistenceAcrossRestart(t *testing.T) {
 	if err := svc2.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc2.Stop()
+	defer func() { _ = svc2.Stop() }()
 
 	jobs := svc2.ListJobs()
 	if len(jobs) != 1 {
@@ -175,7 +175,7 @@ func TestOnJobCallbackFires(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	_, err = svc.AddJob("quick", "ping", Schedule{Every: "100ms"}, "")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestCronToolAddListRemove(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	ct := NewTool(svc)
 
@@ -279,7 +279,7 @@ func TestOneTimeJobCreation(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	futureTime := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 	job, err := svc.AddJob("one-time-test", "do something once", Schedule{At: futureTime}, "")
@@ -314,7 +314,7 @@ func TestOneTimeJobFiresAndAutoRemoves(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	// Schedule 200ms from now.
 	at := time.Now().Add(200 * time.Millisecond).Format(time.RFC3339Nano)
@@ -372,7 +372,7 @@ func TestOneTimeJobSkippedOnRestartIfPast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddJob: %v", err)
 	}
-	svc1.Stop()
+	_ = svc1.Stop()
 
 	// Manually tamper the job to have a past timestamp to simulate missed window.
 	jobs, err := svc1.loadJobs()
@@ -396,7 +396,7 @@ func TestOneTimeJobSkippedOnRestartIfPast(t *testing.T) {
 	if err := svc2.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc2.Stop()
+	defer func() { _ = svc2.Stop() }()
 
 	// Job is still in the list (persisted) but not scheduled with gocron.
 	listed := svc2.ListJobs()
@@ -421,7 +421,7 @@ func TestCronToolAddOneTimeJob(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	ct := NewTool(svc)
 
@@ -457,7 +457,7 @@ func TestSessionModeDefault(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	// Empty session_mode defaults to "reuse".
 	job, err := svc.AddJob("default-mode", "msg", Schedule{Every: "1h"}, "")
@@ -478,7 +478,7 @@ func TestSessionModeReuse(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	job, err := svc.AddJob("reuse-mode", "msg", Schedule{Every: "1h"}, SessionReuse)
 	if err != nil {
@@ -505,7 +505,7 @@ func TestSessionModeNew(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	job, err := svc.AddJob("new-mode", "msg", Schedule{Every: "1h"}, SessionNew)
 	if err != nil {
@@ -533,7 +533,7 @@ func TestSessionModeInvalid(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	_, err = svc.AddJob("bad-mode", "msg", Schedule{Every: "1h"}, "invalid")
 	if err == nil {
@@ -550,7 +550,7 @@ func TestCronToolSessionMode(t *testing.T) {
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	ct := NewTool(svc)
 

@@ -95,7 +95,7 @@ func TestPoolChat(t *testing.T) {
 	}
 	factory, _ := mockRunnerFactory(events)
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 	stream := pool.Chat(ctx, "session-1", "test")
@@ -116,7 +116,7 @@ func TestPoolChat(t *testing.T) {
 func TestPoolChatReusesSession(t *testing.T) {
 	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -138,7 +138,7 @@ func TestPoolChatReusesSession(t *testing.T) {
 func TestPoolChatMultipleSessions(t *testing.T) {
 	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -162,7 +162,7 @@ func TestPoolChatAccumulatesHistory(t *testing.T) {
 	}
 	factory, _ := mockRunnerFactory(events)
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -186,7 +186,7 @@ func TestPoolChatErrorFromFactory(t *testing.T) {
 		return nil, fmt.Errorf("factory error")
 	}
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	stream := pool.Chat(context.Background(), "sess", "msg")
 
@@ -206,7 +206,7 @@ func TestPoolChatErrorFromFactory(t *testing.T) {
 func TestPoolReset(t *testing.T) {
 	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -285,7 +285,7 @@ func TestPoolClose(t *testing.T) {
 func TestPoolReapIdle(t *testing.T) {
 	factory, _ := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory, WithIdleTimeout(1*time.Millisecond))
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -328,7 +328,7 @@ func TestPoolReapIdle(t *testing.T) {
 func TestPoolReapDead(t *testing.T) {
 	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory, WithIdleTimeout(10*time.Minute))
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -386,7 +386,7 @@ func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
 	// Use mockRunner to test dead-runner replacement in getOrCreateRunner.
 	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 
@@ -418,7 +418,7 @@ func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
 func TestPoolCreateSession(t *testing.T) {
 	factory, _ := mockRunnerFactory(nil)
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	info, err := pool.CreateSession()
 	if err != nil {
@@ -438,10 +438,10 @@ func TestPoolCreateSession(t *testing.T) {
 func TestPoolCreateAndListSessions(t *testing.T) {
 	factory, _ := mockRunnerFactory(nil)
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
-	pool.CreateSession()
-	pool.CreateSession()
+	_, _ = pool.CreateSession()
+	_, _ = pool.CreateSession()
 
 	sessions, err := pool.ListSessions(false)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestPoolCreateAndListSessions(t *testing.T) {
 func TestPoolArchiveSession(t *testing.T) {
 	factory, runners := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	info, _ := pool.CreateSession()
 
@@ -485,7 +485,7 @@ func TestPoolArchiveSession(t *testing.T) {
 func TestPoolGetSession(t *testing.T) {
 	factory, _ := mockRunnerFactory(nil)
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	info, _ := pool.CreateSession()
 
@@ -511,7 +511,7 @@ func TestPoolGetSessionNotFound(t *testing.T) {
 func TestPoolChatAutoTitles(t *testing.T) {
 	factory, _ := mockRunnerFactory([]runner.Event{{Text: "response"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	info, _ := pool.CreateSession()
 
@@ -535,7 +535,7 @@ func TestPoolChatAutoTitles(t *testing.T) {
 func TestPoolChatAutoTitleTruncates(t *testing.T) {
 	factory, _ := mockRunnerFactory([]runner.Event{{Text: "ok"}})
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	info, _ := pool.CreateSession()
 
@@ -565,7 +565,7 @@ func TestPoolChatWithModel(t *testing.T) {
 	}
 
 	pool := NewPool(factory, WithDefaultModel("default-model"))
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 	info, _ := pool.CreateSession()
@@ -622,7 +622,7 @@ func TestPoolFastModelForCompaction(t *testing.T) {
 		WithFastModel("fast-model"),
 		WithStore(s),
 	)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	info, _ := pool.CreateSession()
 
@@ -680,7 +680,7 @@ func TestSetDefaultModelAffectsNewSessions(t *testing.T) {
 	}
 
 	pool := NewPool(factory, WithDefaultModel("initial-model"))
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx := context.Background()
 

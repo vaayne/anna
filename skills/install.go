@@ -178,7 +178,7 @@ func cloneOrUpdate(ctx context.Context, owner, repo, ref, cacheDir string) error
 	_, err = git.PlainCloneContext(ctx, cacheDir, false, cloneOpts)
 	if err != nil {
 		// Clean up failed clone
-		os.RemoveAll(cacheDir)
+		_ = os.RemoveAll(cacheDir)
 		return fmt.Errorf("clone %s: %w", repoURL, err)
 	}
 
@@ -247,12 +247,12 @@ func copyDir(src, dst string) error {
 	})
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -262,7 +262,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	_, err = io.Copy(out, in)
 	return err

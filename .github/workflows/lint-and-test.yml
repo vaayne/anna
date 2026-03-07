@@ -9,13 +9,12 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   lint:
     name: Lint
     runs-on: ubicloud-standard-2
-    # TODO: remove continue-on-error once pre-existing lint issues are fixed
-    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,6 +47,46 @@ jobs:
 
       - name: Run tests with coverage
         run: mise run test:coverage
+
+      - name: Check coverage threshold
+        run: |
+          THRESHOLD=50
+          COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if [ "$(echo "${COVERAGE} < ${THRESHOLD}" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below the ${THRESHOLD}% threshold"
+            exit 1
+          fi
+          echo "Coverage ${COVERAGE}% meets the ${THRESHOLD}% threshold"
+
+      - name: Generate coverage report
+        if: github.event_name == 'pull_request'
+        id: coverage-report
+        run: |
+          TOTAL=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}')
+          {
+            echo 'REPORT<<EOF'
+            echo "## 📊 Coverage Report"
+            echo ""
+            echo "**Total coverage: ${TOTAL}**"
+            echo ""
+            echo "<details>"
+            echo "<summary>Per-package breakdown</summary>"
+            echo ""
+            echo '```'
+            go tool cover -func=coverage.out | grep -v '^total:' | awk '{printf "%-60s %s\n", $1, $NF}' | sort -t'%' -k2 -n
+            echo '```'
+            echo ""
+            echo "</details>"
+            echo 'EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Post coverage comment on PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-report
+          message: ${{ env.REPORT }}
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

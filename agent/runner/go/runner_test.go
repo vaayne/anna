@@ -515,7 +515,7 @@ func TestAliveAlwaysTrue(t *testing.T) {
 		t.Error("Alive() should be true before Close")
 	}
 
-	r.Close()
+	_ = r.Close()
 
 	if !r.Alive() {
 		t.Error("Alive() should still be true after Close (no subprocess)")

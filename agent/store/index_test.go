@@ -55,9 +55,15 @@ func TestIndexListFiltersArchived(t *testing.T) {
 	}
 
 	now := time.Now()
-	s.SaveInfo(SessionInfo{ID: "a", Title: "Active", CreatedAt: now, LastActive: now})
-	s.SaveInfo(SessionInfo{ID: "b", Title: "Archived", CreatedAt: now, LastActive: now, Archived: true})
-	s.SaveInfo(SessionInfo{ID: "c", Title: "Also active", CreatedAt: now, LastActive: now})
+	if err := s.SaveInfo(SessionInfo{ID: "a", Title: "Active", CreatedAt: now, LastActive: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveInfo(SessionInfo{ID: "b", Title: "Archived", CreatedAt: now, LastActive: now, Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveInfo(SessionInfo{ID: "c", Title: "Also active", CreatedAt: now, LastActive: now}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Without archived
 	active, err := s.ListInfo(false)
@@ -86,8 +92,12 @@ func TestIndexLastEntryWins(t *testing.T) {
 	}
 
 	now := time.Now()
-	s.SaveInfo(SessionInfo{ID: "x", Title: "Original", CreatedAt: now, LastActive: now})
-	s.SaveInfo(SessionInfo{ID: "x", Title: "Updated", CreatedAt: now, LastActive: now, Archived: true})
+	if err := s.SaveInfo(SessionInfo{ID: "x", Title: "Original", CreatedAt: now, LastActive: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveInfo(SessionInfo{ID: "x", Title: "Updated", CreatedAt: now, LastActive: now, Archived: true}); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := s.LoadInfo("x")
 	if err != nil {
@@ -109,8 +119,13 @@ func TestIndexPersistsAcrossInstances(t *testing.T) {
 	now := time.Now().Truncate(time.Millisecond)
 
 	// First instance writes
-	s1, _ := NewFileStore(dir, "/tmp")
-	s1.SaveInfo(SessionInfo{ID: "persist", Title: "Survives", CreatedAt: now, LastActive: now})
+	s1, err := NewFileStore(dir, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.SaveInfo(SessionInfo{ID: "persist", Title: "Survives", CreatedAt: now, LastActive: now}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Second instance reads
 	s2, _ := NewFileStore(dir, "/tmp")
@@ -134,7 +149,9 @@ func TestIndexFileCreatedOnDemand(t *testing.T) {
 	}
 
 	// After save, file exists
-	s.SaveInfo(SessionInfo{ID: "first", Title: "First"})
+	if err := s.SaveInfo(SessionInfo{ID: "first", Title: "First"}); err != nil {
+		t.Fatal(err)
+	}
 	_, err = os.Stat(s.index.path)
 	if err != nil {
 		t.Error("index file should exist after save")

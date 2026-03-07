@@ -54,13 +54,13 @@ func (t *ReadTool) Execute(_ context.Context, args map[string]any) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	lines, totalLines, err := scanLines(f, offset, limit)
 	if err != nil {
 		// Fall back to reading the whole file if scanner fails
 		// (e.g., lines longer than scanner buffer).
-		f.Close()
+		_ = f.Close()
 		return t.readFallback(path, offset, limit)
 	}
 

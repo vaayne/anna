@@ -36,7 +36,7 @@ func TestIntegrationPoolWithGoRunner(t *testing.T) {
 	}
 
 	pool := NewPool(factory)
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

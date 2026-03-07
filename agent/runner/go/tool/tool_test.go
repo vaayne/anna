@@ -36,7 +36,9 @@ func TestRegistryExecuteUnknown(t *testing.T) {
 func TestReadTool(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("hello world"), 0o644)
+	if err := os.WriteFile(path, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &ReadTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
@@ -108,7 +110,9 @@ func TestBashToolMissingArg(t *testing.T) {
 func TestEditTool(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("hello world"), 0o644)
+	if err := os.WriteFile(path, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &EditTool{}
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -132,7 +136,9 @@ func TestEditTool(t *testing.T) {
 func TestEditToolNotFound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("hello world"), 0o644)
+	if err := os.WriteFile(path, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &EditTool{}
 	_, err := tool.Execute(context.Background(), map[string]any{
@@ -148,7 +154,9 @@ func TestEditToolNotFound(t *testing.T) {
 func TestEditToolAmbiguous(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("aa bb aa"), 0o644)
+	if err := os.WriteFile(path, []byte("aa bb aa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &EditTool{}
 	_, err := tool.Execute(context.Background(), map[string]any{
@@ -194,7 +202,9 @@ func TestWriteTool(t *testing.T) {
 func TestWriteToolOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("old"), 0o644)
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := &WriteTool{}
 	_, err := tool.Execute(context.Background(), map[string]any{

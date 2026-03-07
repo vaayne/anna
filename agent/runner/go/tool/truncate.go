@@ -120,9 +120,9 @@ func saveTempFile(output string) string {
 	if err != nil {
 		return ""
 	}
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 	if _, err := tmpFile.WriteString(output); err != nil {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 		return ""
 	}
 	return tmpFile.Name()

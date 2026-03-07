@@ -63,12 +63,12 @@ func (s *Store) Write(f File, content string) error {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 	return os.Rename(tmpName, path)
@@ -106,7 +106,7 @@ func (s *Store) resolve(f File) string {
 }
 
 // Append adds an entry to the journal.
-func (s *Store) Append(entry JournalEntry) error {
+func (s *Store) Append(entry JournalEntry) (err error) {
 	if err := os.MkdirAll(filepath.Dir(s.journalPath), 0o755); err != nil {
 		return err
 	}
@@ -114,7 +114,11 @@ func (s *Store) Append(entry JournalEntry) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -138,7 +142,7 @@ func (s *Store) Search(query, tag string, limit int) ([]JournalEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read all matching entries, then take the last N.
 	var matches []JournalEntry

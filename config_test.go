@@ -321,8 +321,10 @@ func TestNewRunnerFactoryUnknown(t *testing.T) {
 func TestRunGatewayNoServices(t *testing.T) {
 	t.Setenv("ANNA_TELEGRAM_TOKEN", "")
 	orig, _ := os.Getwd()
-	os.Chdir(t.TempDir())
-	defer os.Chdir(orig)
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(orig) }()
 	app := newApp()
 	err := app.Run([]string{"anna", "gateway"})
 	if err == nil {

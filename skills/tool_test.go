@@ -62,13 +62,17 @@ func TestExecuteDispatch(t *testing.T) {
 func TestListWithSkill(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, ".agents", "skills", "test-skill")
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
 name: test-skill
 description: A test skill
 ---
 # Test Skill
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewTool(filepath.Join(dir, ".agents"), dir)
 	result, err := tool.list()
@@ -99,7 +103,9 @@ description: A test skill
 
 func TestRemoveNotFound(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755)
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewTool(filepath.Join(dir, ".agents"), dir)
 	_, err := tool.remove(map[string]any{"name": "nonexistent"})
@@ -127,8 +133,12 @@ func TestRemoveInvalidName(t *testing.T) {
 func TestRemoveSuccess(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, ".agents", "skills", "my-skill")
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("test"), 0o644)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewTool(filepath.Join(dir, ".agents"), dir)
 	result, err := tool.remove(map[string]any{"name": "my-skill"})
@@ -148,7 +158,7 @@ func TestSearchSuccess(t *testing.T) {
 		if r.URL.Query().Get("q") != "react" {
 			t.Errorf("expected query 'react', got %q", r.URL.Query().Get("q"))
 		}
-		json.NewEncoder(w).Encode(searchResponse{
+		_ = json.NewEncoder(w).Encode(searchResponse{
 			Count: 1,
 			Skills: []SearchResult{
 				{ID: "react-best-practices", Name: "React Best Practices", Installs: 100, Source: "vercel-labs/agent-skills"},
@@ -169,7 +179,7 @@ func TestSearchSuccess(t *testing.T) {
 
 func TestSearchNoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []SearchResult{}})
+		_ = json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []SearchResult{}})
 	}))
 	defer server.Close()
 
@@ -238,11 +248,21 @@ func TestParseSource(t *testing.T) {
 
 func TestCopyDir(t *testing.T) {
 	src := t.TempDir()
-	os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# Test"), 0o644)
-	os.MkdirAll(filepath.Join(src, "sub"), 0o755)
-	os.WriteFile(filepath.Join(src, "sub", "helper.md"), []byte("helper"), 0o644)
-	os.MkdirAll(filepath.Join(src, ".git"), 0o755)
-	os.WriteFile(filepath.Join(src, ".git", "config"), []byte("gitconfig"), 0o644)
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# Test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "helper.md"), []byte("helper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".git", "config"), []byte("gitconfig"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	dst := filepath.Join(t.TempDir(), "target")
 	if err := copyDir(src, dst); err != nil {
@@ -266,8 +286,12 @@ func TestCopyDir(t *testing.T) {
 func TestFindSkillDir(t *testing.T) {
 	cache := t.TempDir()
 	skillDir := filepath.Join(cache, "skills", "my-skill")
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# Skill"), 0o644)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# Skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	found, err := findSkillDir(cache, "my-skill")
 	if err != nil {
@@ -320,7 +344,7 @@ func TestSearchWithLimit(t *testing.T) {
 		if r.URL.Query().Get("limit") != "5" {
 			t.Errorf("expected limit '5', got %q", r.URL.Query().Get("limit"))
 		}
-		json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []SearchResult{}})
+		_ = json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []SearchResult{}})
 	}))
 	defer server.Close()
 
@@ -333,7 +357,7 @@ func TestSearchWithLimit(t *testing.T) {
 
 func TestSearchInvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer server.Close()
 
@@ -364,7 +388,9 @@ func TestGetCacheDir(t *testing.T) {
 
 func TestCopyFileContent(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "source.txt")
-	os.WriteFile(src, []byte("hello world"), 0o644)
+	if err := os.WriteFile(src, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	dst := filepath.Join(t.TempDir(), "sub", "dest.txt")
 	if err := copyFile(src, dst); err != nil {
@@ -392,22 +418,30 @@ func createTestRepo(t *testing.T, skillName string) string {
 
 	// Create skill directory with SKILL.md
 	skillDir := filepath.Join(repoDir, skillName)
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
 name: `+skillName+`
 description: Test skill for install
 ---
 # `+skillName+`
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	w, err := r.Worktree()
 	if err != nil {
 		t.Fatalf("worktree: %v", err)
 	}
-	w.Add(skillName)
-	w.Commit("initial", &git.CommitOptions{
+	if _, err := w.Add(skillName); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+	if _, err := w.Commit("initial", &git.CommitOptions{
 		Author: &object.Signature{Name: "test", Email: "test@test.com", When: time.Now()},
-	})
+	}); err != nil {
+		t.Fatalf("git commit: %v", err)
+	}
 
 	return repoDir
 }
@@ -416,7 +450,9 @@ func TestCloneOrUpdate(t *testing.T) {
 	srcRepo := createTestRepo(t, "my-skill")
 
 	cacheDir := filepath.Join(t.TempDir(), "cache")
-	os.MkdirAll(cacheDir, 0o755)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Clone from local repo (use file:// protocol)
 	_, err := git.PlainClone(cacheDir, false, &git.CloneOptions{URL: srcRepo})
@@ -484,16 +520,22 @@ func TestInstallFullFlow(t *testing.T) {
 	// Create a fake "cached repo" with a skill
 	cacheBase := t.TempDir()
 	skillSrc := filepath.Join(cacheBase, "my-skill")
-	os.MkdirAll(skillSrc, 0o755)
-	os.WriteFile(filepath.Join(skillSrc, "SKILL.md"), []byte(`---
+	if err := os.MkdirAll(skillSrc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillSrc, "SKILL.md"), []byte(`---
 name: my-skill
 description: A great skill
 ---
 # My Skill
-`), 0o644)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	projectDir := t.TempDir()
-	os.MkdirAll(filepath.Join(projectDir, ".agents", "skills"), 0o755)
+	if err := os.MkdirAll(filepath.Join(projectDir, ".agents", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create tool with a fake cloner that just sets up the cache
 	tool := &SkillsTool{
@@ -548,8 +590,12 @@ func TestInstallSkillNotInRepo(t *testing.T) {
 func TestRemoveSingleCharName(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, ".agents", "skills", "x")
-	os.MkdirAll(skillDir, 0o755)
-	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("test"), 0o644)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	tool := NewTool(filepath.Join(dir, ".agents"), dir)
 	_, err := tool.remove(map[string]any{"name": "x"})
