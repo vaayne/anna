@@ -25,6 +25,7 @@ func NewRegistry(workDir string) *Registry {
 	r.Register(&BashTool{workDir: workDir})
 	r.Register(&EditTool{})
 	r.Register(&WriteTool{})
+	r.Register(NewWebFetchTool())
 	return r
 }
 

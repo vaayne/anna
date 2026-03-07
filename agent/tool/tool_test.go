@@ -10,15 +10,15 @@ import (
 func TestRegistryDefinitions(t *testing.T) {
 	reg := NewRegistry("")
 	defs := reg.Definitions()
-	if len(defs) != 4 {
-		t.Fatalf("expected 4 tool definitions, got %d", len(defs))
+	if len(defs) != 5 {
+		t.Fatalf("expected 5 tool definitions, got %d", len(defs))
 	}
 
 	names := map[string]bool{}
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, name := range []string{"read", "bash", "edit", "write"} {
+	for _, name := range []string{"read", "bash", "edit", "write", "webfetch"} {
 		if !names[name] {
 			t.Errorf("missing tool definition: %s", name)
 		}
