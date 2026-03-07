@@ -176,6 +176,28 @@ func TestToolLine(t *testing.T) {
 	}
 }
 
+func TestToolLineLongToolName(t *testing.T) {
+	// A very long tool name should not cause toolLine to produce something
+	// that would panic during stream truncation.
+	evt := runner.ToolUseEvent{
+		Tool:   strings.Repeat("x", 5000),
+		Status: "running",
+		Input:  "test",
+	}
+	line := toolLine(&evt)
+	if line == "" {
+		t.Error("expected non-empty line for running tool")
+	}
+	// The suffix built from this would exceed telegramMaxMessageLen.
+	// Verify the guard logic: suffix falls back to typingCursor.
+	suffix := "\n\n_" + line + "_" + typingCursor
+	if len(suffix) < telegramMaxMessageLen {
+		t.Skip("tool name not long enough to trigger guard")
+	}
+	// The production code would replace this with just typingCursor.
+	// This test just ensures toolLine itself doesn't panic.
+}
+
 func TestToolEmojiDefaults(t *testing.T) {
 	// Verify all documented tools have emoji entries.
 	for _, tool := range []string{"bash", "read", "write", "edit", "search"} {

@@ -330,8 +330,17 @@ func streamResponse(bot *tele.Bot, c tele.Context, pool *agent.Pool, ctx context
 			suffix = "\n\n_" + currentTool + "_" + typingCursor
 		}
 
+		// Guard against suffix being longer than the message limit.
+		if len(suffix) >= telegramMaxMessageLen {
+			suffix = typingCursor
+		}
+
 		if len(display)+len(suffix) > telegramMaxMessageLen {
-			display = display[:telegramMaxMessageLen-len(suffix)-3] + "..."
+			cutAt := telegramMaxMessageLen - len(suffix) - 3
+			if cutAt < 0 {
+				cutAt = 0
+			}
+			display = display[:cutAt] + "..."
 		}
 
 		if sentMsg == nil {
