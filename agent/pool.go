@@ -22,6 +22,7 @@ type Pool struct {
 	store       store.Store
 	mu          sync.Mutex
 	idleTimeout time.Duration
+	compaction  CompactionConfig
 	log         *slog.Logger
 }
 
@@ -32,6 +33,13 @@ type PoolOption func(*Pool)
 func WithIdleTimeout(d time.Duration) PoolOption {
 	return func(p *Pool) {
 		p.idleTimeout = d
+	}
+}
+
+// WithCompaction sets the compaction configuration.
+func WithCompaction(cfg CompactionConfig) PoolOption {
+	return func(p *Pool) {
+		p.compaction = cfg
 	}
 }
 
@@ -155,6 +163,138 @@ func (p *Pool) ArchiveSession(sessionID string) error {
 	return nil
 }
 
+// compactionPrompt is sent to the runner to generate a conversation summary
+// that replaces old history. Based on the handoff pattern — the summary must
+// be self-contained so the runner can continue without the original context.
+const compactionPrompt = `Summarize the conversation so far so a fresh context window can continue the work. Use this structure (skip empty sections):
+
+## Goal
+[Original objective of this session]
+
+## Progress
+- [What was completed]
+- [What was partially done]
+
+## Key Decisions
+- [Decision and why]
+
+## Files Changed
+- ` + "`path/to/file`" + ` — [what changed]
+
+## Current State
+[Where things stand — what works, what doesn't]
+
+## Blockers / Gotchas
+- [Issues, edge cases, or warnings]
+
+## Next Steps
+1. [Concrete next action]
+2. [Follow-up action]
+
+Guidelines:
+- Be self-contained — the reader has NO access to the previous conversation.
+- Be concise — only what's relevant. Skip empty sections.
+- Focus on decisions and rationale, not the discussion that led to them.
+- List concrete file paths with context, not just paths.
+- State next steps as actionable tasks — clear enough to execute immediately.
+- Do NOT use tools or ask questions. Just output the summary.`
+
+// CompactSession summarizes the conversation via the runner, rewrites the
+// session file with a compaction entry + recent messages, and restarts the
+// runner so it picks up the clean context.
+//
+// It returns the summary text on success.
+func (p *Pool) CompactSession(ctx context.Context, sessionID string) (string, error) {
+	if p.store == nil {
+		return "", fmt.Errorf("compaction requires a persistent store")
+	}
+
+	sess, r, err := p.getOrCreateRunner(ctx, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("get runner: %w", err)
+	}
+
+	p.mu.Lock()
+	events := make([]runner.RPCEvent, len(sess.Events))
+	copy(events, sess.Events)
+	p.mu.Unlock()
+
+	p.log.Info("compaction started", "session_id", sessionID, "events", len(events))
+
+	// Ask the runner to summarize the conversation.
+	summary, err := p.collectFullResponse(ctx, r, events, compactionPrompt)
+	if err != nil {
+		return "", fmt.Errorf("generate summary: %w", err)
+	}
+
+	// Rewrite the session file with compaction.
+	keepTail := p.compaction.KeepTail
+	if keepTail == 0 {
+		keepTail = 20
+	}
+	newEvents, err := p.store.Compact(sessionID, summary, keepTail)
+	if err != nil {
+		return "", fmt.Errorf("compact store: %w", err)
+	}
+
+	// Replace in-memory events.
+	p.mu.Lock()
+	sess.Events = newEvents
+	p.mu.Unlock()
+
+	// Kill the runner so it restarts with clean context on next Chat() —
+	// unless the runner is stateful (maintains its own in-process context),
+	// in which case killing it would lose context for no benefit. The
+	// compacted history is persisted to disk for crash recovery either way.
+	if sf, ok := r.(runner.Stateful); !ok || !sf.Stateful() {
+		if closer, ok := r.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		p.mu.Lock()
+		sess.Runner = nil
+		p.mu.Unlock()
+	}
+
+	p.log.Info("compaction complete", "session_id", sessionID,
+		"summary_len", len(summary), "new_events", len(newEvents))
+
+	return summary, nil
+}
+
+// collectFullResponse sends a message to a runner and collects the complete
+// text response, blocking until the stream ends.
+func (p *Pool) collectFullResponse(ctx context.Context, r runner.Runner, history []runner.RPCEvent, message string) (string, error) {
+	stream := r.Chat(ctx, history, message)
+	var buf strings.Builder
+	for evt := range stream {
+		if evt.Err != nil {
+			return buf.String(), evt.Err
+		}
+		if evt.Text != "" {
+			buf.WriteString(evt.Text)
+		}
+	}
+	if buf.Len() == 0 {
+		return "", fmt.Errorf("empty summary response")
+	}
+	return buf.String(), nil
+}
+
+// NeedsCompaction reports whether a session's estimated token count exceeds
+// the compaction threshold. Returns false if compaction is disabled or no
+// store is set.
+func (p *Pool) NeedsCompaction(sessionID string) bool {
+	if p.store == nil || p.compaction.MaxTokens <= 0 {
+		return false
+	}
+	tokens, err := p.store.EstimateTokens(sessionID)
+	if err != nil {
+		p.log.Warn("failed to estimate tokens", "session_id", sessionID, "error", err)
+		return false
+	}
+	return tokens > p.compaction.MaxTokens
+}
+
 // History returns the event log for a session, loading from disk if needed.
 // Returns nil if the session has no history.
 func (p *Pool) History(sessionID string) []runner.RPCEvent {
@@ -193,6 +333,27 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 	}
 
 	p.log.Debug("chat started", "session_id", sessionID, "history_len", len(sess.Events), "message_len", len(message))
+
+	// Auto-compact if the session has grown too large.
+	if p.NeedsCompaction(sessionID) {
+		p.log.Info("auto-compaction triggered", "session_id", sessionID)
+		if summary, err := p.CompactSession(ctx, sessionID); err != nil {
+			p.log.Warn("auto-compaction failed, continuing with full history",
+				"session_id", sessionID, "error", err)
+		} else {
+			p.log.Info("auto-compaction succeeded", "session_id", sessionID,
+				"summary_len", len(summary))
+			// Re-acquire session and runner after compaction (runner was restarted).
+			sess, r, err = p.getOrCreateRunner(ctx, sessionID)
+			if err != nil {
+				go func() {
+					out <- runner.Event{Err: fmt.Errorf("get runner after compaction: %w", err)}
+					close(out)
+				}()
+				return out
+			}
+		}
+	}
 
 	// Update last active timestamp.
 	now := time.Now()

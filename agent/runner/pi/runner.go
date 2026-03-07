@@ -296,3 +296,7 @@ func (r *Runner) LastActivity() time.Time {
 	defer r.mu.Unlock()
 	return r.lastActivity
 }
+
+// Stateful returns true — Pi maintains context in-process and does not
+// rebuild from the history parameter.
+func (r *Runner) Stateful() bool { return true }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/vaayne/anna/agent"
 	"github.com/vaayne/anna/pkg/ai/types"
 	"gopkg.in/yaml.v3"
 )
@@ -59,7 +60,11 @@ type RunnerConfig struct {
 	Process     ProcessConfig `yaml:"process"`
 	System      string        `yaml:"system"`
 	IdleTimeout int           `yaml:"idle_timeout"`
+	Compaction  CompactionConfig `yaml:"compaction"`
 }
+
+// CompactionConfig is an alias for agent.CompactionConfig for config YAML binding.
+type CompactionConfig = agent.CompactionConfig
 
 type ProcessConfig struct {
 	Binary string `yaml:"binary"`

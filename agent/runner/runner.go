@@ -81,6 +81,15 @@ func (f HandlerFunc) Chat(ctx context.Context, history []RPCEvent, message strin
 	return f(ctx, history, message)
 }
 
+// Stateful is an optional interface for runners that maintain their own
+// context in-process (e.g., a long-running subprocess). When a runner is
+// Stateful, Pool will not kill it after compaction — the runner keeps its
+// live context and the compacted history is only persisted to disk for
+// crash recovery.
+type Stateful interface {
+	Stateful() bool
+}
+
 // Aliver is an optional interface for runners that can report liveness.
 type Aliver interface {
 	Alive() bool
