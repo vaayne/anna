@@ -209,3 +209,66 @@ func TestToolEmojiDefaults(t *testing.T) {
 		t.Error("missing default emoji")
 	}
 }
+
+func TestBuildStreamDisplay(t *testing.T) {
+	tests := []struct {
+		name        string
+		text        string
+		currentTool string
+		wantSuffix  string
+	}{
+		{
+			name:       "text only",
+			text:       "hello",
+			wantSuffix: typingCursor,
+		},
+		{
+			name:        "with tool",
+			text:        "hello",
+			currentTool: "⚡ bash: ls",
+			wantSuffix:  "\n\n_⚡ bash: ls_" + typingCursor,
+		},
+		{
+			name:       "empty text",
+			text:       "",
+			wantSuffix: typingCursor,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildStreamDisplay(tt.text, tt.currentTool)
+			if !strings.HasSuffix(got, tt.wantSuffix) {
+				t.Errorf("buildStreamDisplay() = %q, want suffix %q", got, tt.wantSuffix)
+			}
+			if !strings.HasPrefix(got, tt.text) {
+				t.Errorf("buildStreamDisplay() = %q, want prefix %q", got, tt.text)
+			}
+		})
+	}
+}
+
+func TestBuildStreamDisplayTruncation(t *testing.T) {
+	longText := strings.Repeat("a", telegramMaxMessageLen+500)
+	got := buildStreamDisplay(longText, "")
+	if len(got) > telegramMaxMessageLen {
+		t.Errorf("buildStreamDisplay() len = %d, want <= %d", len(got), telegramMaxMessageLen)
+	}
+	if !strings.HasSuffix(got, "..."+typingCursor) {
+		t.Error("truncated display should end with ...cursor")
+	}
+}
+
+func TestBuildStreamDisplayUTF8Safe(t *testing.T) {
+	// Build a string that would need truncation, with multi-byte runes near the cut point.
+	// U+4E16 (世) is 3 bytes in UTF-8.
+	prefix := strings.Repeat("a", telegramMaxMessageLen-20)
+	multibyte := strings.Repeat("世", 20) // 60 bytes, will push past limit
+	text := prefix + multibyte
+
+	got := buildStreamDisplay(text, "")
+	// Verify the result is valid UTF-8 (strings.ToValidUTF8 would change invalid bytes).
+	if strings.ToValidUTF8(got, "?") != got {
+		t.Error("buildStreamDisplay() produced invalid UTF-8")
+	}
+}

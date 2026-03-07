@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	tgmd "github.com/Mad-Pixels/goldmark-tgmd"
 	"github.com/yuin/goldmark/parser"
@@ -26,6 +29,7 @@ type ModelOption = channel.ModelOption
 type ModelListFunc = channel.ModelListFunc
 
 // ModelSwitchFunc re-exports channel.ModelSwitchFunc for use by callers.
+type ModelSwitchFunc = channel.ModelSwitchFunc
 
 const telegramMaxMessageLen = 4000
 
@@ -65,19 +69,22 @@ type Config struct {
 
 // Bot wraps a Telegram bot with agent pool integration.
 type Bot struct {
-	bot        *tele.Bot
-	pool       *agent.Pool
-	listFn     ModelListFunc
-	switchFn   channel.ModelSwitchFunc
-	md         goldmarkMD
+	bot      *tele.Bot
+	pool     *agent.Pool
+	listFn   ModelListFunc
+	switchFn ModelSwitchFunc
+	md       goldmarkMD
+
+	mu         sync.RWMutex
 	chatModels map[int64]ModelOption
-	allowed    map[int64]struct{} // empty map = allow all
-	cfg        Config
-	ctx        context.Context
+
+	allowed map[int64]struct{} // empty map = allow all
+	cfg     Config
+	ctx     context.Context
 }
 
 // New creates a Telegram bot and registers handlers. Call Start to begin polling.
-func New(cfg Config, pool *agent.Pool, listFn ModelListFunc, switchFn channel.ModelSwitchFunc) (*Bot, error) {
+func New(cfg Config, pool *agent.Pool, listFn ModelListFunc, switchFn ModelSwitchFunc) (*Bot, error) {
 	bot, err := tele.NewBot(tele.Settings{
 		Token: cfg.Token,
 		Poller: &tele.LongPoller{
@@ -164,20 +171,8 @@ func (b *Bot) Notify(_ context.Context, n channel.Notification) error {
 		opts.DisableNotification = true
 	}
 
-	chunks := splitMessage(n.Text)
-	for _, chunk := range chunks {
-		rendered := renderMarkdown(b.md, chunk)
-		if _, err := b.bot.Send(chat, rendered, opts); err != nil {
-			logger().Warn("markdown notification send failed, falling back to plain text", "error", err)
-			// Fallback to plain text.
-			plainOpts := &tele.SendOptions{DisableNotification: n.Silent}
-			if _, err := b.bot.Send(chat, chunk, plainOpts); err != nil {
-				logger().Error("plain text notification send failed", "error", err)
-				return fmt.Errorf("send notification: %w", err)
-			}
-		}
-	}
-	logger().Debug("notification sent successfully", "chat_id", chatID, "chunks", len(chunks))
+	b.sendChunkedMarkdown(chat, n.Text, n.Silent, opts)
+	logger().Debug("notification sent successfully", "chat_id", chatID)
 	return nil
 }
 
@@ -345,12 +340,8 @@ func (b *Bot) handleText(c tele.Context) error {
 	sessionID := sessionIDFor(c)
 	text := c.Message().Text
 
-	// Group chat filtering.
+	// Strip bot mention in group chats (access control already handled by guard).
 	if isGroup(c) {
-		if !b.shouldRespondInGroup(c) {
-			return nil // silently ignore
-		}
-		// Strip bot mention from the message text.
 		text = b.stripBotMention(text)
 	}
 
@@ -491,7 +482,9 @@ func (b *Bot) sendModelPage(c tele.Context, models []indexedModel, page int, que
 		end = len(models)
 	}
 
+	b.mu.RLock()
 	active, hasActive := b.chatModels[c.Chat().ID]
+	b.mu.RUnlock()
 	markup := &tele.ReplyMarkup{}
 
 	var rows []tele.Row
@@ -549,7 +542,9 @@ func (b *Bot) switchModel(c tele.Context, models []ModelOption, idxStr string) e
 	if err := b.pool.Reset(sessionID); err != nil {
 		logger().Error("reset session after model switch failed", "session_id", sessionID, "error", err)
 	}
+	b.mu.Lock()
 	b.chatModels[c.Chat().ID] = selected
+	b.mu.Unlock()
 	logger().Info("model switched", "session_id", sessionID, "provider", selected.Provider, "model", selected.Model)
 	return c.Send(fmt.Sprintf("Switched to %s/%s. Session reset.", selected.Provider, selected.Model))
 }
@@ -577,24 +572,47 @@ func toolLine(t *runner.ToolUseEvent) string {
 	}
 }
 
-// streamResponse consumes the agent stream, sending and editing a Telegram
-// message in place as tokens arrive. It returns the final accumulated text
-// and any stream error. The sent message (if any) is deleted before returning
-// so the caller can send the final rendered version.
+// streamResponse consumes the agent stream, displaying progress in real time.
+// For private chats it uses Telegram's sendMessageDraft API (Bot API 9.3+)
+// for smooth animated streaming. For groups (where drafts aren't supported)
+// it falls back to the edit-in-place approach.
 func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, error) {
+	events := b.pool.Chat(b.ctx, sessionID, prompt)
+
+	if !isGroup(c) {
+		text, err := b.streamDraft(c, events)
+		if err == errDraftUnsupported {
+			// Draft failed on first attempt — the event channel is still
+			// open, so fall through to edit-based streaming seamlessly.
+			logger().Info("sendMessageDraft not supported, falling back to edit mode")
+			return b.streamEditEvents(c, events)
+		}
+		return text, err
+	}
+	return b.streamEditEvents(c, events)
+}
+
+// errDraftUnsupported signals that the sendMessageDraft API is not available.
+var errDraftUnsupported = fmt.Errorf("sendMessageDraft not supported")
+
+// streamDraft uses Telegram's sendMessageDraft API for smooth streaming
+// in private chats. If the first draft call fails, it returns
+// errDraftUnsupported so the caller can fall back to edit mode.
+func (b *Bot) streamDraft(c tele.Context, events <-chan runner.Event) (string, error) {
 	var sb strings.Builder
-	var sentMsg *tele.Message
 	var streamErr error
 	var currentTool string
-	lastEdit := time.Time{}
+	lastSend := time.Time{}
+	draftID := rand.Int64N(1<<53) + 1
+	chatID := c.Chat().ID
+	firstDraft := true
 
-	for evt := range b.pool.Chat(b.ctx, sessionID, prompt) {
+	for evt := range events {
 		if evt.Err != nil {
 			streamErr = evt.Err
 			break
 		}
 
-		// Track tool-use events for display.
 		if evt.ToolUse != nil {
 			line := toolLine(evt.ToolUse)
 			if line != "" {
@@ -602,7 +620,61 @@ func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, 
 			} else {
 				currentTool = ""
 			}
-			// Force an immediate update to show tool status.
+			lastSend = time.Time{}
+		}
+
+		sb.WriteString(evt.Text)
+
+		now := time.Now()
+		if now.Sub(lastSend) < streamEditInterval {
+			continue
+		}
+
+		current := sb.String()
+		if strings.TrimSpace(current) == "" && currentTool == "" {
+			continue
+		}
+
+		display := buildStreamDisplay(current, currentTool)
+
+		if err := b.sendDraftRaw(chatID, draftID, display); err != nil {
+			if firstDraft {
+				return "", errDraftUnsupported
+			}
+			// Mid-stream failure: log and continue without updates
+			// rather than breaking the stream.
+			logger().Warn("sendMessageDraft failed mid-stream", "error", err)
+		}
+		firstDraft = false
+		lastSend = now
+	}
+
+	return sb.String(), streamErr
+}
+
+// streamEditEvents uses the traditional edit-in-place approach for streaming,
+// consuming from an existing event channel. Required for group chats where
+// sendMessageDraft is not available.
+func (b *Bot) streamEditEvents(c tele.Context, events <-chan runner.Event) (string, error) {
+	var sb strings.Builder
+	var sentMsg *tele.Message
+	var streamErr error
+	var currentTool string
+	lastEdit := time.Time{}
+
+	for evt := range events {
+		if evt.Err != nil {
+			streamErr = evt.Err
+			break
+		}
+
+		if evt.ToolUse != nil {
+			line := toolLine(evt.ToolUse)
+			if line != "" {
+				currentTool = line
+			} else {
+				currentTool = ""
+			}
 			lastEdit = time.Time{}
 		}
 
@@ -614,40 +686,21 @@ func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, 
 		}
 
 		current := sb.String()
-		// Show tool status even if no text yet.
 		if strings.TrimSpace(current) == "" && currentTool == "" {
 			continue
 		}
 
-		// Build display: text + tool indicator + cursor.
-		display := current
-		suffix := typingCursor
-		if currentTool != "" {
-			suffix = "\n\n_" + currentTool + "_" + typingCursor
-		}
-
-		// Guard against suffix being longer than the message limit.
-		if len(suffix) >= telegramMaxMessageLen {
-			suffix = typingCursor
-		}
-
-		if len(display)+len(suffix) > telegramMaxMessageLen {
-			cutAt := telegramMaxMessageLen - len(suffix) - 3
-			if cutAt < 0 {
-				cutAt = 0
-			}
-			display = display[:cutAt] + "..."
-		}
+		display := buildStreamDisplay(current, currentTool)
 
 		if sentMsg == nil {
-			msg, err := b.bot.Send(c.Chat(), display+suffix)
+			msg, err := b.bot.Send(c.Chat(), display)
 			if err != nil {
 				logger().Warn("stream send failed", "error", err)
 			} else {
 				sentMsg = msg
 			}
 		} else {
-			if _, err := b.bot.Edit(sentMsg, display+suffix); err != nil {
+			if _, err := b.bot.Edit(sentMsg, display); err != nil {
 				logger().Warn("stream edit failed", "error", err)
 			}
 		}
@@ -664,17 +717,67 @@ func (b *Bot) streamResponse(c tele.Context, sessionID, prompt string) (string, 
 	return sb.String(), streamErr
 }
 
+// buildStreamDisplay constructs the streaming display text with tool indicator,
+// cursor, and length truncation (UTF-8 safe).
+func buildStreamDisplay(text, currentTool string) string {
+	display := text
+	suffix := typingCursor
+	if currentTool != "" {
+		suffix = "\n\n_" + currentTool + "_" + typingCursor
+	}
+
+	if len(suffix) >= telegramMaxMessageLen {
+		suffix = typingCursor
+	}
+
+	if len(display)+len(suffix) > telegramMaxMessageLen {
+		cutAt := telegramMaxMessageLen - len(suffix) - 3
+		if cutAt < 0 {
+			cutAt = 0
+		}
+		for cutAt > 0 && !utf8.RuneStart(display[cutAt]) {
+			cutAt--
+		}
+		display = display[:cutAt] + "..."
+	}
+
+	return display + suffix
+}
+
+// sendDraftRaw calls the Telegram sendMessageDraft API (Bot API 9.3+).
+// This provides smooth animated streaming in private chats without
+// the rate-limiting issues of repeated editMessageText calls.
+func (b *Bot) sendDraftRaw(chatID, draftID int64, text string) error {
+	params := map[string]string{
+		"chat_id":  strconv.FormatInt(chatID, 10),
+		"draft_id": strconv.FormatInt(draftID, 10),
+		"text":     text,
+	}
+	_, err := b.bot.Raw("sendMessageDraft", params)
+	return err
+}
+
 // sendFinalResponse sends the completed response with markdown rendering,
 // splitting into chunks if necessary.
 func (b *Bot) sendFinalResponse(c tele.Context, response string) {
-	chatID := c.Chat().ID
-	chunks := splitMessage(response)
+	b.sendChunkedMarkdown(c.Chat(), response, false, nil)
+}
+
+// sendChunkedMarkdown splits text into chunks, renders each as Telegram
+// MarkdownV2, and falls back to plain text on error. If sendOpts is non-nil
+// it is used for the markdown send attempt.
+func (b *Bot) sendChunkedMarkdown(chat tele.Recipient, text string, silent bool, sendOpts *tele.SendOptions) {
+	if sendOpts == nil {
+		sendOpts = &tele.SendOptions{ParseMode: tele.ModeMarkdownV2}
+	}
+	chunks := splitMessage(text)
 	for _, chunk := range chunks {
 		rendered := renderMarkdown(b.md, chunk)
-		if err := c.Send(rendered, tele.ModeMarkdownV2); err != nil {
+		if _, err := b.bot.Send(chat, rendered, sendOpts); err != nil {
 			logger().Warn("markdown send failed, falling back to plain text", "error", err)
-			if err := c.Send(chunk); err != nil {
-				logger().Error("sendMessage failed", "chat_id", chatID, "error", err)
+			plainOpts := &tele.SendOptions{DisableNotification: silent}
+			if _, err := b.bot.Send(chat, chunk, plainOpts); err != nil {
+				logger().Error("plain text send failed", "chat_id", chat.Recipient(), "error", err)
 			}
 		}
 	}
