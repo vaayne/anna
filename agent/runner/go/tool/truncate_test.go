@@ -336,6 +336,49 @@ func TestReadToolTruncatedShowsPaginationHint(t *testing.T) {
 	}
 }
 
+func TestReadToolLongLine(t *testing.T) {
+	// File with a single line longer than the scanner buffer (1MB).
+	// Should fall back to os.ReadFile and not error.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "longline.txt")
+	longLine := strings.Repeat("x", 2*1024*1024) // 2MB single line
+	os.WriteFile(path, []byte(longLine), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
+	if err != nil {
+		t.Fatalf("should not error on long lines, got: %v", err)
+	}
+	if result == "" {
+		t.Error("should return content for long line file")
+	}
+}
+
+func TestReadToolPaginationAdvancesOnZeroOutputLines(t *testing.T) {
+	// When a single line exceeds the byte limit, OutputLines == 0.
+	// Pagination should still advance by 1 to avoid infinite loop.
+	t.Setenv("ANNA_TOOL_MAX_LINES", "999999")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "10") // Very small byte limit
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	// Single line of 50 bytes + a second line.
+	os.WriteFile(path, []byte(strings.Repeat("x", 50)+"\nline2\n"), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should suggest offset=2, not offset=1 (which would loop).
+	if strings.Contains(result, "Use offset=1") {
+		t.Errorf("pagination should advance past current offset, got: %s", result)
+	}
+	if !strings.Contains(result, "Use offset=2") {
+		t.Errorf("should suggest offset=2, got: %s", result)
+	}
+}
+
 func TestBashToolNoTruncateOnError(t *testing.T) {
 	reg := NewRegistry("")
 	_, err := reg.Execute(context.Background(), "bash", map[string]any{"command": "echo 'fail'; exit 1"})

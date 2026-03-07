@@ -56,10 +56,42 @@ func (t *ReadTool) Execute(_ context.Context, args map[string]any) (string, erro
 	}
 	defer f.Close()
 
-	// Stream through the file: skip to offset, collect up to limit lines,
-	// then count remaining lines without storing them.
-	var lines []string
-	totalLines := 0
+	lines, totalLines, err := scanLines(f, offset, limit)
+	if err != nil {
+		// Fall back to reading the whole file if scanner fails
+		// (e.g., lines longer than scanner buffer).
+		f.Close()
+		return t.readFallback(path, offset, limit)
+	}
+
+	// bufio.Scanner strips newlines; we added them back in scanLines.
+	// If we collected the last line and file doesn't end with \n, trim it.
+	if len(lines) > 0 && totalLines == offset+len(lines)-1 {
+		if !endsWithNewline(f) {
+			lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], "\n")
+		}
+	}
+
+	content := strings.Join(lines, "")
+	tr := TruncateHead(content)
+
+	// Ensure pagination advances by at least 1 line to avoid infinite loops
+	// (e.g., when a single line exceeds the byte limit and OutputLines == 0).
+	linesConsumed := tr.OutputLines
+	if linesConsumed < 1 {
+		linesConsumed = 1
+	}
+	lastLineShown := offset + linesConsumed - 1
+	if lastLineShown < totalLines {
+		hint := fmt.Sprintf("\n[Use offset=%d to continue reading]", lastLineShown+1)
+		tr.Content += hint
+	}
+
+	return tr.Content, nil
+}
+
+// scanLines streams through the file, skipping to offset and collecting up to limit lines.
+func scanLines(f *os.File, offset, limit int) (lines []string, totalLines int, err error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -72,22 +104,37 @@ func (t *ReadTool) Execute(_ context.Context, args map[string]any) (string, erro
 		}
 		lines = append(lines, scanner.Text()+"\n")
 	}
-	if err := scanner.Err(); err != nil {
+	return lines, totalLines, scanner.Err()
+}
+
+// readFallback reads the file using os.ReadFile when the scanner fails (e.g., lines > 1MB).
+func (t *ReadTool) readFallback(path string, offset, limit int) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// bufio.Scanner strips newlines; we added them back above.
-	// If we collected the last line and file doesn't end with \n, trim it.
-	if len(lines) > 0 && totalLines == offset+len(lines)-1 {
-		if !endsWithNewline(f) {
-			lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], "\n")
-		}
+	allLines := splitLines(string(data))
+	totalLines := len(allLines)
+
+	start := offset - 1
+	if start > totalLines {
+		start = totalLines
+	}
+	selected := allLines[start:]
+
+	if limit > 0 && limit < len(selected) {
+		selected = selected[:limit]
 	}
 
-	content := strings.Join(lines, "")
+	content := strings.Join(selected, "")
 	tr := TruncateHead(content)
 
-	lastLineShown := offset + tr.OutputLines - 1
+	linesConsumed := tr.OutputLines
+	if linesConsumed < 1 {
+		linesConsumed = 1
+	}
+	lastLineShown := offset + linesConsumed - 1
 	if lastLineShown < totalLines {
 		hint := fmt.Sprintf("\n[Use offset=%d to continue reading]", lastLineShown+1)
 		tr.Content += hint
