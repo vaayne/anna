@@ -156,6 +156,8 @@ func setup(parent context.Context) (*setupResult, error) {
 	opts := []agent.PoolOption{
 		agent.WithIdleTimeout(idleTimeout),
 		agent.WithCompaction(cfg.Runner.Compaction.WithDefaults()),
+		agent.WithDefaultModel(cfg.resolveModelID(ModelTierStrong)),
+		agent.WithFastModel(cfg.resolveModelID(ModelTierFast)),
 	}
 	if cfg.Sessions != "" {
 		cwd, _ := os.Getwd()
@@ -198,10 +200,13 @@ func newRunnerFactory(cfg *Config, memStore *memory.Store, extraTools []tool.Too
 	switch cfg.Runner.Type {
 	case "go":
 		providerCfg := cfg.Providers[cfg.Provider]
-		return func(ctx context.Context) (runner.Runner, error) {
+		return func(ctx context.Context, model string) (runner.Runner, error) {
+			if model == "" {
+				model = cfg.Model
+			}
 			return gorunner.New(ctx, gorunner.Config{
 				API:         cfg.Provider,
-				Model:       cfg.Model,
+				Model:       model,
 				APIKey:      providerCfg.APIKey,
 				AgentsDir:   configDir(),
 				MemoryStore: memStore,

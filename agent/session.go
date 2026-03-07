@@ -37,4 +37,5 @@ type Session struct {
 	Info   SessionInfo
 	Events []runner.RPCEvent
 	Runner runner.Runner
+	Model  string // model ID the current runner was created with
 }

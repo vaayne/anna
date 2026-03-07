@@ -17,13 +17,15 @@ import (
 // Pool manages a set of sessions, each with its own history and runner.
 // It is the only type channels interact with.
 type Pool struct {
-	factory     runner.NewRunnerFunc
-	sessions    map[string]*Session
-	store       store.Store
-	mu          sync.Mutex
-	idleTimeout time.Duration
-	compaction  CompactionConfig
-	log         *slog.Logger
+	factory      runner.NewRunnerFunc
+	sessions     map[string]*Session
+	store        store.Store
+	mu           sync.Mutex
+	idleTimeout  time.Duration
+	compaction   CompactionConfig
+	defaultModel string // default model ID for new runners
+	fastModel    string // model ID used for compaction / fast tasks
+	log          *slog.Logger
 }
 
 // PoolOption configures a Pool.
@@ -43,6 +45,20 @@ func WithCompaction(cfg CompactionConfig) PoolOption {
 	}
 }
 
+// WithDefaultModel sets the default model ID for new runners.
+func WithDefaultModel(model string) PoolOption {
+	return func(p *Pool) {
+		p.defaultModel = model
+	}
+}
+
+// WithFastModel sets the model ID used for compaction and other fast tasks.
+func WithFastModel(model string) PoolOption {
+	return func(p *Pool) {
+		p.fastModel = model
+	}
+}
+
 // WithStore sets the persistent store for session history.
 func WithStore(s store.Store) PoolOption {
 	return func(p *Pool) {
@@ -50,13 +66,28 @@ func WithStore(s store.Store) PoolOption {
 	}
 }
 
+// ChatOption configures a single Chat call.
+type ChatOption func(*chatOptions)
+
+type chatOptions struct {
+	model string
+}
+
+// WithModel overrides the model for this Chat call. If the session already
+// has a runner with a different model, the runner is replaced.
+func WithModel(model string) ChatOption {
+	return func(o *chatOptions) {
+		o.model = model
+	}
+}
+
 // NewPool creates a new Pool with the given runner factory.
 func NewPool(factory runner.NewRunnerFunc, opts ...PoolOption) *Pool {
 	p := &Pool{
-		factory:     factory,
-		sessions:    make(map[string]*Session),
-		idleTimeout: 10 * time.Minute,
-		log:         slog.With("component", "pool"),
+		factory:      factory,
+		sessions:     make(map[string]*Session),
+		idleTimeout:  10 * time.Minute,
+		log:          slog.With("component", "pool"),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -209,7 +240,7 @@ func (p *Pool) CompactSession(ctx context.Context, sessionID string) (string, er
 		return "", fmt.Errorf("compaction requires a persistent store")
 	}
 
-	sess, r, err := p.getOrCreateRunner(ctx, sessionID)
+	sess, r, err := p.getOrCreateRunner(ctx, sessionID, p.fastModel)
 	if err != nil {
 		return "", fmt.Errorf("get runner: %w", err)
 	}
@@ -320,10 +351,15 @@ func (p *Pool) History(sessionID string) []runner.RPCEvent {
 // Chat sends a message in a session and streams back events.
 // Internally: gets/creates runner, passes history, collects events,
 // appends to session log, streams to caller.
-func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-chan runner.Event {
+func (p *Pool) Chat(ctx context.Context, sessionID string, message string, opts ...ChatOption) <-chan runner.Event {
 	out := make(chan runner.Event, 100)
 
-	sess, r, err := p.getOrCreateRunner(ctx, sessionID)
+	var co chatOptions
+	for _, o := range opts {
+		o(&co)
+	}
+
+	sess, r, err := p.getOrCreateRunner(ctx, sessionID, co.model)
 	if err != nil {
 		go func() {
 			out <- runner.Event{Err: fmt.Errorf("get runner: %w", err)}
@@ -344,7 +380,7 @@ func (p *Pool) Chat(ctx context.Context, sessionID string, message string) <-cha
 			p.log.Info("auto-compaction succeeded", "session_id", sessionID,
 				"summary_len", len(summary))
 			// Re-acquire session and runner after compaction (runner was restarted).
-			sess, r, err = p.getOrCreateRunner(ctx, sessionID)
+			sess, r, err = p.getOrCreateRunner(ctx, sessionID, co.model)
 			if err != nil {
 				go func() {
 					out <- runner.Event{Err: fmt.Errorf("get runner after compaction: %w", err)}
@@ -488,7 +524,9 @@ func (p *Pool) StartReaper(ctx context.Context) {
 
 // getOrCreateRunner returns the session and its runner, creating both if needed.
 // If the session is not in memory but exists on disk, its history is restored.
-func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Session, runner.Runner, error) {
+// If model is non-empty and differs from the session's current model, the
+// existing runner is replaced.
+func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string, model string) (*Session, runner.Runner, error) {
 	p.mu.Lock()
 	sess, ok := p.sessions[sessionID]
 	if ok && sess.Runner != nil {
@@ -502,8 +540,18 @@ func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Sessio
 		}
 	}
 	if ok && sess.Runner != nil {
-		p.mu.Unlock()
-		return sess, sess.Runner, nil
+		// If a specific model was requested and it differs from the session's
+		// current model, replace the runner.
+		if model != "" && sess.Model != model {
+			p.log.Info("switching model", "session_id", sessionID, "from", sess.Model, "to", model)
+			if closer, isCloser := sess.Runner.(io.Closer); isCloser {
+				_ = closer.Close()
+			}
+			sess.Runner = nil
+		} else {
+			p.mu.Unlock()
+			return sess, sess.Runner, nil
+		}
 	}
 	if !ok {
 		sess = &Session{}
@@ -535,13 +583,23 @@ func (p *Pool) getOrCreateRunner(ctx context.Context, sessionID string) (*Sessio
 	}
 	p.mu.Unlock()
 
-	r, err := p.factory(ctx)
+	// Resolve the model: explicit > session's current > pool default.
+	effectiveModel := model
+	if effectiveModel == "" {
+		effectiveModel = sess.Model
+	}
+	if effectiveModel == "" {
+		effectiveModel = p.defaultModel
+	}
+
+	r, err := p.factory(ctx, effectiveModel)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	p.mu.Lock()
 	sess.Runner = r
+	sess.Model = effectiveModel
 	p.mu.Unlock()
 
 	p.log.Info("created runner", "session_id", sessionID)

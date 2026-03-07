@@ -29,7 +29,7 @@ func (m *mockRunner) Chat(_ context.Context, _ []runner.RPCEvent, _ string) <-ch
 }
 
 func newTestPool(events []runner.Event) *agent.Pool {
-	factory := func(_ context.Context) (runner.Runner, error) {
+	factory := func(_ context.Context, _ string) (runner.Runner, error) {
 		return &mockRunner{events: events}, nil
 	}
 	return agent.NewPool(factory)

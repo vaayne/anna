@@ -294,7 +294,7 @@ func TestNewRunnerFactoryGo(t *testing.T) {
 		t.Fatalf("newRunnerFactory: %v", err)
 	}
 
-	r, err := factory(context.Background())
+	r, err := factory(context.Background(), "")
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -446,6 +446,166 @@ func TestResolveModelFallback(t *testing.T) {
 	}
 	if model.API != "anthropic" {
 		t.Errorf("model.API = %q, want %q (fallback to provider name)", model.API, "anthropic")
+	}
+}
+
+func TestResolveModelTierFallbackChain(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    Config
+		tier   string
+		wantID string
+	}{
+		{
+			name:   "strong falls back to Model",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "strong",
+			wantID: "default-model",
+		},
+		{
+			name:   "strong uses Models.Strong",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "strong",
+			wantID: "strong-model",
+		},
+		{
+			name:   "worker falls back to strong",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "worker",
+			wantID: "strong-model",
+		},
+		{
+			name:   "worker uses Models.Worker",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model", Worker: "worker-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "worker",
+			wantID: "worker-model",
+		},
+		{
+			name:   "fast falls back to worker",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Worker: "worker-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "fast",
+			wantID: "worker-model",
+		},
+		{
+			name:   "fast falls back to strong when no worker",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "fast",
+			wantID: "strong-model",
+		},
+		{
+			name:   "fast falls back to Model when nothing set",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "fast",
+			wantID: "default-model",
+		},
+		{
+			name:   "fast uses Models.Fast",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "s", Worker: "w", Fast: "fast-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "fast",
+			wantID: "fast-model",
+		},
+		{
+			name:   "unknown tier falls back like strong",
+			cfg:    Config{Provider: "anthropic", Model: "default-model", Models: ModelsConfig{Strong: "strong-model"}, Providers: map[string]ProviderConfig{"anthropic": {}}},
+			tier:   "unknown",
+			wantID: "strong-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := tt.cfg.ResolveModelTier(tt.tier)
+			if model.ID != tt.wantID {
+				t.Errorf("ResolveModelTier(%q) = %q, want %q", tt.tier, model.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestModelsConfigFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `
+provider: anthropic
+model: claude-sonnet-4-6
+models:
+  strong: claude-sonnet-4-6
+  worker: claude-haiku-3.5
+  fast: claude-haiku-3.5
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Models.Strong != "claude-sonnet-4-6" {
+		t.Errorf("Models.Strong = %q, want %q", cfg.Models.Strong, "claude-sonnet-4-6")
+	}
+	if cfg.Models.Worker != "claude-haiku-3.5" {
+		t.Errorf("Models.Worker = %q, want %q", cfg.Models.Worker, "claude-haiku-3.5")
+	}
+	if cfg.Models.Fast != "claude-haiku-3.5" {
+		t.Errorf("Models.Fast = %q, want %q", cfg.Models.Fast, "claude-haiku-3.5")
+	}
+}
+
+func TestModelTierEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Setenv("ANNA_MODEL_STRONG", "env-strong")
+	t.Setenv("ANNA_MODEL_WORKER", "env-worker")
+	t.Setenv("ANNA_MODEL_FAST", "env-fast")
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	if cfg.Models.Strong != "env-strong" {
+		t.Errorf("Models.Strong = %q, want %q", cfg.Models.Strong, "env-strong")
+	}
+	if cfg.Models.Worker != "env-worker" {
+		t.Errorf("Models.Worker = %q, want %q", cfg.Models.Worker, "env-worker")
+	}
+	if cfg.Models.Fast != "env-fast" {
+		t.Errorf("Models.Fast = %q, want %q", cfg.Models.Fast, "env-fast")
+	}
+
+	// Verify tier resolution uses env values.
+	model := cfg.ResolveModelTier("fast")
+	if model.ID != "env-fast" {
+		t.Errorf("ResolveModelTier(fast) = %q, want %q", model.ID, "env-fast")
+	}
+}
+
+func TestModelTierEnvOverridesYAML(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `
+models:
+  strong: yaml-strong
+  fast: yaml-fast
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yamlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ANNA_MODEL_STRONG", "env-strong")
+
+	cfg, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+
+	// Env should override YAML.
+	if cfg.Models.Strong != "env-strong" {
+		t.Errorf("Models.Strong = %q, want %q", cfg.Models.Strong, "env-strong")
+	}
+	// YAML value should remain for non-overridden tiers.
+	if cfg.Models.Fast != "yaml-fast" {
+		t.Errorf("Models.Fast = %q, want %q", cfg.Models.Fast, "yaml-fast")
 	}
 }
 
