@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,6 +20,8 @@ const (
 	formatHTML     = "html"
 	formatText     = "text"
 	formatJSON     = "json"
+
+	maxBodySize = 10 * 1024 * 1024 // 10MB
 )
 
 // WebFetchTool fetches a URL, extracts readable content, and returns it in the requested format.
@@ -84,7 +87,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) (string
 		return "", err
 	}
 
-	tr := TruncateTail(content)
+	tr := TruncateHead(content)
 	return tr.Content, nil
 }
 
@@ -105,7 +108,8 @@ func (t *WebFetchTool) fetch(ctx context.Context, rawURL string, parsed *url.URL
 		return readability.Article{}, fmt.Errorf("webfetch: HTTP %d %s", resp.StatusCode, resp.Status)
 	}
 
-	article, err := readability.FromReader(resp.Body, parsed)
+	body := io.LimitReader(resp.Body, maxBodySize)
+	article, err := readability.FromReader(body, parsed)
 	if err != nil {
 		return readability.Article{}, fmt.Errorf("webfetch: readability parse failed: %w", err)
 	}
