@@ -100,12 +100,8 @@ func gatewayCommand() *ucli.Command {
 			}
 			defer s.pool.Close()
 
-			if s.cronSvc != nil {
-				if err := s.cronSvc.Start(s.ctx); err != nil {
-					return fmt.Errorf("start cron: %w", err)
-				}
-				defer s.cronSvc.Stop()
-			}
+			// Cron is started inside runGateway after notification wiring,
+			// so early-firing jobs already have the dispatcher callback.
 
 			listFn := func() []channel.ModelOption { return collectModels(s.cfg) }
 			switchFn := modelSwitcher(s.cfg, s.pool, s.memStore, s.extraTools)
@@ -288,9 +284,14 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 		}
 		s.notifier.Register(tgBot, defaultChat)
 
-		// Override the cron callback to push results via the dispatcher.
+		// Wire cron notifications and start the scheduler AFTER the backend
+		// is registered, so early-firing jobs already use the dispatcher.
 		if s.cronSvc != nil {
 			wireCronNotifier(s.cronSvc, s.pool, s.notifier)
+			if err := s.cronSvc.Start(ctx); err != nil {
+				return fmt.Errorf("start cron: %w", err)
+			}
+			defer s.cronSvc.Stop()
 		}
 
 		if err := tgBot.Start(ctx); err != nil && ctx.Err() == nil {

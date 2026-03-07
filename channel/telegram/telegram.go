@@ -259,7 +259,10 @@ func (b *Bot) guard(h tele.HandlerFunc) tele.HandlerFunc {
 			}
 			return nil
 		}
-		if isGroup(c) && !b.shouldRespondInGroup(c) {
+		// Skip group filtering for callback queries — they originate from
+		// the bot's own inline keyboards (e.g. model selection) and don't
+		// carry mention/reply context.
+		if isGroup(c) && c.Callback() == nil && !b.shouldRespondInGroup(c) {
 			return nil
 		}
 		return h(c)
