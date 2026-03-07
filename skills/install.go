@@ -13,6 +13,37 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
+// Install fetches a skill from source and installs it into targetDir.
+// Source format: "owner/repo@skill-name" or "owner/repo@skill-name#ref".
+// Returns the installed skill name.
+func Install(ctx context.Context, source, targetDir string) (string, error) {
+	owner, repo, skillName, ref, err := parseSource(source)
+	if err != nil {
+		return "", err
+	}
+
+	cacheDir, err := getCacheDir(owner, repo, ref)
+	if err != nil {
+		return "", fmt.Errorf("create cache dir: %w", err)
+	}
+
+	if err := cloneOrUpdate(ctx, owner, repo, ref, cacheDir); err != nil {
+		return "", fmt.Errorf("fetch repo: %w", err)
+	}
+
+	skillDir, err := findSkillDir(cacheDir, skillName)
+	if err != nil {
+		return "", err
+	}
+
+	dst := filepath.Join(targetDir, skillName)
+	if err := copyDir(skillDir, dst); err != nil {
+		return "", fmt.Errorf("install skill: %w", err)
+	}
+
+	return skillName, nil
+}
+
 func (t *SkillsTool) install(ctx context.Context, args map[string]any) (string, error) {
 	source, _ := args["source"].(string)
 	if source == "" {

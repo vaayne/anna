@@ -46,6 +46,7 @@ func newApp() *ucli.App {
 			chatCommand(),
 			gatewayCommand(),
 			modelsCommand(),
+			skillsCommand(),
 		},
 	}
 }

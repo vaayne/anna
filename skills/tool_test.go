@@ -150,8 +150,8 @@ func TestSearchSuccess(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(searchResponse{
 			Count: 1,
-			Skills: []searchResult{
-				{ID: "react-best-practices", Name: "React Best Practices", Installs: 100, TopSource: "vercel-labs/agent-skills"},
+			Skills: []SearchResult{
+				{ID: "react-best-practices", Name: "React Best Practices", Installs: 100, Source: "vercel-labs/agent-skills"},
 			},
 		})
 	}))
@@ -169,7 +169,7 @@ func TestSearchSuccess(t *testing.T) {
 
 func TestSearchNoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []searchResult{}})
+		json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []SearchResult{}})
 	}))
 	defer server.Close()
 
@@ -314,7 +314,7 @@ func TestSearchWithLimit(t *testing.T) {
 		if r.URL.Query().Get("limit") != "5" {
 			t.Errorf("expected limit '5', got %q", r.URL.Query().Get("limit"))
 		}
-		json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []searchResult{}})
+		json.NewEncoder(w).Encode(searchResponse{Count: 0, Skills: []SearchResult{}})
 	}))
 	defer server.Close()
 
