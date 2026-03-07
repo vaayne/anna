@@ -149,10 +149,17 @@ func setup(parent context.Context) (*setupResult, error) {
 	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
 	extraTools = append(extraTools, memory.NewTool(memStore))
 
-	// Notifier proxy + tool — the real notifier is installed later when
-	// the Telegram bot (or other channel) is created.
-	notifierProxy := &channel.NotifierProxy{}
-	extraTools = append(extraTools, channel.NewNotifyTool(notifierProxy, cfg.Telegram.NotifyChat))
+	// Notifier proxy + tool — only register when a notification backend
+	// (Telegram) is configured, so the agent doesn't see a broken tool in CLI mode.
+	var notifierProxy *channel.NotifierProxy
+	if cfg.Telegram.Token != "" {
+		notifierProxy = &channel.NotifierProxy{}
+		defaultChat := cfg.Telegram.NotifyChat
+		if defaultChat == "" {
+			defaultChat = cfg.Telegram.ChannelID
+		}
+		extraTools = append(extraTools, channel.NewNotifyTool(notifierProxy, defaultChat))
+	}
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
 	factory, err := newRunnerFactory(cfg, memStore, extraTools)
@@ -279,7 +286,9 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 		}
 
 		// Install the real notifier so the notify tool and cron can send messages.
-		s.notifier.Set(tgBot)
+		if s.notifier != nil {
+			s.notifier.Set(tgBot)
+		}
 
 		// Override the cron callback to push results via Telegram.
 		if s.cronSvc != nil {

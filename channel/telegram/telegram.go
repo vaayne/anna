@@ -126,6 +126,9 @@ func (b *Bot) Notify(_ context.Context, n channel.Notification) error {
 		chatID = b.cfg.NotifyChat
 	}
 	if chatID == "" {
+		chatID = b.cfg.ChannelID
+	}
+	if chatID == "" {
 		return fmt.Errorf("no target chat ID")
 	}
 
@@ -183,11 +186,11 @@ const welcomeMessage = `👋 Hi! I'm Anna — your local AI assistant.
 Just send me a message to get started.`
 
 func (b *Bot) registerHandlers() {
-	b.bot.Handle("/start", func(c tele.Context) error {
+	b.bot.Handle("/start", b.groupGuard(func(c tele.Context) error {
 		return c.Send(welcomeMessage, tele.ModeMarkdown)
-	})
+	}))
 
-	b.bot.Handle("/new", func(c tele.Context) error {
+	b.bot.Handle("/new", b.groupGuard(func(c tele.Context) error {
 		sessionID := sessionIDFor(c)
 		if err := b.pool.Reset(sessionID); err != nil {
 			log.Error("reset session failed", "session_id", sessionID, "error", err)
@@ -195,9 +198,9 @@ func (b *Bot) registerHandlers() {
 		}
 		log.Info("session reset", "session_id", sessionID)
 		return c.Send("New session started.")
-	})
+	}))
 
-	b.bot.Handle("/compact", func(c tele.Context) error {
+	b.bot.Handle("/compact", b.groupGuard(func(c tele.Context) error {
 		sessionID := sessionIDFor(c)
 		_ = c.Notify(tele.Typing)
 		summary, err := b.pool.CompactSession(b.ctx, sessionID)
@@ -207,9 +210,9 @@ func (b *Bot) registerHandlers() {
 		}
 		log.Info("session compacted", "session_id", sessionID, "summary_len", len(summary))
 		return c.Send("Session compacted.")
-	})
+	}))
 
-	b.bot.Handle("/model", func(c tele.Context) error {
+	b.bot.Handle("/model", b.groupGuard(func(c tele.Context) error {
 		args := strings.TrimSpace(c.Message().Payload)
 		models := b.listFn()
 
@@ -217,7 +220,7 @@ func (b *Bot) registerHandlers() {
 			return b.sendModelKeyboard(c, models)
 		}
 		return b.switchModel(c, models, args)
-	})
+	}))
 
 	// Handle inline keyboard callbacks for model selection via unique handler.
 	// telebot strips the "\fmodel_select|" prefix, so c.Data() = "1", "2", etc.
@@ -234,6 +237,17 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle(tele.OnText, func(c tele.Context) error {
 		return b.handleText(c)
 	})
+}
+
+// groupGuard wraps a handler so it respects group_mode settings.
+// In groups, the handler is skipped unless the bot should respond.
+func (b *Bot) groupGuard(h tele.HandlerFunc) tele.HandlerFunc {
+	return func(c tele.Context) error {
+		if isGroup(c) && !b.shouldRespondInGroup(c) {
+			return nil
+		}
+		return h(c)
+	}
 }
 
 // handleText processes incoming text messages.
