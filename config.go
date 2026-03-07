@@ -56,20 +56,14 @@ type ModelCostConfig struct {
 }
 
 type RunnerConfig struct {
-	Type        string        `yaml:"type"`
-	Process     ProcessConfig `yaml:"process"`
-	System      string        `yaml:"system"`
-	IdleTimeout int           `yaml:"idle_timeout"`
+	Type        string           `yaml:"type"`
+	System      string           `yaml:"system"`
+	IdleTimeout int              `yaml:"idle_timeout"`
 	Compaction  CompactionConfig `yaml:"compaction"`
 }
 
 // CompactionConfig is an alias for agent.CompactionConfig for config YAML binding.
 type CompactionConfig = agent.CompactionConfig
-
-type ProcessConfig struct {
-	Binary string `yaml:"binary"`
-	Model  string `yaml:"model"`
-}
 
 type TelegramConfig struct {
 	Token string `yaml:"token"`
@@ -110,12 +104,6 @@ func loadConfigFrom(dir string) (*Config, error) {
 	if v := os.Getenv("ANNA_TELEGRAM_TOKEN"); v != "" {
 		cfg.Telegram.Token = v
 	}
-	if v := os.Getenv("ANNA_PI_BINARY"); v != "" {
-		cfg.Runner.Process.Binary = v
-	}
-	if v := os.Getenv("ANNA_PI_MODEL"); v != "" {
-		cfg.Runner.Process.Model = v
-	}
 	if v := os.Getenv("ANNA_RUNNER_TYPE"); v != "" {
 		cfg.Runner.Type = v
 	}
@@ -144,10 +132,7 @@ func loadConfigFrom(dir string) (*Config, error) {
 		cfg.Model = "claude-sonnet-4-6"
 	}
 	if cfg.Runner.Type == "" {
-		cfg.Runner.Type = "process"
-	}
-	if cfg.Runner.Process.Binary == "" {
-		cfg.Runner.Process.Binary = "pi"
+		cfg.Runner.Type = "go"
 	}
 	if cfg.Runner.IdleTimeout == 0 {
 		cfg.Runner.IdleTimeout = 10
