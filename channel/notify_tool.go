@@ -7,16 +7,14 @@ import (
 	aitypes "github.com/vaayne/anna/pkg/ai/types"
 )
 
-// NotifyTool is an agent tool that sends notifications via a Notifier.
+// NotifyTool is an agent tool that sends notifications via a Dispatcher.
 type NotifyTool struct {
-	notifier    Notifier
-	defaultChat string
+	dispatcher *Dispatcher
 }
 
-// NewNotifyTool creates a notify tool. defaultChat is used when the agent
-// does not specify a target chat ID.
-func NewNotifyTool(notifier Notifier, defaultChat string) *NotifyTool {
-	return &NotifyTool{notifier: notifier, defaultChat: defaultChat}
+// NewNotifyTool creates a notify tool backed by the given dispatcher.
+func NewNotifyTool(dispatcher *Dispatcher) *NotifyTool {
+	return &NotifyTool{dispatcher: dispatcher}
 }
 
 var notifyInputSchema = map[string]any{
@@ -26,9 +24,13 @@ var notifyInputSchema = map[string]any{
 			"type":        "string",
 			"description": "The notification message to send (supports markdown)",
 		},
+		"channel": map[string]any{
+			"type":        "string",
+			"description": "Target backend (e.g. \"telegram\", \"slack\"). Omit to broadcast to all configured backends.",
+		},
 		"chat_id": map[string]any{
 			"type":        "string",
-			"description": "Target chat ID. Omit to use the default notification chat.",
+			"description": "Target chat/channel within the backend. Omit to use the default.",
 		},
 		"silent": map[string]any{
 			"type":        "boolean",
@@ -41,7 +43,7 @@ var notifyInputSchema = map[string]any{
 func (t *NotifyTool) Definition() aitypes.ToolDefinition {
 	return aitypes.ToolDefinition{
 		Name:        "notify",
-		Description: "Send a notification message to the user via Telegram. Use this to proactively push messages, alerts, cron job summaries, or long-running task results.",
+		Description: "Send a notification message to the user. Supports multiple backends (Telegram, Slack, etc.). Omit 'channel' to broadcast to all configured backends. Use this for proactive messages, alerts, cron summaries, or long-running task results.",
 		InputSchema: notifyInputSchema,
 	}
 }
@@ -52,23 +54,23 @@ func (t *NotifyTool) Execute(ctx context.Context, args map[string]any) (string, 
 		return "", fmt.Errorf("message is required")
 	}
 
+	ch, _ := args["channel"].(string)
 	chatID, _ := args["chat_id"].(string)
-	if chatID == "" {
-		chatID = t.defaultChat
-	}
-	if chatID == "" {
-		return "", fmt.Errorf("no chat_id provided and no default notification chat configured")
-	}
-
 	silent, _ := args["silent"].(bool)
 
-	err := t.notifier.Notify(ctx, Notification{
-		ChatID: chatID,
-		Text:   message,
-		Silent: silent,
+	err := t.dispatcher.Notify(ctx, Notification{
+		Channel: ch,
+		ChatID:  chatID,
+		Text:    message,
+		Silent:  silent,
 	})
 	if err != nil {
 		return "", fmt.Errorf("send notification: %w", err)
 	}
-	return "Notification sent successfully.", nil
+
+	backends := t.dispatcher.Backends()
+	if ch != "" {
+		return fmt.Sprintf("Notification sent to %s.", ch), nil
+	}
+	return fmt.Sprintf("Notification broadcast to %v.", backends), nil
 }

@@ -119,7 +119,10 @@ func (b *Bot) Start(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// Notify sends a message to the specified chat. Implements channel.Notifier.
+// Name returns the backend name. Implements channel.Backend.
+func (b *Bot) Name() string { return "telegram" }
+
+// Notify sends a message to the specified chat. Implements channel.Backend.
 func (b *Bot) Notify(_ context.Context, n channel.Notification) error {
 	chatID := n.ChatID
 	if chatID == "" {

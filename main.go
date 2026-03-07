@@ -121,7 +121,7 @@ type setupResult struct {
 	cronSvc    *cron.Service
 	memStore   *memory.Store
 	extraTools []tool.Tool
-	notifier   *channel.NotifierProxy
+	notifier   *channel.Dispatcher
 }
 
 func setup(parent context.Context) (*setupResult, error) {
@@ -149,16 +149,11 @@ func setup(parent context.Context) (*setupResult, error) {
 	memStore := memory.NewStore(filepath.Join(configDir(), "memory"))
 	extraTools = append(extraTools, memory.NewTool(memStore))
 
-	// Notifier proxy + tool — only register when a notification backend
-	// (Telegram) is configured, so the agent doesn't see a broken tool in CLI mode.
-	var notifierProxy *channel.NotifierProxy
+	// Notification dispatcher + tool — backends are registered later in
+	// runGateway(). Only expose the tool when a notification backend is configured.
+	dispatcher := channel.NewDispatcher()
 	if cfg.Telegram.Token != "" {
-		notifierProxy = &channel.NotifierProxy{}
-		defaultChat := cfg.Telegram.NotifyChat
-		if defaultChat == "" {
-			defaultChat = cfg.Telegram.ChannelID
-		}
-		extraTools = append(extraTools, channel.NewNotifyTool(notifierProxy, defaultChat))
+		extraTools = append(extraTools, channel.NewNotifyTool(dispatcher))
 	}
 
 	idleTimeout := time.Duration(cfg.Runner.IdleTimeout) * time.Minute
@@ -207,7 +202,7 @@ func setup(parent context.Context) (*setupResult, error) {
 		cronSvc:    cronSvc,
 		memStore:   memStore,
 		extraTools: extraTools,
-		notifier:   notifierProxy,
+		notifier:   dispatcher,
 	}, nil
 }
 
@@ -285,14 +280,16 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 			return fmt.Errorf("create telegram bot: %w", err)
 		}
 
-		// Install the real notifier so the notify tool and cron can send messages.
-		if s.notifier != nil {
-			s.notifier.Set(tgBot)
+		// Register Telegram as a notification backend.
+		defaultChat := s.cfg.Telegram.NotifyChat
+		if defaultChat == "" {
+			defaultChat = s.cfg.Telegram.ChannelID
 		}
+		s.notifier.Register(tgBot, defaultChat)
 
-		// Override the cron callback to push results via Telegram.
+		// Override the cron callback to push results via the dispatcher.
 		if s.cronSvc != nil {
-			wireCronNotifier(s.cronSvc, s.pool, tgBot, s.cfg.Telegram.NotifyChat)
+			wireCronNotifier(s.cronSvc, s.pool, s.notifier)
 		}
 
 		if err := tgBot.Start(ctx); err != nil && ctx.Err() == nil {
@@ -309,11 +306,8 @@ func runGateway(ctx context.Context, s *setupResult, listFn channel.ModelListFun
 }
 
 // wireCronNotifier overrides the cron callback to collect the agent response
-// and push it to the configured notification chat.
-func wireCronNotifier(cronSvc *cron.Service, pool *agent.Pool, notifier channel.Notifier, notifyChat string) {
-	if notifyChat == "" {
-		return // no target chat, keep the default silent callback
-	}
+// and broadcast it via the notification dispatcher.
+func wireCronNotifier(cronSvc *cron.Service, pool *agent.Pool, dispatcher *channel.Dispatcher) {
 	cronSvc.SetOnJob(func(ctx context.Context, job cron.Job) {
 		sessionID := "cron:" + job.ID
 		msg := fmt.Sprintf("[Scheduled Task] %s\n\nInstruction: %s", job.Name, job.Message)
@@ -328,10 +322,7 @@ func wireCronNotifier(cronSvc *cron.Service, pool *agent.Pool, notifier channel.
 		}
 		if result.Len() > 0 {
 			text := fmt.Sprintf("*%s*\n\n%s", job.Name, result.String())
-			if err := notifier.Notify(ctx, channel.Notification{
-				ChatID: notifyChat,
-				Text:   text,
-			}); err != nil {
+			if err := dispatcher.Notify(ctx, channel.Notification{Text: text}); err != nil {
 				slog.Error("cron notification failed", "job_id", job.ID, "error", err)
 			}
 		}
