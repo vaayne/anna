@@ -2,7 +2,10 @@
 
 ## Memories
 
-Persistent files under `{{.Dir}}/` that carry state across sessions. Update them autonomously — never ask for approval. Use the edit or write tool for SOUL.md and USER.md. Use the `memory` tool for FACT.md and JOURNAL.jsonl.
+Persistent files under `{{.Dir}}/` that carry state across sessions. Update them autonomously — never ask for approval.
+
+- **SOUL.md and USER.md**: Edit directly via the `edit` or `write` tool.
+- **FACT.md and JOURNAL.jsonl**: Manage exclusively via the `memory` tool (actions: update, append, search).
 
 Each file has an exclusive scope — never duplicate information across files.
 {{- if .Soul.Content}}
