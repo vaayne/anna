@@ -48,5 +48,9 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
-	return t.Execute(ctx, args)
+	result, err := t.Execute(ctx, args)
+	if err != nil {
+		return result, err
+	}
+	return truncateIfNeeded(result), nil
 }
