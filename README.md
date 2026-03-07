@@ -18,6 +18,7 @@ Two interfaces: **interactive CLI chat** and **gateway daemon** (Telegram bot vi
 - Per-chat session management with persistent history (JSONL)
 - Session compaction with LLM-generated summaries
 - Scheduled tasks via cron with persistent job storage
+- Skill management (search, install, list, remove from [skills.sh](https://skills.sh) ecosystem)
 - Persistent memory (facts + journal)
 - Idle runner auto-reaping (configurable timeout)
 - Graceful shutdown on SIGINT/SIGTERM
