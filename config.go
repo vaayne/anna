@@ -13,11 +13,27 @@ import (
 type Config struct {
 	Provider  string                    `yaml:"provider"`
 	Model     string                    `yaml:"model"`
+	Models    ModelsConfig              `yaml:"models"`
 	Providers map[string]ProviderConfig `yaml:"providers"`
 	Runner    RunnerConfig              `yaml:"runner"`
 	Telegram  TelegramConfig            `yaml:"telegram"`
 	Sessions  string                    `yaml:"sessions"`
 	Cron      CronConfig                `yaml:"cron"`
+}
+
+// Model tier constants.
+const (
+	ModelTierStrong = "strong"
+	ModelTierWorker = "worker"
+	ModelTierFast   = "fast"
+)
+
+// ModelsConfig holds tiered model IDs.
+// Fallback chain: fast → worker → strong → Config.Model (backward compat).
+type ModelsConfig struct {
+	Strong string `yaml:"strong"`
+	Worker string `yaml:"worker"`
+	Fast   string `yaml:"fast"`
 }
 
 type CronConfig struct {
@@ -113,6 +129,15 @@ func loadConfigFrom(dir string) (*Config, error) {
 	if v := os.Getenv("ANNA_MODEL"); v != "" {
 		cfg.Model = v
 	}
+	if v := os.Getenv("ANNA_MODEL_STRONG"); v != "" {
+		cfg.Models.Strong = v
+	}
+	if v := os.Getenv("ANNA_MODEL_WORKER"); v != "" {
+		cfg.Models.Worker = v
+	}
+	if v := os.Getenv("ANNA_MODEL_FAST"); v != "" {
+		cfg.Models.Fast = v
+	}
 
 	// Initialize providers map if nil.
 	if cfg.Providers == nil {
@@ -167,19 +192,63 @@ func resolveProviderEnv(cfg *Config, name, keyEnv, urlEnv string) {
 // ResolveModel returns the types.Model for the default provider/model,
 // looking up from the provider's model list config.
 func (cfg *Config) ResolveModel() types.Model {
+	return cfg.ResolveModelTier(ModelTierStrong)
+}
+
+// ResolveModelTier returns the model ID for the given tier after applying
+// the fallback chain: fast → worker → strong → Config.Model.
+func (cfg *Config) ResolveModelTier(tier string) types.Model {
+	modelID := cfg.resolveModelID(tier)
 	providerCfg := cfg.Providers[cfg.Provider]
 	for _, m := range providerCfg.Models {
-		if m.ID == cfg.Model {
+		if m.ID == modelID {
 			return modelConfigToType(cfg.Provider, m)
 		}
 	}
 	// Fallback: construct a minimal Model from defaults.
 	return types.Model{
-		ID:       cfg.Model,
-		Name:     cfg.Model,
+		ID:       modelID,
+		Name:     modelID,
 		API:      cfg.Provider,
 		Provider: cfg.Provider,
 		BaseURL:  providerCfg.BaseURL,
+	}
+}
+
+// resolveModelID returns the model ID string for the given tier,
+// walking the fallback chain: fast → worker → strong → Config.Model.
+func (cfg *Config) resolveModelID(tier string) string {
+	switch tier {
+	case ModelTierFast:
+		if cfg.Models.Fast != "" {
+			return cfg.Models.Fast
+		}
+		if cfg.Models.Worker != "" {
+			return cfg.Models.Worker
+		}
+		if cfg.Models.Strong != "" {
+			return cfg.Models.Strong
+		}
+		return cfg.Model
+	case ModelTierWorker:
+		if cfg.Models.Worker != "" {
+			return cfg.Models.Worker
+		}
+		if cfg.Models.Strong != "" {
+			return cfg.Models.Strong
+		}
+		return cfg.Model
+	case ModelTierStrong:
+		if cfg.Models.Strong != "" {
+			return cfg.Models.Strong
+		}
+		return cfg.Model
+	default:
+		// Unknown tier, treat as strong.
+		if cfg.Models.Strong != "" {
+			return cfg.Models.Strong
+		}
+		return cfg.Model
 	}
 }
 

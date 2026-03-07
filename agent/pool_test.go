@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vaayne/anna/agent/runner"
+	"github.com/vaayne/anna/agent/store"
 )
 
 // mockRunner implements runner.Runner and io.Closer for pool tests.
@@ -68,7 +69,7 @@ func (m *mockRunner) LastActivity() time.Time {
 func mockRunnerFactory(events []runner.Event) (runner.NewRunnerFunc, *[]*mockRunner) {
 	var runners []*mockRunner
 	var mu sync.Mutex
-	factory := func(_ context.Context) (runner.Runner, error) {
+	factory := func(_ context.Context, _ string) (runner.Runner, error) {
 		r := newMockRunner(events)
 		mu.Lock()
 		runners = append(runners, r)
@@ -181,7 +182,7 @@ func TestPoolChatAccumulatesHistory(t *testing.T) {
 }
 
 func TestPoolChatErrorFromFactory(t *testing.T) {
-	factory := func(_ context.Context) (runner.Runner, error) {
+	factory := func(_ context.Context, _ string) (runner.Runner, error) {
 		return nil, fmt.Errorf("factory error")
 	}
 	pool := NewPool(factory)
@@ -289,7 +290,7 @@ func TestPoolReapIdle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a session by triggering getOrCreateRunner.
-	_, r, err := pool.getOrCreateRunner(ctx, "idle-sess")
+	_, r, err := pool.getOrCreateRunner(ctx, "idle-sess", "")
 	if err != nil {
 		t.Fatalf("getOrCreateRunner: %v", err)
 	}
@@ -332,7 +333,7 @@ func TestPoolReapDead(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a session with a mockRunner.
-	_, _, err := pool.getOrCreateRunner(ctx, "dead-sess")
+	_, _, err := pool.getOrCreateRunner(ctx, "dead-sess", "")
 	if err != nil {
 		t.Fatalf("getOrCreateRunner: %v", err)
 	}
@@ -390,7 +391,7 @@ func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a session with a runner.
-	_, _, err := pool.getOrCreateRunner(ctx, "sess")
+	_, _, err := pool.getOrCreateRunner(ctx, "sess", "")
 	if err != nil {
 		t.Fatalf("getOrCreateRunner: %v", err)
 	}
@@ -401,7 +402,7 @@ func TestPoolReplacesDeadRunnerOnChat(t *testing.T) {
 	(*runners)[0].mu.Unlock()
 
 	// Next call should create a new runner.
-	_, runner2, err := pool.getOrCreateRunner(ctx, "sess")
+	_, runner2, err := pool.getOrCreateRunner(ctx, "sess", "")
 	if err != nil {
 		t.Fatalf("getOrCreateRunner after death: %v", err)
 	}
@@ -550,4 +551,163 @@ func TestPoolChatAutoTitleTruncates(t *testing.T) {
 	if len(title) > 65 { // 60 + "…"
 		t.Errorf("title too long (%d chars): %q", len(title), title)
 	}
+}
+
+func TestPoolChatWithModel(t *testing.T) {
+	// Track which model was requested for each runner creation.
+	var models []string
+	var mu sync.Mutex
+	factory := func(_ context.Context, model string) (runner.Runner, error) {
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+		return newMockRunner([]runner.Event{{Text: "ok"}}), nil
+	}
+
+	pool := NewPool(factory, WithDefaultModel("default-model"))
+	defer pool.Close()
+
+	ctx := context.Background()
+	info, _ := pool.CreateSession()
+
+	// First chat uses default model.
+	stream := pool.Chat(ctx, info.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	if len(models) != 1 || models[0] != "default-model" {
+		t.Fatalf("first call models = %v, want [default-model]", models)
+	}
+	mu.Unlock()
+
+	// Second chat with explicit model triggers runner replacement.
+	stream = pool.Chat(ctx, info.ID, "hello", WithModel("custom-model"))
+	for range stream {
+	}
+
+	mu.Lock()
+	if len(models) != 2 || models[1] != "custom-model" {
+		t.Fatalf("second call models = %v, want [..., custom-model]", models)
+	}
+	mu.Unlock()
+
+	// Third chat without model reuses the session's current model (custom-model).
+	stream = pool.Chat(ctx, info.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	// No new runner should be created — still 2 total.
+	if len(models) != 2 {
+		t.Fatalf("third call created new runner, models = %v, want len 2", models)
+	}
+	mu.Unlock()
+}
+
+func TestPoolFastModelForCompaction(t *testing.T) {
+	var models []string
+	var mu sync.Mutex
+	factory := func(_ context.Context, model string) (runner.Runner, error) {
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+		return newMockRunner([]runner.Event{{Text: "summary text"}}), nil
+	}
+
+	dir := t.TempDir()
+	s, _ := store.NewFileStore(dir, t.TempDir())
+	pool := NewPool(factory,
+		WithDefaultModel("strong-model"),
+		WithFastModel("fast-model"),
+		WithStore(s),
+	)
+	defer pool.Close()
+
+	info, _ := pool.CreateSession()
+
+	// Chat to create a session with history.
+	stream := pool.Chat(context.Background(), info.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	if models[0] != "strong-model" {
+		t.Fatalf("chat model = %q, want strong-model", models[0])
+	}
+	mu.Unlock()
+
+	// Compact should use fast model.
+	_, err := pool.CompactSession(context.Background(), info.ID)
+	if err != nil {
+		t.Fatalf("CompactSession: %v", err)
+	}
+
+	mu.Lock()
+	// The compaction should have created a runner with fast-model.
+	found := false
+	for _, m := range models {
+		if m == "fast-model" {
+			found = true
+			break
+		}
+	}
+	mu.Unlock()
+
+	if !found {
+		t.Errorf("compaction did not use fast model, models = %v", models)
+	}
+
+	// After compaction, session model should be restored to strong-model
+	// so subsequent chats don't stay on the fast tier.
+	pool.mu.Lock()
+	sessModel := pool.sessions[info.ID].Model
+	pool.mu.Unlock()
+
+	if sessModel != "strong-model" {
+		t.Errorf("session model after compaction = %q, want %q", sessModel, "strong-model")
+	}
+}
+
+func TestSetDefaultModelAffectsNewSessions(t *testing.T) {
+	var models []string
+	var mu sync.Mutex
+	factory := func(_ context.Context, model string) (runner.Runner, error) {
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+		return newMockRunner([]runner.Event{{Text: "ok"}}), nil
+	}
+
+	pool := NewPool(factory, WithDefaultModel("initial-model"))
+	defer pool.Close()
+
+	ctx := context.Background()
+
+	// First session uses initial default.
+	info1, _ := pool.CreateSession()
+	stream := pool.Chat(ctx, info1.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	if models[0] != "initial-model" {
+		t.Fatalf("first session model = %q, want initial-model", models[0])
+	}
+	mu.Unlock()
+
+	// Switch default model at runtime.
+	pool.SetDefaultModel("switched-model")
+
+	// New session should use the switched model.
+	info2, _ := pool.CreateSession()
+	stream = pool.Chat(ctx, info2.ID, "hello")
+	for range stream {
+	}
+
+	mu.Lock()
+	if models[1] != "switched-model" {
+		t.Fatalf("second session model = %q, want switched-model", models[1])
+	}
+	mu.Unlock()
 }
