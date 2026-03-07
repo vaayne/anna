@@ -62,5 +62,6 @@ func (t *BashTool) Execute(ctx context.Context, args map[string]any) (string, er
 		}
 		return result, fmt.Errorf("bash: %w", err)
 	}
-	return result, nil
+	tr := TruncateTail(result)
+	return tr.Content, nil
 }

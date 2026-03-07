@@ -38,5 +38,6 @@ func (t *ReadTool) Execute(_ context.Context, args map[string]any) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	return string(data), nil
+	tr := TruncateHead(string(data))
+	return tr.Content, nil
 }

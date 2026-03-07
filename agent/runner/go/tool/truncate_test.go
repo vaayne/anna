@@ -8,139 +8,260 @@ import (
 	"testing"
 )
 
-func TestTruncateShortOutput(t *testing.T) {
-	input := "hello world this is short"
-	result := truncateIfNeeded(input)
-	if result != input {
-		t.Errorf("short output should pass through unchanged, got %q", result)
+// --- TruncateHead tests ---
+
+func TestTruncateHeadShortOutput(t *testing.T) {
+	input := "line1\nline2\nline3\n"
+	r := TruncateHead(input)
+	if r.Truncated {
+		t.Error("short output should not be truncated")
+	}
+	if r.Content != input {
+		t.Errorf("content = %q, want %q", r.Content, input)
 	}
 }
 
-func TestTruncateEmptyOutput(t *testing.T) {
-	result := truncateIfNeeded("")
-	if result != "" {
-		t.Errorf("empty output should pass through unchanged, got %q", result)
+func TestTruncateHeadEmpty(t *testing.T) {
+	r := TruncateHead("")
+	if r.Truncated {
+		t.Error("empty output should not be truncated")
+	}
+	if r.Content != "" {
+		t.Errorf("content = %q, want empty", r.Content)
 	}
 }
 
-func TestTruncateLongOutput(t *testing.T) {
-	// Generate output with 1500 words.
-	words := make([]string, 1500)
-	for i := range words {
-		words[i] = "word"
-	}
-	input := strings.Join(words, " ")
+func TestTruncateHeadByLines(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "3")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
 
-	result := truncateIfNeeded(input)
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "line\n"
+	}
+	input := strings.Join(lines, "")
 
-	if !strings.HasPrefix(result, "[Output truncated") {
-		t.Error("truncated output should start with truncation header")
+	r := TruncateHead(input)
+	if !r.Truncated {
+		t.Fatal("should be truncated")
 	}
-	if !strings.Contains(result, "showing first ~1000 words of 1500 total") {
-		t.Error("truncated output should contain word counts")
+	if r.TotalLines != 10 {
+		t.Errorf("TotalLines = %d, want 10", r.TotalLines)
 	}
-	if !strings.Contains(result, "anna-tool-") {
-		t.Error("truncated output should contain temp file path")
+	if r.OutputLines != 3 {
+		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
 	}
-	if !strings.Contains(result, "use the read tool to access") {
-		t.Error("truncated output should contain read tool hint")
+	if !strings.Contains(r.Content, "showing first 3 of 10 lines") {
+		t.Errorf("header missing, got: %s", r.Content)
 	}
-
-	// Verify the temp file contains the full output.
-	// Extract the file path from the last line.
-	lines := strings.Split(result, "\n")
-	lastLine := lines[len(lines)-1]
-	// Format: [Full output saved to /tmp/anna-tool-xxx.txt — use the read tool to access]
-	pathStart := strings.Index(lastLine, "/")
-	pathEnd := strings.Index(lastLine, " — use")
-	if pathStart < 0 || pathEnd < 0 {
-		t.Fatal("could not extract temp file path from output")
-	}
-	tmpPath := lastLine[pathStart:pathEnd]
-
-	data, err := os.ReadFile(tmpPath)
-	if err != nil {
-		t.Fatalf("failed to read temp file: %v", err)
-	}
-	if string(data) != input {
-		t.Error("temp file should contain the full original output")
-	}
-
-	// Cleanup.
-	os.Remove(tmpPath)
+	// Verify temp file.
+	verifyTempFile(t, r.FullFilePath, input)
 }
 
-func TestTruncateExactThreshold(t *testing.T) {
-	words := make([]string, 1000)
-	for i := range words {
-		words[i] = "word"
-	}
-	input := strings.Join(words, " ")
+func TestTruncateHeadByBytes(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "999999")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "20")
 
-	result := truncateIfNeeded(input)
-	if result != input {
-		t.Error("output at exactly the threshold should not be truncated")
+	// Each line is 6 bytes ("abcde\n"). 20 bytes fits 3 lines (18 bytes), 4th would exceed.
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "abcde\n"
 	}
+	input := strings.Join(lines, "")
+
+	r := TruncateHead(input)
+	if !r.Truncated {
+		t.Fatal("should be truncated by bytes")
+	}
+	if r.OutputLines != 3 {
+		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
+	}
+	verifyTempFile(t, r.FullFilePath, input)
 }
 
-func TestTruncateEnvOverride(t *testing.T) {
-	t.Setenv("ANNA_TOOL_MAX_WORDS", "5")
+func TestTruncateHeadExactThreshold(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "5")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
 
-	input := "one two three four five six seven"
-	result := truncateIfNeeded(input)
-
-	if !strings.HasPrefix(result, "[Output truncated") {
-		t.Error("should truncate when over env var threshold")
+	lines := make([]string, 5)
+	for i := range lines {
+		lines[i] = "line\n"
 	}
-	if !strings.Contains(result, "showing first ~5 words of 7 total") {
-		t.Errorf("should use env var threshold, got: %s", result)
-	}
+	input := strings.Join(lines, "")
 
-	// Extract and cleanup temp file.
-	lines := strings.Split(result, "\n")
-	lastLine := lines[len(lines)-1]
-	pathStart := strings.Index(lastLine, "/")
-	pathEnd := strings.Index(lastLine, " — use")
-	if pathStart >= 0 && pathEnd >= 0 {
-		os.Remove(lastLine[pathStart:pathEnd])
+	r := TruncateHead(input)
+	if r.Truncated {
+		t.Error("output at exactly the line threshold should not be truncated")
 	}
 }
 
-func TestTruncateEnvInvalid(t *testing.T) {
-	t.Setenv("ANNA_TOOL_MAX_WORDS", "notanumber")
+// --- TruncateTail tests ---
 
-	n := maxOutputWords()
-	if n != defaultMaxOutputWords {
-		t.Errorf("invalid env should fall back to default, got %d", n)
+func TestTruncateTailShortOutput(t *testing.T) {
+	input := "line1\nline2\n"
+	r := TruncateTail(input)
+	if r.Truncated {
+		t.Error("short output should not be truncated")
+	}
+	if r.Content != input {
+		t.Errorf("content = %q, want %q", r.Content, input)
 	}
 }
 
-func TestTruncateSkipsReadTool(t *testing.T) {
-	// Write a large file and verify that reading it via the registry
-	// returns the full content without truncation.
-	t.Setenv("ANNA_TOOL_MAX_WORDS", "5")
+func TestTruncateTailByLines(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "3")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "big.txt")
-	os.WriteFile(path, []byte("one two three four five six seven eight"), 0o644)
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "line\n"
+	}
+	input := strings.Join(lines, "")
 
-	reg := NewRegistry("")
-	result, err := reg.Execute(context.Background(), "read", map[string]any{"file_path": path})
+	r := TruncateTail(input)
+	if !r.Truncated {
+		t.Fatal("should be truncated")
+	}
+	if r.OutputLines != 3 {
+		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
+	}
+	if !strings.Contains(r.Content, "showing last 3 of 10 lines") {
+		t.Errorf("header missing, got: %s", r.Content)
+	}
+	// The kept content should be the last 3 lines.
+	if !strings.Contains(r.Content, "line\nline\nline\n") {
+		t.Error("should contain the last 3 lines")
+	}
+	verifyTempFile(t, r.FullFilePath, input)
+}
+
+func TestTruncateTailByBytes(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "999999")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "20")
+
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "abcde\n"
+	}
+	input := strings.Join(lines, "")
+
+	r := TruncateTail(input)
+	if !r.Truncated {
+		t.Fatal("should be truncated by bytes")
+	}
+	if r.OutputLines != 3 {
+		t.Errorf("OutputLines = %d, want 3", r.OutputLines)
+	}
+	verifyTempFile(t, r.FullFilePath, input)
+}
+
+// --- Env var override tests ---
+
+func TestMaxLinesDefault(t *testing.T) {
+	n := maxLines()
+	if n != defaultMaxLines {
+		t.Errorf("default maxLines = %d, want %d", n, defaultMaxLines)
+	}
+}
+
+func TestMaxLinesEnvOverride(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "500")
+	if n := maxLines(); n != 500 {
+		t.Errorf("maxLines = %d, want 500", n)
+	}
+}
+
+func TestMaxLinesEnvInvalid(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "bad")
+	if n := maxLines(); n != defaultMaxLines {
+		t.Errorf("maxLines = %d, want %d", n, defaultMaxLines)
+	}
+}
+
+func TestMaxBytesDefault(t *testing.T) {
+	n := maxBytes()
+	if n != defaultMaxBytes {
+		t.Errorf("default maxBytes = %d, want %d", n, defaultMaxBytes)
+	}
+}
+
+func TestMaxBytesEnvOverride(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "1024")
+	if n := maxBytes(); n != 1024 {
+		t.Errorf("maxBytes = %d, want 1024", n)
+	}
+}
+
+// --- Integration: tools apply truncation ---
+
+func TestBashToolTruncatesOutput(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "3")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
+
+	tool := &BashTool{}
+	// Generate 10 lines of output.
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"command": "for i in $(seq 1 10); do echo line$i; done",
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.HasPrefix(result, "[Output truncated") {
-		t.Error("read tool output should not be truncated")
+	if !strings.Contains(result, "Output truncated") {
+		t.Error("bash output should be truncated")
+	}
+	// Tail truncation: should show the last lines.
+	if !strings.Contains(result, "showing last") {
+		t.Errorf("should use tail truncation, got: %s", result)
 	}
 }
 
-func TestTruncateRegistrySkipsErrors(t *testing.T) {
-	// Verify that Execute does not truncate error results.
+func TestReadToolTruncatesOutput(t *testing.T) {
+	t.Setenv("ANNA_TOOL_MAX_LINES", "3")
+	t.Setenv("ANNA_TOOL_MAX_BYTES", "999999")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "line\n"
+	}
+	os.WriteFile(path, []byte(strings.Join(lines, "")), 0o644)
+
+	tool := &ReadTool{}
+	result, err := tool.Execute(context.Background(), map[string]any{"file_path": path})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Output truncated") {
+		t.Error("read output should be truncated")
+	}
+	// Head truncation: should show the first lines.
+	if !strings.Contains(result, "showing first") {
+		t.Errorf("should use head truncation, got: %s", result)
+	}
+}
+
+func TestBashToolNoTruncateOnError(t *testing.T) {
 	reg := NewRegistry("")
-	// Execute a failing bash command that would produce output.
 	_, err := reg.Execute(context.Background(), "bash", map[string]any{"command": "echo 'fail'; exit 1"})
 	if err == nil {
 		t.Fatal("expected error from failing command")
 	}
-	// Error results should not go through truncation — they're returned as errors.
+}
+
+// --- helpers ---
+
+func verifyTempFile(t *testing.T, path, expectedContent string) {
+	t.Helper()
+	if path == "" {
+		t.Fatal("expected temp file path, got empty")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read temp file %s: %v", path, err)
+	}
+	if string(data) != expectedContent {
+		t.Error("temp file should contain the full original output")
+	}
+	t.Cleanup(func() { os.Remove(path) })
 }
