@@ -112,7 +112,7 @@ func (r *GoRunner) Chat(ctx context.Context, history []RPCEvent, message string)
 			System:          r.system,
 		}
 
-		if _, err := r.engine.Run(ctx, cfg, messages, func(e loopEvent) {
+		if _, err := r.engine.Run(ctx, cfg, messages, func(e LoopEvent) {
 			for _, evt := range convertLoopEvent(e) {
 				out <- evt
 			}
@@ -150,8 +150,8 @@ func (r *GoRunner) buildToolSet() ToolSet {
 	return set
 }
 
-// convertLoopEvent bridges loopEvent to Event(s).
-func convertLoopEvent(e loopEvent) []Event {
+// convertLoopEvent bridges LoopEvent to Event(s).
+func convertLoopEvent(e LoopEvent) []Event {
 	switch e := e.(type) {
 	case AssistantDelta:
 		if d, ok := e.Event.(aitypes.EventTextDelta); ok && d.Text != "" {

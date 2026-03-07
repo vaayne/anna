@@ -19,7 +19,7 @@ type Engine struct {
 // Run executes the agent loop: repeatedly generating assistant responses
 // and executing tool calls until the model stops calling tools,
 // the turn limit is reached, or an interrupt/error occurs.
-func (e *Engine) Run(ctx context.Context, cfg LoopConfig, history []aitypes.Message, emit func(loopEvent)) ([]aitypes.Message, error) {
+func (e *Engine) Run(ctx context.Context, cfg LoopConfig, history []aitypes.Message, emit func(LoopEvent)) ([]aitypes.Message, error) {
 	if e == nil || e.Providers == nil {
 		return nil, errors.New("engine providers not configured")
 	}
@@ -41,7 +41,7 @@ func (e *Engine) Run(ctx context.Context, cfg LoopConfig, history []aitypes.Mess
 	return history, nil
 }
 
-func (e *Engine) runLoop(ctx context.Context, cfg LoopConfig, history []aitypes.Message, emit func(loopEvent)) ([]aitypes.Message, error) {
+func (e *Engine) runLoop(ctx context.Context, cfg LoopConfig, history []aitypes.Message, emit func(LoopEvent)) ([]aitypes.Message, error) {
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 128
@@ -120,7 +120,7 @@ func (e *Engine) runLoop(ctx context.Context, cfg LoopConfig, history []aitypes.
 
 // streamAssistant opens a provider stream, emits granular assistant events,
 // and assembles the final AssistantMessage.
-func streamAssistant(messages []aitypes.Message, cfg LoopConfig, providers stream.ProviderGetter, emit func(loopEvent)) (aitypes.AssistantMessage, error) {
+func streamAssistant(messages []aitypes.Message, cfg LoopConfig, providers stream.ProviderGetter, emit func(LoopEvent)) (aitypes.AssistantMessage, error) {
 	eventStream, err := stream.Stream(
 		cfg.Model,
 		aitypes.Context{System: cfg.System, Messages: messages, Tools: cfg.ToolDefinitions},

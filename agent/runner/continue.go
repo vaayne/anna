@@ -9,7 +9,7 @@ import (
 
 // Continue validates that the transcript tail is a user or tool-result message
 // and resumes the agent loop from the existing history.
-func (e *Engine) Continue(ctx context.Context, cfg LoopConfig, history []aitypes.Message, emit func(loopEvent)) ([]aitypes.Message, error) {
+func (e *Engine) Continue(ctx context.Context, cfg LoopConfig, history []aitypes.Message, emit func(LoopEvent)) ([]aitypes.Message, error) {
 	if len(history) == 0 {
 		return nil, errors.New("cannot continue empty history")
 	}

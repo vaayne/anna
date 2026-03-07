@@ -39,15 +39,15 @@ func newTestEngine(p loopFakeProvider) *Engine {
 	return &Engine{Providers: r}
 }
 
-func collectEvents(engine *Engine, cfg LoopConfig, history []aitypes.Message) ([]aitypes.Message, []loopEvent, error) {
-	var events []loopEvent
-	h, err := engine.Run(context.Background(), cfg, history, func(e loopEvent) {
+func collectEvents(engine *Engine, cfg LoopConfig, history []aitypes.Message) ([]aitypes.Message, []LoopEvent, error) {
+	var events []LoopEvent
+	h, err := engine.Run(context.Background(), cfg, history, func(e LoopEvent) {
 		events = append(events, e)
 	})
 	return h, events, err
 }
 
-func countEvents[T loopEvent](events []loopEvent) int {
+func countEvents[T LoopEvent](events []LoopEvent) int {
 	n := 0
 	for _, e := range events {
 		if _, ok := e.(T); ok {
