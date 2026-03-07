@@ -64,7 +64,7 @@ func NewTool(store *Store) *MemoryTool {
 func (t *MemoryTool) Definition() aitypes.ToolDefinition {
 	return aitypes.ToolDefinition{
 		Name:        "memory",
-		Description: "Manage persistent memory across sessions. Use 'update' to overwrite facts (memory.md — always in your system prompt), 'append' to log events to the journal, or 'search' to query past journal entries.",
+		Description: "Manage persistent memory across sessions. Actions: 'update' overwrites FACT.md (only durable project knowledge and decisions — not user preferences or personality, those belong in USER.md and SOUL.md). 'append' logs to JOURNAL.jsonl (one-time events, completed tasks, session notes). 'search' queries the journal. Before writing to FACT.md, ask: will this still matter in 6 months? If not, use append instead.",
 		InputSchema: memoryInputSchema,
 	}
 }
