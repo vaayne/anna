@@ -24,7 +24,7 @@ The current `stellad` surface is:
 - `stellad version` — print the version.
 - `stellad postgres ...` — manage the embedded PostgreSQL runtime.
 - `stellad vault keygen` — generate `STELLA_VAULT_KEY` for bootstrap.
-- `stellad mise reconcile-builtins` — install builtin sandbox tools.
+- `stellad system-bundle ...` — inspect, install, and verify the builtin Skill bundle.
 
 Before designing command behavior for server-backed features, read [CLI and
 native agent tools](../cli-as-client) and [API design rules](./api-design).
@@ -56,16 +56,16 @@ Examples:
 
 ```text
 stellad vault keygen
-stellad mise reconcile-builtins
+stellad system-bundle verify
 stellad service install --system
 ```
 
 ### Naming
 
 - Top-level commands are daemon domains or lifecycle verbs: `server`, `service`,
-  `upgrade`, `version`, `postgres`, `vault`, `mise`.
+  `upgrade`, `version`, `postgres`, `vault`, `system-bundle`.
 - Subcommands are verbs or resource nouns when another level is needed:
-  `keygen`, `reconcile-builtins`, `install`, `status`.
+  `keygen`, `revision`, `install`, `verify`, `status`.
 - Use lowercase, hyphen-separated names for multi-word commands and flags.
 - Prefer common verbs consistently:
 
@@ -217,7 +217,7 @@ it. One bit of failure is enough most of the time.
 When wrapping errors in Go, add the operation context once:
 
 ```go
-return fmt.Errorf("mise reconcile-builtins: %w", err)
+return fmt.Errorf("system-bundle install: %w", err)
 ```
 
 Do not wrap the same noun at every layer until the message reads like a haunted

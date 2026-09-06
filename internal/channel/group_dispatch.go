@@ -41,6 +41,13 @@ func (c *Coordinator) handleGroupIncoming(ctx context.Context, msg pkgchannel.In
 	if strings.EqualFold(command, "/new") {
 		return pkgchannel.GroupNewSessionUnsupportedMessage, true, nil, nil
 	}
+	allowed, err := c.channelListenerAllowed(ctx, msg.Platform, msg.ChannelID)
+	if err != nil {
+		return "", false, nil, fmt.Errorf("group channel admission: %w", err)
+	}
+	if !allowed {
+		return "", false, nil, errChannelPluginDisabled
+	}
 
 	result, err := c.appendGroupMessage(ctx, msg)
 	if err != nil {

@@ -13,15 +13,28 @@ import (
 // value; user configuration must not supply it.
 const EnvRunnerPath = "STELLA_RUNNER_PATH"
 
-// StellaHomeSandboxDirs returns the subdirectory names (relative to STELLA_HOME)
-// that sandbox backends must expose. Every backend — bwrap, Docker, none — should
-// derive its mount list from this slice so adding a new directory is a one-line
-// change. The returned names use filepath.Separator and are safe to join with
-// any absolute root.
+// EnvNativeSelectionDir carries the exact native selection directory through
+// backend policy rendering. It is runtime-owned; backends must prefer it over
+// the legacy mise shims field when rebuilding PATH.
+const EnvNativeSelectionDir = "STELLA_NATIVE_SELECTION_DIR"
+
+// EnvUserNativeSelectionDir carries the exact user/user-agent selection. It
+// stays separate from the system selection because Linux maps system binaries
+// onto /opt/stella/bin while user selections remain secondary mounts.
+const EnvUserNativeSelectionDir = "STELLA_USER_NATIVE_SELECTION_DIR"
+
+// EnvCoreRuntimeDir carries the mandatory release command selection.
+// It is runtime-owned and never copied from Vault.
+const EnvCoreRuntimeDir = "STELLA_CORE_RUNTIME_DIR"
+
+// StellaHomeSandboxDirs returns the core runtime directories (relative to
+// STELLA_HOME) that sandbox backends may expose. Selection-owned mise contexts
+// and artifacts are mounted separately by the runner; keeping the shared
+// .mise-tools root out of this list prevents one runner from reading another's
+// selection config.
 func StellaHomeSandboxDirs() []string {
 	return []string{
 		"bin",
-		".mise-tools",
 	}
 }
 
@@ -97,22 +110,27 @@ func PerUserMiseDataDir(env map[string]string, stellaHome string) string {
 }
 
 // HostEnvBuildPath returns a sanitized PATH suitable for host-execution sandbox
-// backends (local, none). It prepends the per-user mise shims (so a user's own
-// tool versions win), then Stella's embedded runtimes and the system mise shims, and
-// filters host PATH entries to a safe allowlist on Linux. An empty userShimsDir
-// is dropped, so callers without a per-user tree pass "".
-func HostEnvBuildPath(stellaHome, userShimsDir string) string {
+// backends (local, none). Only selection-local shims are prepended: the
+// per-user tree wins over the system/system-agent selection, while the shared
+// mise shims and the whole STELLA_HOME/bin directory stay out of the public
+// command search path. The mise engine itself is invoked by its explicit path.
+func HostEnvBuildPath(stellaHome, userShimsDir string, selectionShimsDirs ...string) string {
 	stellaBin := filepath.Join(stellaHome, "bin")
-	shimsDir := MiseShimsDir(stellaHome)
+	sharedShims := MiseShimsDir(stellaHome)
+	entries := []string{userShimsDir}
+	entries = append(entries, selectionShimsDirs...)
 	if runtime.GOOS != "linux" {
-		return strings.Join(hostEnvDedupeEntries([]string{
-			userShimsDir, stellaBin, shimsDir, os.Getenv("PATH"),
-		}), string(os.PathListSeparator))
+		for entry := range strings.SplitSeq(os.Getenv("PATH"), string(os.PathListSeparator)) {
+			if entry == stellaBin || entry == sharedShims {
+				continue
+			}
+			entries = append(entries, entry)
+		}
+		return strings.Join(hostEnvDedupeEntries(entries), string(os.PathListSeparator))
 	}
 
-	entries := []string{userShimsDir, stellaBin, shimsDir}
 	for entry := range strings.SplitSeq(os.Getenv("PATH"), string(os.PathListSeparator)) {
-		if hostEnvPathAllowed(entry, stellaBin) {
+		if hostEnvPathAllowed(entry, stellaBin, sharedShims) {
 			entries = append(entries, entry)
 		}
 	}
@@ -147,12 +165,14 @@ func HostEnvPathAllowed(entry, stellaBin string) bool {
 	return hostEnvPathAllowed(entry, stellaBin)
 }
 
-func hostEnvPathAllowed(entry, stellaBin string) bool {
+func hostEnvPathAllowed(entry string, excluded ...string) bool {
 	if entry == "" {
 		return false
 	}
-	if stellaBin != "" && entry == stellaBin {
-		return true
+	for _, path := range excluded {
+		if path != "" && entry == path {
+			return false
+		}
 	}
 	for _, root := range []string{"/usr", "/bin", "/sbin", "/nix", "/run/current-system/sw"} {
 		if entry == root || strings.HasPrefix(entry, root+"/") {

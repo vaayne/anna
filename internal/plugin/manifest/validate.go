@@ -58,7 +58,16 @@ func Validate(m *Manifest) error {
 		}
 	}
 
-	for i, p := range m.Plugins {
+	errs = append(errs, validatePlugins(m.Plugins, providerIDs)...)
+	return errors.Join(errs...)
+}
+
+// validatePlugins checks plugin declarations without requiring the provider
+// document. Generators use this for the separate plugin.yaml tree; Validate
+// passes the central provider index so the full manifest still checks refs.
+func validatePlugins(plugins []ManifestPlugin, providerIDs map[string]struct{}) []error {
+	var errs []error
+	for i, p := range plugins {
 		if p.ID == "" {
 			errs = append(errs, fmt.Errorf("plugin[%d]: id is required", i))
 		}
@@ -73,10 +82,12 @@ func Validate(m *Manifest) error {
 				errs = append(errs, fmt.Errorf("plugin %q binary[%d]: tool is required (e.g. uv or github:owner/repo)", p.ID, j))
 			}
 		}
-		for j, s := range p.Skills {
-			if s.Repo == "" {
-				errs = append(errs, fmt.Errorf("plugin %q skill[%d]: repo is required", p.ID, j))
+		for j, name := range p.BundledBinaries {
+			if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
+				errs = append(errs, fmt.Errorf("plugin %q bundled binary[%d]: unsafe name %q", p.ID, j, name))
 			}
+		}
+		for j, s := range p.Skills {
 			if s.Name == "" {
 				errs = append(errs, fmt.Errorf("plugin %q skill[%d]: name is required", p.ID, j))
 			}
@@ -94,12 +105,12 @@ func Validate(m *Manifest) error {
 				errs = append(errs, fmt.Errorf("plugin %q session_env[%d]: oauth source requires oauth_provider", p.ID, j))
 			}
 		}
-		if p.OAuthProvider != "" {
+		if p.OAuthProvider != "" && providerIDs != nil {
 			if _, ok := providerIDs[p.OAuthProvider]; !ok {
 				errs = append(errs, fmt.Errorf("plugin %q: unknown oauth_provider %q", p.ID, p.OAuthProvider))
 			}
 		}
 
 	}
-	return errors.Join(errs...)
+	return errs
 }

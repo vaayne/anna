@@ -68,12 +68,37 @@ type SystemPromptContext struct {
 	DisabledSkillRefs []string
 }
 
-// SessionPluginView is the runner-facing view of enabled plugin-owned session
-// setup plus the plugin visibility state prompt builders may need.
+// PluginResourceIdentity identifies the selected definition/config revision
+// behind a session resource. ConfigID is empty only for a resource that has no
+// selected config; callers that need an installable resource must reject that
+// state rather than inventing a cache identity.
+type PluginResourceIdentity struct {
+	PluginID string
+	ConfigID string
+	Scope    string
+	Revision int64
+}
+
+// PluginBinarySpec is a selected plugin binary resource. It is a projection
+// only: the host installer must not consume user-scoped values from this type.
+type PluginBinarySpec struct {
+	PluginResourceIdentity
+	Name    string
+	Tool    string
+	Version string
+	Options map[string]any
+}
+
+// SessionPluginView is the runner-facing view of selected plugin-owned session
+// setup, resources, and plugin visibility state.
 type SessionPluginView struct {
 	RegisteredPluginIDs []string
-	EnabledPluginIDs    []string
-	SessionEnvSpecs     []SessionEnvSpec
+	// ExposedPluginIDs are the enabled namespace winners whose resources may
+	// contribute to this public session view. ID-based callers retain their own
+	// snapshot resolution for enabled losers.
+	ExposedPluginIDs []string
+	SessionEnvSpecs  []SessionEnvSpec
+	BinarySpecs      []PluginBinarySpec
 }
 
 // BeforeRunContext is the narrow per-run lifecycle context exposed to plugins.

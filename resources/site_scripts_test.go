@@ -3,16 +3,16 @@ package resources
 import (
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-const siteScriptsSkillDir = "skills/system/web"
+const siteScriptsSkillDir = "skills/core/web"
 
 var siteScriptMeta = regexp.MustCompile(`(?s)^\s*/\*\s*@meta\s*(\{.*?\})\s*\*/\s*async\s+function\b`)
 
@@ -28,35 +28,28 @@ type siteScriptMetaDoc struct {
 func siteScriptNames(t *testing.T) map[string]siteScriptMetaDoc {
 	t.Helper()
 	scripts := map[string]siteScriptMetaDoc{}
-	root := siteScriptsSkillDir + "/sites"
-	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	skill := builtinSkillDescriptor(t, "web")
+	for _, file := range skill.Files {
+		if !strings.HasPrefix(file.Path, "sites/") || !strings.HasSuffix(file.Path, ".js") {
+			continue
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".js") {
-			return nil
-		}
-		rel := strings.TrimSuffix(strings.TrimPrefix(path, root+"/"), ".js")
+		rel := strings.TrimSuffix(strings.TrimPrefix(file.Path, "sites/"), ".js")
 		if strings.Count(rel, "/") != 1 {
-			t.Fatalf("site script %s must live at sites/<site>/<name>.js", path)
+			t.Fatalf("site script %s must live at sites/<site>/<name>.js", file.Path)
 		}
-		content, err := fs.ReadFile(fsys, path)
+		contentBytes, _, err := builtinSkillFile(t, skill, file.Path)
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		match := siteScriptMeta.FindSubmatch(content)
+		match := siteScriptMeta.FindSubmatch(contentBytes)
 		if match == nil {
-			t.Fatalf("site script %s must start with /* @meta {...} */ followed by async function", path)
+			t.Fatalf("site script %s must start with /* @meta {...} */ followed by async function", file.Path)
 		}
 		var meta siteScriptMetaDoc
 		if err := json.Unmarshal(match[1], &meta); err != nil {
-			t.Fatalf("site script %s has invalid @meta JSON: %v", path, err)
+			t.Fatalf("site script %s has invalid @meta JSON: %v", file.Path, err)
 		}
 		scripts[rel] = meta
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	if len(scripts) == 0 {
 		t.Fatal("no bundled site scripts found")
@@ -89,7 +82,7 @@ func TestSiteScriptsAreAnonymousReadOnlyAndDescribed(t *testing.T) {
 // SKILL.md examples are a contract with the bundled catalog: a name the prose
 // invokes must exist, or the model learns a command that fails.
 func TestSiteScriptsSkillNamesRealScripts(t *testing.T) {
-	text := readSkill(t, siteScriptsSkillDir+"/SKILL.md")
+	text := readBuiltinSkillPath(t, siteScriptsSkillDir+"/SKILL.md")
 	scripts := siteScriptNames(t)
 	found := 0
 	for _, match := range regexp.MustCompile(`web\.ts site (?:run|info) ([a-z0-9_-]+/[a-z0-9_-]+)`).FindAllStringSubmatch(text, -1) {
@@ -110,7 +103,7 @@ func TestSiteScriptsSkillNamesRealScripts(t *testing.T) {
 // that captures the generated PandaScript, so the test pins the wrapper
 // (navigation target, args, header scoping) without network.
 func TestSiteScriptRunnerBuildsPandaScript(t *testing.T) {
-	skillDir := filepath.Join("skills", "system", "web")
+	skillDir := webSkillDir(t)
 	runner := filepath.Join(skillDir, "scripts", "web.ts")
 
 	bin := t.TempDir()
@@ -207,10 +200,28 @@ async function(args) { return {mine: true}; }
 // Without lightpanda the runner must explain where the binary comes from
 // instead of failing on a runtime traceback.
 func TestSiteScriptRunnerExplainsMissingLightpanda(t *testing.T) {
-	cmd := exec.Command("bun", filepath.Join("skills", "system", "web", "scripts", "web.ts"), "site", "run", "exa/search", "query=x")
+	cmd := exec.Command("bun", filepath.Join(webSkillDir(t), "scripts", "web.ts"), "site", "run", "exa/search", "query=x")
 	cmd.Env = []string{"PATH=" + t.TempDir(), "HOME=" + t.TempDir()}
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "lightpanda is not on PATH") || strings.Contains(string(out), "Traceback") {
 		t.Fatalf("missing lightpanda must be explained, got %v: %s", err, out)
 	}
+}
+
+func webSkillDir(t *testing.T) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate web skill")
+	}
+	return filepath.Join(filepath.Dir(filename), "..", "plugins", "tools", "bun", "skills", "web")
+}
+
+func builtinSkillFile(t *testing.T, skill BuiltinSkillDescriptor, name string) ([]byte, BuiltinSkillFile, error) {
+	t.Helper()
+	r, err := Default()
+	if err != nil {
+		return nil, BuiltinSkillFile{}, err
+	}
+	return r.ReadBuiltinSkillFile(skill.Name, name)
 }

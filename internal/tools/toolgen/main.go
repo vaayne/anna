@@ -209,6 +209,11 @@ type domainPackage struct {
 	Root    string
 	Dir     string
 	Package string
+	// PluginID and Namespace are authored at this composition root for the
+	// generated families that are real Go plugins. Empty values mean the
+	// family is a core tool and keeps its existing name.
+	PluginID  string
+	Namespace string
 	// PrefixGeneratedSymbols makes this family safe to generate alongside other
 	// families or hand-written action-shaped types in the same package.
 	PrefixGeneratedSymbols bool
@@ -222,13 +227,13 @@ type domainPackage struct {
 
 var domainPackages = map[string]domainPackage{
 	"goal":      {Dir: "goal", Package: "goal", Split: true},
-	"scheduler": {Dir: "scheduler", Package: "scheduler", Split: true},
+	"scheduler": {Dir: "scheduler", Package: "scheduler", PluginID: "system/scheduler", Namespace: "scheduler", Split: true},
 	"workflow":  {Dir: "workflow", Package: "workflow", Split: true},
 	"vault":     {Dir: "vault", Package: "vault", Split: true},
 	"oauth":     {Dir: "connections", Package: "connections", Split: true},
 	"share":     {Dir: "share", Package: "share", Split: true},
-	"recally":   {Dir: "library/recally", Package: "recally", Split: true},
-	"email":     {Root: "plugins", Dir: "email", Package: "email", Split: true},
+	"recally":   {Dir: "library/recally", Package: "recally", PluginID: "system/recally", Namespace: "recally", Split: true},
+	"email":     {Root: "plugins", Dir: "email", Package: "email", PluginID: "system/email", Namespace: "email", Split: true},
 	// Settings families share existing Go packages, so generated identifiers stay
 	// prefixed to avoid collisions. The unprefixed library and skill mappings are
 	// still used by declaration-only runtime tools such as library_search and
@@ -258,6 +263,9 @@ type toolDecl struct {
 	Resource    string
 	Action      string
 	Name        string
+	PluginID    string
+	Namespace   string
+	LocalName   string
 	Description string
 	Schema      map[string]any
 	Required    []string
@@ -384,11 +392,18 @@ func collectOperationTools(doc *openAPIDoc) ([]toolDecl, error) {
 				applyRequired(schema, spec.Require)
 				applyOptional(schema, spec.Optional)
 				applyPreserveEmpty(schema, spec.PreserveEmpty)
+				name, pluginID, namespace, localName, err := generatedToolIdentity(pkg, spec.Tool, spec.Resource, spec.Action, spec.NameOverride)
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", where, err)
+				}
 				out = append(out, toolDecl{
 					Family:         spec.Tool,
 					Resource:       spec.Resource,
 					Action:         spec.Action,
-					Name:           toolName(spec.Tool, spec.Resource, spec.Action, spec.NameOverride),
+					Name:           name,
+					PluginID:       pluginID,
+					Namespace:      namespace,
+					LocalName:      localName,
 					Description:    operationDescription(spec, op),
 					Schema:         schema,
 					Required:       stringSlice(schema["required"]),
@@ -541,11 +556,18 @@ func collectStandaloneTools(dir string, doc *openAPIDoc) ([]toolDecl, error) {
 			if mapped, ok := domainPackages[family]; ok && mapped.Dir == pkgPath {
 				pkg = mapped
 			}
+			name, pluginID, namespace, localName, err := generatedToolIdentity(pkg, family, tool.Resource, tool.Action, tool.NameOverride)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", where, err)
+			}
 			out = append(out, toolDecl{
 				Family:      family,
 				Resource:    tool.Resource,
 				Action:      tool.Action,
-				Name:        toolName(family, tool.Resource, tool.Action, tool.NameOverride),
+				Name:        name,
+				PluginID:    pluginID,
+				Namespace:   namespace,
+				LocalName:   localName,
 				Description: tool.Description,
 				Schema:      schema,
 				Required:    stringSlice(schema["required"]),
@@ -588,9 +610,44 @@ func validate(decls []toolDecl) error {
 	// providerNames is what the model actually sees: one name per split tool,
 	// one name per union family.
 	providerNames := map[string][]toolDecl{}
+	seenPluginNamespaces := map[string]string{}
+	seenPluginIDs := map[string]string{}
 	for _, decl := range decls {
 		if decl.Description == "" {
 			report(decl, "tool has no description")
+		}
+		pkg := decl.Package
+		if (pkg.PluginID == "") != (pkg.Namespace == "") {
+			report(decl, "plugin package mapping must provide both plugin ID and namespace")
+		}
+		if pkg.PluginID == "" {
+			if decl.PluginID != "" || decl.Namespace != "" || decl.LocalName != "" {
+				report(decl, "core tool must not carry plugin identity metadata")
+			}
+		} else {
+			if decl.PluginID != pkg.PluginID || decl.Namespace != pkg.Namespace || decl.LocalName == "" {
+				report(decl, "generated plugin metadata does not match its authored package mapping")
+			}
+			if !providerToolNameRE.MatchString(pkg.Namespace) || strings.Contains(pkg.Namespace, "__") {
+				report(decl, "plugin namespace %q must use provider-safe characters and cannot contain __", pkg.Namespace)
+			}
+			if !providerToolNameRE.MatchString(decl.LocalName) {
+				report(decl, "local tool name %q must match %s", decl.LocalName, providerToolNameRE)
+			}
+			expectedName := pkg.Namespace + "__" + decl.LocalName
+			if decl.Name != expectedName {
+				report(decl, "exported plugin tool name %q does not match namespace/local metadata, want %q", decl.Name, expectedName)
+			}
+			if prior, ok := seenPluginNamespaces[pkg.Namespace]; ok && prior != pkg.PluginID {
+				report(decl, "plugin namespace %q is already authored by plugin %q", pkg.Namespace, prior)
+			} else {
+				seenPluginNamespaces[pkg.Namespace] = pkg.PluginID
+			}
+			if prior, ok := seenPluginIDs[pkg.PluginID]; ok && prior != pkg.Namespace {
+				report(decl, "plugin %q is already authored with namespace %q", pkg.PluginID, prior)
+			} else {
+				seenPluginIDs[pkg.PluginID] = pkg.Namespace
+			}
 		}
 		dirKey := outputDirKey(decl.Package)
 		if other, ok := seenDir[dirKey]; ok && other.family != decl.Family {
@@ -697,6 +754,32 @@ func toolName(family, resource, action, override string) string {
 		parts = append(parts, resource)
 	}
 	return strings.Join(append(parts, action), "_")
+}
+
+// generatedToolIdentity is the only place where a generated plugin tool gets
+// its exported name. The package mapping is authored at the generator
+// composition root, while local names remain the operation's stable family
+// grammar. Core tools intentionally keep the historical name and have no
+// plugin identity metadata.
+func generatedToolIdentity(pkg domainPackage, family, resource, action, override string) (name, pluginID, namespace, localName string, err error) {
+	legacyName := toolName(family, resource, action, override)
+	if pkg.PluginID == "" && pkg.Namespace == "" {
+		return legacyName, "", "", "", nil
+	}
+	if pkg.PluginID == "" || pkg.Namespace == "" {
+		return "", "", "", "", fmt.Errorf("plugin package mapping must provide both plugin ID and namespace")
+	}
+	localName = override
+	if localName == "" {
+		parts := make([]string, 0, 2)
+		if resource != "" && resource != family {
+			parts = append(parts, resource)
+		}
+		parts = append(parts, action)
+		localName = strings.Join(parts, "_")
+	}
+	name = pkg.Namespace + "__" + localName
+	return name, pkg.PluginID, pkg.Namespace, localName, nil
 }
 
 func paramsInputSchema(resolver schemaResolver, params []any, resource string) (map[string]any, error) {
@@ -993,7 +1076,11 @@ func renderSplitSchemas(out *bytes.Buffer, family string, pkg domainPackage, dec
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "\t\t{Name: %q, Family: %q, ", decl.Name, decl.Family)
+		fmt.Fprintf(out, "\t\t{Name: %q, ", decl.Name)
+		if decl.PluginID != "" {
+			fmt.Fprintf(out, "PluginID: %q, Namespace: %q, LocalName: %q, ", decl.PluginID, decl.Namespace, decl.LocalName)
+		}
+		fmt.Fprintf(out, "Family: %q, ", decl.Family)
 		if decl.Resource != "" {
 			fmt.Fprintf(out, "Resource: %q, ", decl.Resource)
 		}

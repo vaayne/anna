@@ -9,14 +9,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	builtinplugins "github.com/CherryHQ/stella/plugins"
 )
 
 // Registry is the read-only catalog of builtin resources, keyed by Kind and ID.
 type Registry struct {
-	byKind   map[Kind]map[string]Resource
-	manifest BuiltinManifest
-	skills   map[string]BuiltinSkillDescriptor
-	source   fs.FS
+	byKind      map[Kind]map[string]Resource
+	manifest    BuiltinManifest
+	skills      map[string]BuiltinSkillDescriptor
+	source      fs.FS
+	skillReader BuiltinSkillReader
 }
 
 var (
@@ -33,7 +36,9 @@ func Default() (*Registry, error) {
 			defaultErr = err
 			return
 		}
-		defaultReg, defaultErr = LoadBuiltin(fsys, manifest)
+		defaultReg, defaultErr = LoadBuiltinWithSkillReader(fsys, manifest, func(skill BuiltinSkillDescriptor, file string) ([]byte, error) {
+			return builtinplugins.ReadBuiltinSkillFile(skill.SourceRoot, file)
+		})
 	})
 	return defaultReg, defaultErr
 }
@@ -63,6 +68,16 @@ func Load(sourceFS fs.FS) (*Registry, error) {
 // LoadBuiltin loads a registry from an embedded-style filesystem and validates
 // every manifest-described byte before making it available to callers.
 func LoadBuiltin(sourceFS fs.FS, manifest BuiltinManifest) (*Registry, error) {
+	return LoadBuiltinWithSkillReader(sourceFS, manifest, nil)
+}
+
+// BuiltinSkillReader reads a manifest file from the release-owned asset
+// package. It separates physical source layout from the stable bundle Root.
+type BuiltinSkillReader func(skill BuiltinSkillDescriptor, file string) ([]byte, error)
+
+// LoadBuiltinWithSkillReader loads a manifest and obtains skills through the
+// explicit asset reader when the resource package no longer embeds skill files.
+func LoadBuiltinWithSkillReader(sourceFS fs.FS, manifest BuiltinManifest, reader BuiltinSkillReader) (*Registry, error) {
 	if err := validateBuiltinManifest(manifest); err != nil {
 		return nil, err
 	}
@@ -72,12 +87,13 @@ func LoadBuiltin(sourceFS fs.FS, manifest BuiltinManifest) (*Registry, error) {
 	}
 	r.manifest = BuiltinManifest{Revision: manifest.Revision, Skills: make([]BuiltinSkillDescriptor, 0, len(manifest.Skills))}
 	r.skills = make(map[string]BuiltinSkillDescriptor, len(manifest.Skills))
+	r.skillReader = reader
 	for _, skill := range manifest.Skills {
 		if _, exists := r.skills[skill.Name]; exists {
 			return nil, fmt.Errorf("duplicate builtin descriptor %q", skill.Name)
 		}
 		for _, file := range skill.Files {
-			data, err := fs.ReadFile(sourceFS, path.Join("skills", skill.Root, file.Path))
+			data, err := r.readBuiltinSkillFile(skill, file.Path)
 			if err != nil {
 				return nil, fmt.Errorf("read builtin skill %q file %q: %w", skill.Name, file.Path, err)
 			}
@@ -86,6 +102,18 @@ func LoadBuiltin(sourceFS fs.FS, manifest BuiltinManifest) (*Registry, error) {
 			}
 		}
 		resource, ok := r.Get(KindSkill, skill.Name)
+		if reader != nil {
+			raw, readErr := r.readBuiltinSkillFile(skill, "SKILL.md")
+			if readErr != nil {
+				return nil, fmt.Errorf("read builtin skill %q metadata: %w", skill.Name, readErr)
+			}
+			parsed, parseErr := parseResource(KindSkill, skill.Name, string(raw))
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse builtin skill %q: %w", skill.Name, parseErr)
+			}
+			r.byKind[KindSkill][parsed.ID] = parsed
+			resource, ok = parsed, true
+		}
 		if !ok || resource.Name != skill.Name || resource.Description != skill.Description || !reflect.DeepEqual(resource.Tags, skill.Tags) || boolMetadata(resource.Metadata, "disable_model_invocation") != skill.DisableModelInvocation || !reflect.DeepEqual(resource.Metadata, skill.Metadata) {
 			return nil, fmt.Errorf("builtin skill %q metadata does not match manifest", skill.Name)
 		}
@@ -97,6 +125,31 @@ func LoadBuiltin(sourceFS fs.FS, manifest BuiltinManifest) (*Registry, error) {
 		return nil, fmt.Errorf("builtin manifest lists %d skills but embedded resources contain %d", len(r.skills), len(r.byKind[KindSkill]))
 	}
 	return r, nil
+}
+
+// ValidateBuiltinSkillOwners checks the immutable owner projection against the
+// runtime plugin catalog. The map is supplied by the composition root, so this
+// package does not maintain a second ownership registry.
+func (r *Registry) ValidateBuiltinSkillOwners(knownOwners map[string]struct{}) error {
+	if r == nil {
+		return fmt.Errorf("builtin registry is nil")
+	}
+	for _, skill := range r.BuiltinSkills() {
+		ownerValidator := validateSkillOwner
+		if skill.SourceRoot != "" {
+			ownerValidator = validateExplicitSkillOwner
+		}
+		if err := ownerValidator(skill.Root, skill.OwnerPluginID); err != nil {
+			return err
+		}
+		if skill.OwnerPluginID == "" {
+			continue
+		}
+		if _, ok := knownOwners[skill.OwnerPluginID]; !ok {
+			return fmt.Errorf("builtin skill %q has unknown plugin owner %q", skill.Name, skill.OwnerPluginID)
+		}
+	}
+	return nil
 }
 
 // loadKind discovers resources of a single kind under subFS.
@@ -201,6 +254,13 @@ func (r *Registry) BuiltinSkill(name string) (BuiltinSkillDescriptor, bool) {
 	return cloneBuiltinSkillDescriptor(skill), ok
 }
 
+func (r *Registry) readBuiltinSkillFile(skill BuiltinSkillDescriptor, filePath string) ([]byte, error) {
+	if r.skillReader != nil {
+		return r.skillReader(skill, filePath)
+	}
+	return fs.ReadFile(r.source, path.Join("skills", skill.Root, filePath))
+}
+
 // ReadBuiltinSkillFile returns an embedded skill file selected by canonical
 // root-relative path, together with its manifest descriptor.
 func (r *Registry) ReadBuiltinSkillFile(name, filePath string) ([]byte, BuiltinSkillFile, error) {
@@ -215,7 +275,7 @@ func (r *Registry) ReadBuiltinSkillFile(name, filePath string) ([]byte, BuiltinS
 		if file.Path != filePath {
 			continue
 		}
-		data, err := fs.ReadFile(r.source, path.Join("skills", skill.Root, file.Path))
+		data, err := r.readBuiltinSkillFile(skill, file.Path)
 		if err != nil {
 			return nil, BuiltinSkillFile{}, fmt.Errorf("read builtin skill %q file %q: %w", name, filePath, err)
 		}
@@ -229,6 +289,7 @@ func (r *Registry) ReadBuiltinSkillFile(name, filePath string) ([]byte, BuiltinS
 
 func cloneBuiltinSkillDescriptor(skill BuiltinSkillDescriptor) BuiltinSkillDescriptor {
 	cloned := skill
+	cloned.SourceRoot = skill.SourceRoot
 	cloned.Files = append([]BuiltinSkillFile(nil), skill.Files...)
 	cloned.Tags = append([]string(nil), skill.Tags...)
 	cloned.Metadata = cloneBuiltinMetadata(skill.Metadata)

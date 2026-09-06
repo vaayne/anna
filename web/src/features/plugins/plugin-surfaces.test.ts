@@ -7,17 +7,23 @@ vi.hoisted(() => {
   });
 });
 
-import { AdminPluginsPage } from "./PluginsPage";
+import {
+  pluginErrorMessage,
+  UnifiedPluginsPage,
+  PersonalUnifiedPluginsPage,
+  type Translate,
+} from "./UnifiedPluginsPage";
 import {
   PersonalCredentialsPage,
   SystemCredentialsPage,
 } from "@/features/credentials/CredentialsPage";
-import { GlobalMCPPage, PersonalMCPPage } from "@/features/mcp/MCPServersPage";
+import { GlobalMCPPage } from "@/features/mcp/MCPServersPage";
 import { GlobalLibraryPage, SettingsLibraryPage } from "@/features/library/LibraryFilesPage";
 import { GlobalSkillsPage, PersonalSkillsPage } from "@/features/skills/SkillsPage";
 import { adminSettingsNav } from "@/features/settings/AdminLayout";
 import { personalSettingsGroups } from "@/features/settings/SettingsLayout";
-import { Route as PersonalMCPRoute } from "@/routes/_app/settings/mcp.lazy";
+import { Route as PersonalPluginsRoute } from "@/routes/_app/settings/plugins.lazy";
+import { Route as PersonalPluginDetailRoute } from "@/routes/_app/settings/plugins.$pluginId";
 import { Route as AdminPluginsRoute } from "@/routes/_app/admin/integrations/plugins.lazy";
 import { Route as AdminMCPRoute } from "@/routes/_app/admin/resources/mcp.lazy";
 import { Route as PersonalSkillsRoute } from "@/routes/_app/settings/skills.lazy";
@@ -28,13 +34,30 @@ import { Route as PersonalLibraryRoute } from "@/routes/_app/settings/library.la
 import { Route as AdminLibraryRoute } from "@/routes/_app/admin/resources/library.lazy";
 
 describe("plugin surface ownership", () => {
+  it("turns the OAuth initialization conflict into an actionable prompt", () => {
+    const translate = ((key: string) => key) as unknown as Translate;
+    expect(
+      pluginErrorMessage(
+        {
+          error: {
+            code: 409,
+            message:
+              "administrator must initialize this connection before users can authorize their own accounts",
+          },
+        },
+        translate,
+      ),
+    ).toBe("plugins.oauthAdminInitializationRequired");
+  });
+
   it("keeps personal MCP available to admins through Personal Settings", () => {
     const personalLinks = personalSettingsGroups(true).flatMap((group) =>
       group.items.map((item) => item.href),
     );
 
-    expect(personalLinks).toContain("/settings/mcp");
-    expect(PersonalMCPRoute.options.component).toBe(PersonalMCPPage);
+    expect(personalLinks).toContain("/settings/plugins");
+    expect(PersonalPluginsRoute.options.component).toBe(PersonalUnifiedPluginsPage);
+    expect(PersonalPluginDetailRoute.options.beforeLoad).toBeUndefined();
     expect(PersonalSkillsRoute.options.component).toBe(PersonalSkillsPage);
     expect(PersonalCredentialsRoute.options.component).toBe(PersonalCredentialsPage);
     expect(PersonalLibraryRoute.options.component).toBe(SettingsLibraryPage);
@@ -45,12 +68,12 @@ describe("plugin surface ownership", () => {
 
     expect(adminLinks).toContain("/admin/integrations/plugins");
     expect(adminLinks).toContain("/admin/resources/mcp");
-    expect(adminLinks).not.toContain("/settings/mcp");
-    expect(AdminPluginsRoute.options.component).toBe(AdminPluginsPage);
+    expect(adminLinks).not.toContain("/settings/plugins");
+    expect(AdminPluginsRoute.options.component).toBe(UnifiedPluginsPage);
     expect(AdminMCPRoute.options.component).toBe(GlobalMCPPage);
     expect(AdminSkillsRoute.options.component).toBe(GlobalSkillsPage);
     expect(AdminCredentialsRoute.options.component).toBe(SystemCredentialsPage);
     expect(AdminLibraryRoute.options.component).toBe(GlobalLibraryPage);
-    expect(AdminPluginsPage).not.toBe(GlobalMCPPage);
+    expect(UnifiedPluginsPage).not.toBe(GlobalMCPPage);
   });
 });

@@ -1,9 +1,6 @@
 package db
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 const (
 	dropRTKPluginBeforeMigration = 90000000000016
@@ -11,14 +8,8 @@ const (
 )
 
 func TestDropRTKPlugin(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, dropRTKPluginBeforeMigration); err != nil {
-		t.Fatalf("restore pre-migration schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, dropRTKPluginBeforeMigration)
+	ctx := t.Context()
 	for _, id := range []string{"hook/rtk", "tool/rg"} {
 		seedPluginRow(t, db, id)
 		if _, err := db.Exec(ctx, `

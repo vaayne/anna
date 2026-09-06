@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/CherryHQ/stella/internal/agent/sandbox"
+	"github.com/CherryHQ/stella/internal/plugin"
 	coreagent "github.com/CherryHQ/stella/pkg/agent"
 	"github.com/CherryHQ/stella/pkg/ai"
 	"github.com/CherryHQ/stella/pkg/providers"
@@ -22,6 +23,25 @@ import (
 type stubProvider struct{}
 
 type stubTool struct{ name string }
+
+type identifiedMCPTool struct{}
+
+func (identifiedMCPTool) Definition() tools.Definition {
+	return tools.Definition{Name: "settings_server__list"}
+}
+
+func (identifiedMCPTool) Execute(context.Context, map[string]any) (string, error) { return "", nil }
+
+func (identifiedMCPTool) PluginToolIdentity() (string, string, bool) {
+	return "custom/settings", "list", true
+}
+
+func TestRunnerMCPToolIdentityRequiresSnapshotOwner(t *testing.T) {
+	_, err := runnerMCPToolIdentity(plugin.Snapshot{}, identifiedMCPTool{})
+	if err == nil || !strings.Contains(err.Error(), "unknown plugin") {
+		t.Fatalf("runnerMCPToolIdentity error = %v, want unknown snapshot owner", err)
+	}
+}
 
 func (s *stubTool) Definition() tools.Definition {
 	return tools.Definition{Name: s.name, Description: "stub tool"}

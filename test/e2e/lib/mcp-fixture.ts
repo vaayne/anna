@@ -2,7 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
+import { type ApiClient, expectStatus } from "./api.ts";
 import { startFixtureServer } from "./fixture-server.ts";
+import { type CreatePluginResponse, type PluginConfig, type PluginDefinition } from "./types.ts";
 
 export interface McpFixtureOptions {
   // Requests must carry `Authorization: Bearer <bearer>`; anything else is 401.
@@ -28,6 +30,66 @@ export interface McpFixture {
   // can prove sessions are shared rather than reopened per call.
   methods: Map<string, number>;
   close(): Promise<void>;
+}
+
+export interface CreateMcpPluginOptions {
+  namespace?: string;
+  displayName?: string;
+  scope?: "system" | "system_agent" | "user" | "user_agent";
+  agentId?: string;
+  enabled?: boolean | null;
+  authType?: "none" | "bearer" | "oauth";
+  credentialMode?: "shared" | "per_user";
+  token?: string;
+  metadata?: Record<string, unknown>;
+  url?: string;
+}
+
+// Management tests use the common definition/config API. The MCP backend owns
+// endpoint and credential decoding behind this narrow fixture helper, so tests
+// never seed the retired registration table directly.
+export async function createMcpPlugin(
+  api: ApiClient,
+  fixture: Pick<McpFixture, "url">,
+  options: CreateMcpPluginOptions = {},
+): Promise<CreatePluginResponse> {
+  const namespace = options.namespace ?? "e2e";
+  const displayName = options.displayName ?? namespace;
+  const config: Record<string, unknown> = {
+    url: options.url ?? fixture.url,
+    transport: "streamable_http",
+    auth_type: options.authType ?? "none",
+  };
+  if (options.credentialMode !== undefined) config.credential_mode = options.credentialMode;
+  if (options.metadata !== undefined) config.metadata = options.metadata;
+  const credentials = options.token === undefined ? undefined : { token: options.token };
+  return expectStatus(
+    await api.post<CreatePluginResponse>("/api/plugins", {
+      namespace,
+      display_name: displayName,
+      backend: "mcp",
+      definition_spec: {},
+      initial_config: {
+        scope: options.scope ?? "user",
+        ...(options.agentId === undefined ? {} : { agent_id: options.agentId }),
+        is_enabled: options.enabled === undefined ? true : options.enabled,
+        config,
+        ...(credentials === undefined ? {} : { credentials }),
+      },
+    }),
+    201,
+    "create MCP plugin",
+  );
+}
+
+export function pluginDefinitionPath(definition: PluginDefinition | string): string {
+  return `/api/plugins/${typeof definition === "string" ? definition : definition.id}`;
+}
+
+export function pluginConfigPath(definition: PluginDefinition | string, config: PluginConfig | string): string {
+  const pluginID = typeof definition === "string" ? definition : definition.id;
+  const configID = typeof config === "string" ? config : config.id;
+  return `${pluginDefinitionPath(pluginID)}/configs/${configID}`;
 }
 
 function buildServer(options: McpFixtureOptions, fixture: McpFixture): McpServer {

@@ -51,6 +51,85 @@ components:
 	}
 }
 
+func TestCollectOperationToolsUsesAuthoredPluginIdentity(t *testing.T) {
+	decls := mustDecls(t, `
+paths:
+  /api/scheduler/jobs:
+    get:
+      summary: List scheduler jobs
+      x-agent-tool: { tool: scheduler, resource: job, action: list }
+  /api/recally/feeds:
+    get:
+      summary: List recally feeds
+      x-agent-tool: { tool: recally, action: feed_list }
+  /api/email/accounts:
+    get:
+      summary: List email accounts
+      x-agent-tool: { tool: email, action: account_list }
+  /api/goals:
+    get:
+      summary: List goals
+      x-agent-tool: { tool: goal, action: list }
+components:
+  schemas: {}
+`)
+	got := map[string]toolDecl{}
+	for _, decl := range decls {
+		got[decl.Family] = decl
+	}
+	for family, want := range map[string]struct {
+		pluginID  string
+		namespace string
+		localName string
+		name      string
+	}{
+		"email":     {"system/email", "email", "account_list", "email__account_list"},
+		"recally":   {"system/recally", "recally", "feed_list", "recally__feed_list"},
+		"scheduler": {"system/scheduler", "scheduler", "job_list", "scheduler__job_list"},
+		"goal":      {"", "", "", "goal_list"},
+	} {
+		decl, ok := got[family]
+		if !ok {
+			t.Fatalf("missing %s declaration", family)
+		}
+		if decl.PluginID != want.pluginID || decl.Namespace != want.namespace || decl.LocalName != want.localName || decl.Name != want.name {
+			t.Fatalf("%s identity = (%q, %q, %q, %q), want (%q, %q, %q, %q)", family, decl.PluginID, decl.Namespace, decl.LocalName, decl.Name, want.pluginID, want.namespace, want.localName, want.name)
+		}
+	}
+	if err := validate(decls); err != nil {
+		t.Fatalf("validate generated identities: %v", err)
+	}
+}
+
+func TestValidateRejectsPluginIdentityCollisions(t *testing.T) {
+	plugin := func(family, pluginID, namespace, local, name string) toolDecl {
+		return toolDecl{
+			Family: family, Action: "list", Name: name, PluginID: pluginID, Namespace: namespace, LocalName: local,
+			Description: "List items.", Schema: objectSchema(nil, nil), SourceLocation: family,
+			Package: domainPackage{Dir: family, Package: family, PluginID: pluginID, Namespace: namespace, Split: true},
+		}
+	}
+	err := validate([]toolDecl{
+		plugin("first", "system/first", "shared", "list", "shared__list"),
+		plugin("second", "system/second", "shared", "list", "shared__list_2"),
+	})
+	if err == nil || !strings.Contains(err.Error(), `plugin namespace "shared" is already authored by plugin "system/first"`) {
+		t.Fatalf("collision error=%v, want namespace ownership failure", err)
+	}
+}
+
+func TestValidateRejectsOverlongPluginToolName(t *testing.T) {
+	local := strings.Repeat("x", maxProviderToolNameLen)
+	err := validate([]toolDecl{{
+		Family: "long", Action: "list", Name: "long__" + local, PluginID: "system/long", Namespace: "long", LocalName: local,
+		Description: "List long items.", Schema: objectSchema(nil, nil), SourceLocation: "long",
+		Package: domainPackage{Dir: "long", Package: "long", PluginID: "system/long", Namespace: "long", Split: true},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "at most 64 characters") {
+		t.Fatalf("overlong error=%v, want provider length failure", err)
+	}
+}
+
 func TestOperationToolInputOverridesHTTPBody(t *testing.T) {
 	decls := mustDecls(t, `
 paths:
@@ -510,8 +589,8 @@ func TestRenderPreserveEmptyStringAsPointer(t *testing.T) {
 
 func TestRenderSplitToolEmitsPrefixNamesAndStrictDecode(t *testing.T) {
 	out, err := renderTool("recally", domainPackages["recally"], []toolDecl{
-		{Family: "recally", Action: "article_list", Name: "recally_article_list", Schema: objectSchema(nil, nil)},
-		{Family: "recally", Resource: "feed", Action: "feed_add", Name: "recally_feed_add", Schema: objectSchema(nil, nil)},
+		{Family: "recally", Action: "article_list", Name: "recally__article_list", PluginID: "system/recally", Namespace: "recally", LocalName: "article_list", Schema: objectSchema(nil, nil)},
+		{Family: "recally", Resource: "feed", Action: "feed_add", Name: "recally__feed_add", PluginID: "system/recally", Namespace: "recally", LocalName: "feed_add", Schema: objectSchema(nil, nil)},
 	})
 	if err != nil {
 		t.Fatalf("render recally: %v", err)
@@ -522,7 +601,7 @@ func TestRenderSplitToolEmitsPrefixNamesAndStrictDecode(t *testing.T) {
 	}
 	// A split domain emits one exact-schema tool per action instead of a union
 	// with an `action` enum, so the provider can validate each call.
-	if !strings.Contains(text, `{Name: "recally_article_list", Family: "recally", Action: "article_list"`) || strings.Contains(text, `"action"`) {
+	if !strings.Contains(text, `{Name: "recally__article_list", PluginID: "system/recally", Namespace: "recally", LocalName: "article_list", Family: "recally", Action: "article_list"`) || strings.Contains(text, `"action"`) {
 		t.Fatalf("recally render did not split into per-action tools:\n%s", text)
 	}
 	for _, want := range []string{

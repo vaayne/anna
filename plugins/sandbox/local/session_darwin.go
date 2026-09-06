@@ -113,6 +113,43 @@ func buildSeatbeltProfile(policy sandboxpkg.Policy, mounts []sessionfs.Mount, wo
 
 	// Base: allow everything so the toolchain and shell work out of the box.
 	sb.WriteString("(allow default)\n")
+	if stellaHomeHost != "" {
+		// Shared runtime roots contain stale versions and per-agent installer
+		// state. A native session may read only the exact selection mounts below.
+		for _, root := range []string{
+			filepath.Join(stellaHomeHost, "bin"),
+			filepath.Join(stellaHomeHost, ".mise-tools"),
+			filepath.Join(stellaHomeHost, ".mise-managed"),
+			filepath.Join(stellaHomeHost, ".mise-private"),
+		} {
+			if canonical, err := filepath.EvalSymlinks(root); err == nil {
+				fmt.Fprintf(&sb, "(deny file-read* (subpath %q))\n", canonical)
+			}
+		}
+		if policy.Env["STELLA_NATIVE_PREP"] == "true" {
+			engine := filepath.Join(stellaHomeHost, "bin", "mise")
+			if canonical, err := filepath.EvalSymlinks(engine); err == nil {
+				// The preparation session is internal. Reopen only the mise engine,
+				// never the other shared runtime aliases such as xberg.
+				fmt.Fprintf(&sb, "(allow file-read* (literal %q))\n", canonical)
+			}
+			if canonical, err := filepath.EvalSymlinks(filepath.Join(stellaHomeHost, ".mise-managed")); err == nil {
+				fmt.Fprintf(&sb, "(allow file-read* (subpath %q))\n", canonical)
+			}
+		}
+		// Reopen only the immutable, content-addressed selections mounted for
+		// this session. In particular, never reopen the shared bin or mise root.
+		publicRoot := filepath.Join(stellaHomeHost, ".mise-tools", "public")
+		managedPublicRoot := filepath.Join(stellaHomeHost, ".mise-managed")
+		for _, mount := range mounts {
+			if !mount.ReadOnly || (!pathWithin(publicRoot, mount.HostPath) && !pathWithin(managedPublicRoot, mount.HostPath)) {
+				continue
+			}
+			if canonical, err := filepath.EvalSymlinks(mount.HostPath); err == nil {
+				fmt.Fprintf(&sb, "(allow file-read* (subpath %q))\n", canonical)
+			}
+		}
+	}
 
 	// Deny all filesystem writes. Re-allows below (last-match-wins) carve out
 	// the locations that the sandbox legitimately needs to write to.
@@ -152,6 +189,11 @@ func buildSeatbeltProfile(policy sandboxpkg.Policy, mounts []sessionfs.Mount, wo
 	}
 
 	return sb.String()
+}
+
+func pathWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func appendSeatbeltWritableEnvDirs(sb *strings.Builder, env map[string]string) {

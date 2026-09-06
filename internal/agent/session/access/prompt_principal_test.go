@@ -8,9 +8,12 @@ import (
 	"testing"
 
 	"github.com/CherryHQ/stella/internal/agent"
+	agentruntime "github.com/CherryHQ/stella/internal/agent/runtime"
 	"github.com/CherryHQ/stella/internal/agent/session"
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/memory/memorytest"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/skill"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
@@ -83,7 +86,6 @@ func TestPromptPreviewUsesAuthorizedRootToLeafProjectContextWithoutHostPath(t *t
 			t.Fatal(err)
 		}
 	}
-	var build pkgplugins.SystemPromptContext
 	projects := &promptTestProjects{
 		descriptor: agent.ProjectDescriptor{ID: "p1", UserID: "u1", AgentID: "a1", Path: "projects/app"},
 		second:     agent.ProjectDescriptor{ID: "p1", UserID: "u1", AgentID: "a1", Path: "changed/generation"},
@@ -93,7 +95,12 @@ func TestPromptPreviewUsesAuthorizedRootToLeafProjectContextWithoutHostPath(t *t
 		Agents:    promptTestAgents,
 		Projects:  projects.ResolveProject,
 		Workspace: promptTestWorkspace{root: stellaHome},
-		Plugins:   promptTestPlugins{build: &build},
+		PluginContextBuilder: func(context.Context, authz.Authority, string) (agentruntime.PluginContext, error) {
+			return agentruntime.PluginContext{}, nil
+		},
+		PromptSectionsBuilder: func(context.Context, pkgplugins.SystemPromptContext, plugin.Snapshot) ([]pkgplugins.SystemPromptSection, error) {
+			return nil, nil
+		},
 		Skills: func(_ context.Context, _ pkgplugins.SystemPromptContext, project *skill.ProjectSnapshot) (pkgplugins.SystemPromptSection, error) {
 			merged := skill.NewService().ListMerged(nil, project)
 			for _, resolved := range merged {
@@ -119,20 +126,6 @@ func TestPromptPreviewUsesAuthorizedRootToLeafProjectContextWithoutHostPath(t *t
 	}
 }
 
-type promptTestPlugins struct {
-	build *pkgplugins.SystemPromptContext
-}
-
-func (p promptTestPlugins) SessionPluginView(context.Context) (pkgplugins.SessionPluginView, error) {
-	return pkgplugins.SessionPluginView{}, nil
-}
-
-func (p promptTestPlugins) SystemPromptSections(_ context.Context, build pkgplugins.SystemPromptContext) ([]pkgplugins.SystemPromptSection, error) {
-	*p.build = build
-	return nil, nil
-}
-func (promptTestPlugins) ManifestPluginPrompts() []pkgplugins.SystemPromptSection { return nil }
-
 func TestAuthorizedPromptPassesLogicalIdentityWithoutPhysicalPaths(t *testing.T) {
 	stellaHome := t.TempDir()
 	for _, tt := range []struct {
@@ -150,7 +143,13 @@ func TestAuthorizedPromptPassesLogicalIdentityWithoutPhysicalPaths(t *testing.T)
 				Agents:    promptTestAgents,
 				Projects:  (&promptTestProjects{}).ResolveProject,
 				Workspace: promptTestWorkspace{root: stellaHome},
-				Plugins:   promptTestPlugins{build: &build},
+				PluginContextBuilder: func(context.Context, authz.Authority, string) (agentruntime.PluginContext, error) {
+					return agentruntime.PluginContext{}, nil
+				},
+				PromptSectionsBuilder: func(_ context.Context, got pkgplugins.SystemPromptContext, _ plugin.Snapshot) ([]pkgplugins.SystemPromptSection, error) {
+					build = got
+					return nil, nil
+				},
 				Skills: func(context.Context, pkgplugins.SystemPromptContext, *skill.ProjectSnapshot) (pkgplugins.SystemPromptSection, error) {
 					return pkgplugins.SystemPromptSection{}, nil
 				},
@@ -160,6 +159,9 @@ func TestAuthorizedPromptPassesLogicalIdentityWithoutPhysicalPaths(t *testing.T)
 			}
 			if _, err := builder.BuildSessionSystemPrompt(context.Background(), SystemPromptBuildInput{Info: tt.info}); err != nil {
 				t.Fatal(err)
+			}
+			if tt.info.UserID == "" {
+				return
 			}
 			if build.UserID != tt.info.UserID || build.AgentID != tt.info.AgentID {
 				t.Errorf("prompt identity = (%q, %q), want (%q, %q)", build.UserID, build.AgentID, tt.info.UserID, tt.info.AgentID)

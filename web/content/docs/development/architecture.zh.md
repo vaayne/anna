@@ -77,7 +77,7 @@ internal/
     embedding/         embedding provider、索引、存储
   skill/               托管 Skill 权威、精确 revision、搜索与加载
     access/            谁可以看见或修改一个 skill
-    policy/            按 Agent 的内建 skill 启用策略
+    policy/            按 Agent 的托管 skill 启用策略
   library/             文档库：原始存储、派生、检索
     recally/           基于同一套存储的稍后读与订阅后端
   db/                  PostgreSQL（pgx/v5）、goose 迁移、sqlc 查询、内嵌 runtime
@@ -204,7 +204,7 @@ type Tool interface {
 
 沙箱系统为 agent 工具执行提供进程、文件系统和网络隔离。所有核心工具在每个 runner 中共享同一个 `sandbox.Session`：`bash` 使用 `Session.Exec`；`view_image` 使用 `Session.Files`。公开 policy 只包含进程可见 root；物理 mount 映射和 rooted file capability 由各 backend 持有。具体后端位于 `plugins/sandbox/`，实现公开 sandbox 接口，并由 `cmd/stellad` 适配成经过校验的 registry；`internal/agent/sandbox` 只从注入的 registry 中选择。所选后端不可用时 runner 启动失败关闭。详见[沙箱后端抽象](/docs/development/sandbox)了解完整的 Session 接口、执行中介、拒绝失败行为和例外边界。
 
-沙箱工具（`bash`、`view_image`）位于 `internal/agent/sandbox/`；公开网页研究是一个 skill 而非工具包：`resources/skills/system/web/` 提供 `web` skill（`web.ts` 的 search/fetch 与 site scripts），`cmd/stellad` 将内置工具注册到目录。声明式 CLI 集成使用内建 manifest。扩展边界详见[插件系统](/docs/development/plugin-system)。
+沙箱工具（`bash`、`view_image`）位于 `internal/agent/sandbox/`；公开网页研究是一个 skill 而非工具包：`plugins/tools/bun/skills/web/` 提供 `web` skill（`web.ts` 的 search/fetch 与 site scripts），`cmd/stellad` 将内置工具注册到目录。声明式 CLI 集成使用内建 manifest。扩展边界详见[插件系统](/docs/development/plugin-system)。
 
 ### Session 工具
 
@@ -221,13 +221,13 @@ Agent 发送会先持久化一行输入，再进入进程内按 Session 划分�
 
 ### 内置共享工具
 
-| 工具              | 条件                  | 描述                                                                           |
-| ----------------- | --------------------- | ------------------------------------------------------------------------------ |
-| `memory`          | 始终                  | 跨对话与持久记忆的统一搜索和读取                                               |
-| `session_*`       | 一对一 Agent 会话     | Session 列表、有界检查、创建和同步发送                                         |
-| `skill_*`         | 始终                  | 搜索已安装 Skill，并加载选中的精确 revision                                    |
-| `scheduler_job_*` | 始终                  | 安排任务：每个 action 一个工具（`scheduler_job_create`、`_list`、`_pause` 等） |
-| `notify`          | 网关模式 + 通道已配置 | 通过分发器发送通知                                                             |
+| 工具               | 条件                  | 描述                                                                            |
+| ------------------ | --------------------- | ------------------------------------------------------------------------------- |
+| `memory`           | 始终                  | 跨对话与持久记忆的统一搜索和读取                                                |
+| `session_*`        | 一对一 Agent 会话     | Session 列表、有界检查、创建和同步发送                                          |
+| `skill_*`          | 始终                  | 搜索已安装 Skill，并加载选中的精确 revision                                     |
+| `scheduler__job_*` | Scheduler 插件启用    | 安排任务：每个 action 一个工具（`scheduler__job_create`、`_list`、`_pause` 等） |
+| `notify`           | 网关模式 + 通道已配置 | 通过分发器发送通知                                                              |
 
 记忆是两个工具共享一个 `memory.Recall`：`memory_search` 联合检索当前快照可见的 LCM 消息/摘要和持久 facts、profile、soul、constraints；`memory_read` 解析 opaque result ref 或 well-known 的身份、约束、历史 ref。Dynamic read 会重新经过 Session access 授权；summary read 则通过有界 child ref 保留 LCM describe/expand 能力。对话统计、整条消息读取，以及持久 profile、soul、constraint 管理都不再是工具——它们归负责各自授权的 internal、Reflect 或 manual surface。
 

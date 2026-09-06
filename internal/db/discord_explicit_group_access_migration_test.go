@@ -14,14 +14,8 @@ const (
 )
 
 func TestDiscordExplicitGroupAccessBackfillsAllowAllGuilds(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, discordExplicitGroupAccessBeforeMigration); err != nil {
-		t.Fatalf("restore pre-migration schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, discordExplicitGroupAccessBeforeMigration)
+	ctx := t.Context()
 
 	seed := func(id, configJSON string) {
 		t.Helper()
@@ -82,10 +76,8 @@ func TestDiscordExplicitGroupAccessDownIsNoOp(t *testing.T) {
 	// operator set deliberately afterward (see the migration's Up/Down
 	// comments), so rollback leaves every config's guild-access policy
 	// exactly as it already evaluates — nothing is removed or rewritten.
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
+	db, provider := newTestDBAtMigration(t, discordExplicitGroupAccessBeforeMigration)
+	ctx := t.Context()
 
 	if _, err := provider.UpTo(ctx, discordExplicitGroupAccessMigration); err != nil {
 		t.Fatalf("apply migration: %v", err)

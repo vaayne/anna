@@ -73,15 +73,18 @@ func (a *Access) listOne(ctx context.Context, scope, agentID string) ([]EntryMet
 		return nil, err
 	}
 	if isSystemScope(scope) {
-		return a.svc.ListSystemScoped(ctx, scope, resolvedAgent)
+		return a.hideManagedNames(a.svc.ListSystemScoped(ctx, scope, resolvedAgent))
 	}
-	return a.svc.listScoped(ctx, scope, userID, resolvedAgent)
+	return a.hideManagedNames(a.svc.listScoped(ctx, scope, userID, resolvedAgent))
 }
 
 // GetScoped decrypts and returns one entry's plaintext value.
 func (a *Access) GetScoped(ctx context.Context, scope, agentID, name string) (string, error) {
 	userID, resolvedAgent, err := a.authorizeScoped(ctx, authz.ActionRead, scope, agentID)
 	if err != nil {
+		return "", err
+	}
+	if err := a.rejectManagedName(name); err != nil {
 		return "", err
 	}
 	return a.svc.GetScoped(ctx, scope, userID, resolvedAgent, name)
@@ -93,6 +96,9 @@ func (a *Access) GetScopedMeta(ctx context.Context, scope, agentID, name string)
 	if err != nil {
 		return EntryMeta{}, err
 	}
+	if err := a.rejectManagedName(name); err != nil {
+		return EntryMeta{}, err
+	}
 	return a.svc.GetScopedMeta(ctx, scope, userID, resolvedAgent, name)
 }
 
@@ -100,6 +106,9 @@ func (a *Access) GetScopedMeta(ctx context.Context, scope, agentID, name string)
 func (a *Access) SetScoped(ctx context.Context, scope, agentID, name, value string, opts SetOptions) error {
 	userID, resolvedAgent, err := a.authorizeScoped(ctx, authz.ActionWrite, scope, agentID)
 	if err != nil {
+		return err
+	}
+	if err := a.rejectManagedName(name); err != nil {
 		return err
 	}
 	if isSystemScope(scope) {
@@ -114,10 +123,33 @@ func (a *Access) DeleteScoped(ctx context.Context, scope, agentID, name string) 
 	if err != nil {
 		return err
 	}
+	if err := a.rejectManagedName(name); err != nil {
+		return err
+	}
 	if isSystemScope(scope) {
 		return a.svc.DeleteSystemScoped(ctx, scope, resolvedAgent, name)
 	}
 	return a.svc.DeleteScoped(ctx, scope, userID, resolvedAgent, name)
+}
+
+func (a *Access) rejectManagedName(name string) error {
+	if a.svc.isSystemManagedName(name) {
+		return fmt.Errorf("vault: name %q is reserved for system-managed credentials: %w", name, authz.ErrForbidden)
+	}
+	return nil
+}
+
+func (a *Access) hideManagedNames(entries []EntryMeta, err error) ([]EntryMeta, error) {
+	if err != nil {
+		return nil, err
+	}
+	visible := entries[:0]
+	for _, entry := range entries {
+		if !a.svc.isSystemManagedName(entry.Name) {
+			visible = append(visible, entry)
+		}
+	}
+	return visible, nil
 }
 
 // authorizeScoped resolves an entry's owner/agent columns for a scope, decides the

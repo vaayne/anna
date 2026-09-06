@@ -70,6 +70,7 @@ func resolvePlugin(rp rawManifestPlugin) ManifestPlugin {
 		Kind:                     rp.Kind,
 		Enabled:                  enabled,
 		Essential:                rp.Essential,
+		BundledBinaries:          append([]string(nil), rp.BundledBinaries...),
 		ManifestPluginDefinition: rp.ManifestPluginDefinition,
 	}
 }

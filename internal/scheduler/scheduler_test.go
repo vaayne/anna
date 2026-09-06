@@ -36,6 +36,9 @@ func newTestService(t *testing.T, db *pgxpool.Pool) *Service {
 	svc.authorizeFire = func(context.Context, Job) (authz.Authority, error) {
 		return agentaccess.SystemAgentAuthority("scheduler")
 	}
+	// These mechanics tests predate the public plugin gate and exercise River
+	// dispatch itself. C2-specific tests cover the fail-closed missing-gate path.
+	svc.capabilityGate = func(context.Context, authz.Authority, string, ...string) error { return nil }
 	return svc
 }
 
@@ -53,7 +56,7 @@ func testService(t *testing.T) *Service {
 // addTestJob is a convenience wrapper around AddJobWithOwner for tests.
 func addTestJob(t *testing.T, svc *Service, name, message string, sched Schedule, sessionMode string) Job {
 	t.Helper()
-	job, err := svc.AddJobWithOwner(name, message, sched, sessionMode, "", "")
+	job, err := svc.AddJobWithOwner(name, message, sched, sessionMode, "agent-a", "user-1")
 	if err != nil {
 		t.Fatalf("AddJobWithOwner: %v", err)
 	}
@@ -192,7 +195,7 @@ func TestDispatchWorkflowJobContinuesAfterFailedPreviousRun(t *testing.T) {
 		result: WorkflowInstantiateResult{RunID: "wr-new"},
 	}
 	svc.SetWorkflowRunner(runner)
-	job, err := svc.AddWorkflowJobWithOwner(context.Background(), "wf", Schedule{Every: "1h"}, "reuse", "", "user-1", "wf-1", nil, false)
+	job, err := svc.AddWorkflowJobWithOwner(context.Background(), "wf", Schedule{Every: "1h"}, "reuse", "agent-a", "user-1", "wf-1", nil, false)
 	if err != nil {
 		t.Fatalf("add workflow job: %v", err)
 	}
@@ -219,7 +222,7 @@ func TestDispatchWorkflowJobResumesStalledPreviousRun(t *testing.T) {
 		result: WorkflowInstantiateResult{RunID: "wr-old", RootGoalID: "root-1"},
 	}
 	svc.SetWorkflowRunner(runner)
-	job, err := svc.AddWorkflowJobWithOwner(ctx, "wf", Schedule{Every: "1h"}, "reuse", "", "user-1", "wf-1", nil, false)
+	job, err := svc.AddWorkflowJobWithOwner(ctx, "wf", Schedule{Every: "1h"}, "reuse", "agent-a", "user-1", "wf-1", nil, false)
 	if err != nil {
 		t.Fatalf("add workflow job: %v", err)
 	}
@@ -252,7 +255,7 @@ func TestDispatchWorkflowJobSkipsActivePreviousRun(t *testing.T) {
 	svc := testService(t)
 	runner := &fakeWorkflowRunner{wf: ScheduledWorkflow{ID: "wf-1", FullyFrozen: true}, latest: WorkflowRunState{Found: true, Status: "done", RootGoalID: "root-1", RootGoalTerminal: false}}
 	svc.SetWorkflowRunner(runner)
-	job, err := svc.AddWorkflowJobWithOwner(context.Background(), "wf", Schedule{Every: "1h"}, "reuse", "", "user-1", "wf-1", nil, false)
+	job, err := svc.AddWorkflowJobWithOwner(context.Background(), "wf", Schedule{Every: "1h"}, "reuse", "agent-a", "user-1", "wf-1", nil, false)
 	if err != nil {
 		t.Fatalf("add workflow job: %v", err)
 	}
@@ -639,8 +642,8 @@ func TestSessionModeReuse(t *testing.T) {
 	if id1 != id2 {
 		t.Errorf("reuse mode: SessionID changed: %q vs %q", id1, id2)
 	}
-	if id1 != "scheduler:"+job.ID {
-		t.Errorf("reuse mode: SessionID = %q, want %q", id1, "scheduler:"+job.ID)
+	if id1 != "agent-a:scheduler:"+job.ID {
+		t.Errorf("reuse mode: SessionID = %q, want %q", id1, "agent-a:scheduler:"+job.ID)
 	}
 }
 
@@ -833,6 +836,9 @@ func TestRunJobNow_PreventsConcurrentRun(t *testing.T) {
 		return nil
 	})
 
+	// RunJobNow applies background authorization before invoking the test hook.
+	// Give the user-owned job a real agent owner so that this test exercises the
+	// concurrent-run guard instead of waiting forever for a rejected dispatch.
 	job := addTestJob(t, svc, "concurrent-test", "block", Schedule{Every: "24h"}, SessionReuse)
 
 	runID, err := svc.RunJobNow(context.Background(), job.ID)

@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	agentaccess "github.com/CherryHQ/stella/internal/core/access"
 	"github.com/CherryHQ/stella/internal/platform/config"
 )
 
@@ -107,6 +108,9 @@ func (s *Service) reviewAgentWithReviewer(ctx context.Context, snap *config.Snap
 			span.SetAttributes(attribute.Int("stella.reflect.sessions_reviewed", reviewed))
 			return reviewed, true, nil
 		}
+		if err := s.authorizeTarget(ctx, target); err != nil {
+			return reviewed, false, err
+		}
 		if err := review(ctx, snap, target); err != nil {
 			s.log.Error("reflect: review conversation", "session", target.session.ID, "error", err)
 			continue
@@ -116,6 +120,23 @@ func (s *Service) reviewAgentWithReviewer(ctx context.Context, snap *config.Snap
 
 	span.SetAttributes(attribute.Int("stella.reflect.sessions_reviewed", reviewed))
 	return reviewed, false, nil
+}
+
+func (s *Service) authorizeTarget(ctx context.Context, target reviewTarget) error {
+	if s.capabilityGate == nil {
+		return fmt.Errorf("reflect: background capability gate is not configured")
+	}
+	if target.session.UserID == "" || target.session.AgentID == "" {
+		return fmt.Errorf("reflect: review target %q has no trusted user/agent owner", target.session.ID)
+	}
+	authority, err := agentaccess.WorkerAgentAuthority(target.session.UserID, target.session.AgentID)
+	if err != nil {
+		return fmt.Errorf("reflect: review target %q authority: %w", target.session.ID, err)
+	}
+	if err := s.capabilityGate(ctx, authority, target.session.AgentID, PluginID); err != nil {
+		return fmt.Errorf("reflect: background capability denied for target %s: %w", target.session.ID, err)
+	}
+	return nil
 }
 
 func (s *Service) reflectNow() time.Time {

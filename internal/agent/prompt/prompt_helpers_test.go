@@ -2,11 +2,11 @@ package prompt_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/CherryHQ/stella/internal/agent/prompt"
+	"github.com/CherryHQ/stella/resources"
 )
 
 func TestDefaultSystemPrompt(t *testing.T) {
@@ -39,7 +39,11 @@ func TestFilesystemPromptOperationalContract(t *testing.T) {
 
 func TestRecallGuidanceMatchesUnifiedAgentActions(t *testing.T) {
 	systemPrompt := prompt.BuildSystemPromptFromDB(context.Background(), prompt.DBPromptParams{SystemPrompt: "You are Stella."})
-	stellaSkill, err := os.ReadFile("../../../resources/skills/system/stella/SKILL.md")
+	registry, err := resources.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stellaSkill, _, err := registry.ReadBuiltinSkillFile("stella", "SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}

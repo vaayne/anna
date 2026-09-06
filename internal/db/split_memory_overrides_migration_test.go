@@ -1,9 +1,6 @@
 package db
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 const (
 	memoryOverridesBeforeMigration = 90000000000027
@@ -19,14 +16,8 @@ const (
 // a name this change did not retire — least of all `memory_search`, which
 // starts with the retired union's own name.
 func TestSplitMemoryOverridesDeletesOnlyTheRetiredName(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, memoryOverridesBeforeMigration); err != nil {
-		t.Fatalf("restore pre-split schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, memoryOverridesBeforeMigration)
+	ctx := t.Context()
 	seedToolOverride(t, db, "memory", false)
 	// Three survivors: a name this change never touched, and the two new names
 	// an operator could already have written a row for.

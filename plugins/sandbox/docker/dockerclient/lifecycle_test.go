@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/containerd/errdefs"
+	image "github.com/moby/moby/api/types/image"
 	jsonstream "github.com/moby/moby/api/types/jsonstream"
 	mobyclient "github.com/moby/moby/client"
 )
@@ -274,5 +275,18 @@ func TestEnsureImageReadySingleflightsConcurrentInspect(t *testing.T) {
 	}
 	if got := inspectCalls.Load(); got != 1 {
 		t.Fatalf("inspect calls = %d, want 1", got)
+	}
+}
+
+func TestImageIDUsesContentAddressedInspectID(t *testing.T) {
+	client := NewWithAPI(&lifecycleAPI{inspectFn: func(context.Context, string) (mobyclient.ImageInspectResult, error) {
+		return mobyclient.ImageInspectResult{InspectResponse: image.InspectResponse{ID: "sha256:resolved"}}, nil
+	}})
+	got, err := client.ImageID(context.Background(), "stella:tag")
+	if err != nil {
+		t.Fatalf("ImageID: %v", err)
+	}
+	if got != "sha256:resolved" {
+		t.Fatalf("ImageID = %q, want resolved digest", got)
 	}
 }

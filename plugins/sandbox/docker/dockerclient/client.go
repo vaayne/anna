@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 
@@ -80,6 +81,14 @@ type DaemonSecurity struct {
 type RuntimeInfo struct {
 	Name string
 	Args []string
+}
+
+// ImageInfo is the immutable identity and labels observed in one daemon
+// inspection. Keeping these values together prevents a tag from changing
+// between separate ID and label lookups.
+type ImageInfo struct {
+	ID     string
+	Labels map[string]string
 }
 
 // ImageUnavailableError identifies failures while preparing a container image.
@@ -200,14 +209,38 @@ func (c *Client) ImageExists(ctx context.Context, image string) (bool, error) {
 // ImageLabel returns one image config label after image readiness has been
 // established by the caller.
 func (c *Client) ImageLabel(ctx context.Context, image, key string) (string, error) {
+	info, err := c.ImageInfo(ctx, image)
+	if err != nil {
+		return "", err
+	}
+	return info.Labels[key], nil
+}
+
+// ImageID returns the immutable content-addressed ID for an image reference.
+// Callers use this value in cache keys so retagging an image cannot reuse an
+// artifact built from a different image configuration.
+func (c *Client) ImageID(ctx context.Context, image string) (string, error) {
+	info, err := c.ImageInfo(ctx, image)
+	if err != nil {
+		return "", err
+	}
+	if info.ID == "" {
+		return "", fmt.Errorf("dockerclient: image inspect %s returned an empty image ID", image)
+	}
+	return info.ID, nil
+}
+
+// ImageInfo returns the image ID and config labels from one inspect call.
+func (c *Client) ImageInfo(ctx context.Context, image string) (ImageInfo, error) {
 	result, err := c.api.ImageInspect(ctx, image)
 	if err != nil {
-		return "", fmt.Errorf("dockerclient: image inspect %s: %w", image, err)
+		return ImageInfo{}, fmt.Errorf("dockerclient: image inspect %s: %w", image, err)
 	}
-	if result.Config == nil {
-		return "", nil
+	labels := map[string]string{}
+	if result.Config != nil {
+		labels = maps.Clone(result.Config.Labels)
 	}
-	return result.Config.Labels[key], nil
+	return ImageInfo{ID: result.ID, Labels: labels}, nil
 }
 
 func (c *Client) VolumeCreate(ctx context.Context, opts mobyclient.VolumeCreateOptions) (mobyclient.VolumeCreateResult, error) {

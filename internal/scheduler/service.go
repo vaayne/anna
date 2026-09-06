@@ -102,6 +102,7 @@ type Service struct {
 	externalRiver  bool // set by WithExternalRiver: caller injects+owns the shared client
 	onJob          AuthorizedJobFunc
 	authorizeFire  func(context.Context, Job) (authz.Authority, error)
+	capabilityGate BackgroundCapabilityGate
 	workflowRunner WorkflowRunner
 	db             *pgxpool.Pool
 	q              *sqlc.Queries
@@ -155,6 +156,13 @@ func WithExternalRiver() Option {
 // closed.
 func WithAgentAccess(agents *agentaccess.Service) Option {
 	return func(s *Service) { s.agents = agents }
+}
+
+// WithBackgroundCapabilityGate injects the fresh plugin-capability check used
+// at the durable user-job dispatch boundary. A missing gate fails closed for
+// public user jobs; system maintenance callbacks remain core-owned.
+func WithBackgroundCapabilityGate(gate BackgroundCapabilityGate) Option {
+	return func(s *Service) { s.capabilityGate = gate }
 }
 
 // New creates a scheduler service backed by the given database.
@@ -886,6 +894,9 @@ func (s *Service) dispatchJob(ctx context.Context, job Job) error {
 	if err != nil {
 		return fmt.Errorf("scheduler: durable fire authorization denied for job %s: %w", job.ID, err)
 	}
+	if err := s.authorizeBackground(ctx, job, fireAuthority, handler); err != nil {
+		return err
+	}
 
 	if normalizeDispatchKind(job.DispatchKind) == DispatchKindWorkflow {
 		return s.dispatchWorkflowJob(ctx, job, workflowRunner, fireAuthority)
@@ -913,11 +924,11 @@ func (s *Service) dispatchJob(ctx context.Context, job Job) error {
 		// system ownership so a user-owned job that happens to share a name
 		// with a registered builtin cannot hijack the handler.
 		runErr = handler(ctx, job)
-	case job.OwnerKind == JobOwnerSystem && job.Message == "":
-		// Orphan: persisted system job with no message and no live handler
-		// (handler-mode builtin whose RegisterBuiltin call was removed in a
-		// later build). Don't dispatch an empty prompt to the agent pool.
-		runErr = fmt.Errorf("scheduler: system job %q has no handler registered and no message", job.Name)
+	case job.OwnerKind == JobOwnerSystem:
+		// authorizeBackground rejects this case before dispatch. Keep the
+		// defensive branch local to the routing switch as well, so a future
+		// authorization refactor cannot restore message fallback accidentally.
+		runErr = fmt.Errorf("scheduler: system job %q has no live handler registered", job.Name)
 		s.log.Error("scheduler: dropping orphan system job run", "job_id", job.ID, "name", job.Name)
 	case fn != nil:
 		runErr = fn(ctx, job, fireAuthority)

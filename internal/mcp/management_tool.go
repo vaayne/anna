@@ -83,10 +83,11 @@ func managementProjection(r Registration) managementView {
 // URL policy. In particular, userinfo and query strings can contain secrets.
 func safeManagementEndpoint(raw string) (string, bool) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", true
 	}
-	return u.String(), false
+	redacted := u.User != nil || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.Fragment != ""
+	return u.Scheme + "://" + u.Host, redacted
 }
 
 type managementHandler struct{ access *Access }

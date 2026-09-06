@@ -9,6 +9,15 @@ import (
 	"github.com/CherryHQ/stella/pkg/tools"
 )
 
+// BuiltinSkillAsset is an explicit release asset declaration. SourceRoot is
+// relative to the plugins tree; LogicalRoot is the stable bundle path.
+type BuiltinSkillAsset struct {
+	Name          string
+	SourceRoot    string
+	LogicalRoot   string
+	OwnerPluginID string
+}
+
 // ToolSpec declares a tool capability owned by a plugin.
 type ToolSpec struct {
 	PluginID    string
@@ -138,26 +147,12 @@ const (
 // depending on runner-owned services such as TokenManager.
 type SessionEnvSpec struct {
 	PluginID        string
+	ConfigID        string
+	Scope           string
+	Revision        int64
 	EnvVar          string
 	Source          SessionEnvSource
 	Value           string // used only when Source == SessionEnvSourceStatic
 	Required        bool   // if true, session creation fails when this env cannot be resolved
 	OAuthProviderID string // set when source is oauth.*; identifies which provider bundle to load
-}
-
-// BundledSkillSyncContext is the build-time context for syncing a bundled skill
-// into resources.
-type BundledSkillSyncContext struct {
-	WorkDir string
-	GOOS    string
-	GOARCH  string
-	Params  map[string]string
-}
-
-// BundledSkillSpec declares a builtin system skill owned by a plugin and the
-// build-time sync function that generates or updates it.
-type BundledSkillSpec struct {
-	PluginID string
-	Name     string
-	Sync     func(ctx context.Context, build BundledSkillSyncContext) error
 }

@@ -87,7 +87,7 @@ rm -f "$ROOT/stella.bundle"
 cd "$REPO"
 git checkout --quiet --detach "$COMMIT"
 [ "$(git rev-parse HEAD)" = "$COMMIT" ]
-if find resources/skills -type f ! -perm -004 -print -quit | grep -q .; then
+if find plugins/core/skills -type f ! -perm -004 -print -quit | grep -q .; then
   echo "bundled skill is not world-readable after checkout" >&2
   exit 1
 fi

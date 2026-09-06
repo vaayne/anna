@@ -4,64 +4,51 @@ import (
 	"context"
 	"testing"
 
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/platform/config"
-	pkgchannel "github.com/CherryHQ/stella/pkg/channel"
 )
 
-// weixinFakeStore records the credential mirror's writes. Everything else on
-// config.Store stays nil: the mirror touches nothing else.
-type weixinFakeStore struct {
+type channelIdentityStore struct {
 	config.Store
-	mirrored []config.Plugin
-	upserted int
+	channels map[string]config.Channel
 }
 
-func (f *weixinFakeStore) SetChannelPluginConfig(_ context.Context, id, kind, name string, cfg map[string]any) error {
-	f.mirrored = append(f.mirrored, config.Plugin{ID: id, Kind: kind, Name: name, Config: cfg})
-	return nil
+func (s *channelIdentityStore) GetChannel(_ context.Context, id string) (config.Channel, error) {
+	ch, ok := s.channels[id]
+	if !ok {
+		return config.Channel{}, config.ErrChannelNotFound
+	}
+	return ch, nil
 }
 
-// A whole-row write here would be the bug: it carries an enabled value.
-func (f *weixinFakeStore) UpsertPlugin(context.Context, config.Plugin) error {
-	f.upserted++
-	return nil
-}
-
-// The enabled column is the admin kill switch and lives on the same row as the
-// credentials. The mirror must reach the config column alone — asserted here by
-// the call it makes, and in SQL by UpsertPluginConfig's ON CONFLICT clause.
-func TestMirrorWeixinPluginConfigWritesConfigOnly(t *testing.T) {
-	store := &weixinFakeStore{}
+func TestManageChannelPinsExactID(t *testing.T) {
+	store := &channelIdentityStore{channels: map[string]config.Channel{
+		"weixin-a": {ID: "weixin-a", Type: "weixin"},
+		"weixin-b": {ID: "weixin-b", Type: "weixin"},
+	}}
 	svc := NewService(store, nil, nil, nil, nil, nil)
-	cfg := map[string]any{"app_id": "a1"}
-	if err := svc.mirrorWeixinPluginConfig(context.Background(), pkgchannel.PlatformWeixin, cfg); err != nil {
-		t.Fatalf("mirror: %v", err)
+	authority, err := authz.NewUserAuthority("admin", true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if store.upserted != 0 {
-		t.Fatalf("mirror wrote %d whole rows, want 0", store.upserted)
+	access, err := svc.Begin(context.Background(), authority)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(store.mirrored) != 1 {
-		t.Fatalf("config writes = %d, want 1", len(store.mirrored))
+	operation, err := access.ManageChannel("weixin-a")
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := store.mirrored[0]
-	if want := config.PluginID(config.PluginKindChannel, pkgchannel.PlatformWeixin); got.ID != want {
-		t.Errorf("id = %q, want %q", got.ID, want)
+	if got := operation.ID(); got != "weixin-a" {
+		t.Fatalf("operation id = %q, want weixin-a", got)
 	}
-	if got.Kind != config.PluginKindChannel || got.Name != pkgchannel.PlatformWeixin {
-		t.Errorf("kind/name = %q/%q", got.Kind, got.Name)
+	if _, err := operation.Channel(context.Background(), "weixin-b"); err == nil {
+		t.Fatal("cross-instance channel read unexpectedly succeeded")
 	}
-	if got.Config["app_id"] != "a1" {
-		t.Errorf("config not mirrored: %v", got.Config)
+	if _, err := operation.Channel(context.Background(), "weixin-a"); err != nil {
+		t.Fatalf("exact channel read: %v", err)
 	}
-}
-
-func TestMirrorWeixinPluginConfigIgnoresOtherPlatforms(t *testing.T) {
-	store := &weixinFakeStore{}
-	svc := NewService(store, nil, nil, nil, nil, nil)
-	if err := svc.mirrorWeixinPluginConfig(context.Background(), pkgchannel.PlatformTelegram, map[string]any{"token": "t"}); err != nil {
-		t.Fatalf("mirror: %v", err)
-	}
-	if len(store.mirrored) != 0 || store.upserted != 0 {
-		t.Fatalf("telegram wrote %d config rows and %d whole rows, want 0 and 0", len(store.mirrored), store.upserted)
+	if _, err := operation.Save(context.Background(), config.Channel{ID: "weixin-b", Type: "weixin"}, nil, false); err == nil {
+		t.Fatal("cross-instance channel save unexpectedly succeeded")
 	}
 }

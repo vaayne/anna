@@ -232,7 +232,9 @@ const AppSettingsPluginsRoute = AppSettingsPluginsRouteImport.update({
   id: '/plugins',
   path: '/plugins',
   getParentRoute: () => AppSettingsRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/_app/settings/plugins.lazy').then((d) => d.Route),
+)
 const AppSettingsMcpRoute = AppSettingsMcpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
@@ -354,7 +356,11 @@ const AppSettingsPluginsPluginIdRoute =
     id: '/$pluginId',
     path: '/$pluginId',
     getParentRoute: () => AppSettingsPluginsRoute,
-  } as any)
+  } as any).lazy(() =>
+    import('./routes/_app/settings/plugins.$pluginId.lazy').then(
+      (d) => d.Route,
+    ),
+  )
 const AppSettingsCredentialsSectionRoute =
   AppSettingsCredentialsSectionRouteImport.update({
     id: '/$section',

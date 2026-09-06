@@ -7,6 +7,7 @@ import (
 
 	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/platform/config"
+	pluginhost "github.com/CherryHQ/stella/internal/plugin/host"
 )
 
 // catalogFakeStore implements only the read methods the catalog reads use; the
@@ -92,7 +93,10 @@ func TestPublicChannelsProjectsWithoutSecrets(t *testing.T) {
 		{ID: "tg1", Type: "telegram", AgentID: "a1", Enabled: true, Config: `{"token":"SECRET"}`},
 		{ID: "weixin", Type: "", AgentID: "a2", Enabled: false, Config: `{"secret":"S"}`}, // type falls back to id
 	}}
-	got, err := NewService(store, nil, nil, nil, nil, nil).PublicChannels(context.Background(), catalogUser(t))
+	host := pluginhost.New(store, pluginhost.WithListenerCap(func(context.Context, string, string) (bool, error) {
+		return true, nil
+	}))
+	got, err := NewService(store, host, nil, nil, nil, nil).PublicChannels(context.Background(), catalogUser(t))
 	if err != nil {
 		t.Fatalf("PublicChannels: %v", err)
 	}
@@ -106,6 +110,26 @@ func TestPublicChannelsProjectsWithoutSecrets(t *testing.T) {
 	}
 	if got[1].Type != "weixin" {
 		t.Fatalf("channel[1].Type = %q, want effective type 'weixin' (fell back to id)", got[1].Type)
+	}
+}
+
+func TestPublicChannelsHonoursExactListenerCap(t *testing.T) {
+	store := &catalogFakeStore{channels: []config.Channel{
+		{ID: "tg-a", Type: "telegram", AgentID: "agent-a", Enabled: true},
+		{ID: "tg-b", Type: "telegram", AgentID: "agent-b", Enabled: true},
+	}}
+	host := pluginhost.New(store, pluginhost.WithListenerCap(func(_ context.Context, pluginID, agentID string) (bool, error) {
+		if pluginID != "channel/telegram" {
+			t.Fatalf("listener cap pluginID = %q, want channel/telegram", pluginID)
+		}
+		return agentID == "agent-a", nil
+	}))
+	got, err := NewService(store, host, nil, nil, nil, nil).PublicChannels(context.Background(), catalogUser(t))
+	if err != nil {
+		t.Fatalf("PublicChannels: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "tg-a" {
+		t.Fatalf("channels = %+v, want only tg-a", got)
 	}
 }
 
@@ -177,5 +201,16 @@ func TestCatalogReadsFailClosedOnNilService(t *testing.T) {
 	}
 	if _, err := nilSvc.DisabledChannelTypes(ctx, catalogUser(t)); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("nil DisabledChannelTypes = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestPublicChannelsFailsClosedWithoutListenerCap(t *testing.T) {
+	store := &catalogFakeStore{}
+	svc := NewService(store, pluginhost.New(store), nil, nil, nil, nil)
+	if _, err := svc.PublicChannels(context.Background(), catalogUser(t)); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("PublicChannels without listener cap = %v, want ErrUnavailable", err)
+	}
+	if store.reads != 0 {
+		t.Fatalf("store reads = %d, want 0 when listener cap is unavailable", store.reads)
 	}
 }

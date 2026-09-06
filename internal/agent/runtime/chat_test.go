@@ -16,9 +16,11 @@ import (
 	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/core/agentctx"
 	"github.com/CherryHQ/stella/internal/memory"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/sessionmedia"
 	"github.com/CherryHQ/stella/pkg/ai"
 	"github.com/CherryHQ/stella/pkg/hooks"
+	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
 
 type sessionImagesFunc func(context.Context, sessionmedia.Owner, string, []ai.ContentBlock) ([]ai.ContentBlock, error)
@@ -101,10 +103,11 @@ func (m *recordingMemory) CommitGroupCursor(_ context.Context, _ memory.Session,
 }
 
 type chatFakeRunner struct {
-	events   []Event
-	system   string
-	messages *[]MessageContent
-	ctx      *context.Context
+	events        []Event
+	system        string
+	messages      *[]MessageContent
+	ctx           *context.Context
+	pluginContext PluginContext
 }
 
 func (r chatFakeRunner) Chat(ctx context.Context, _ []ai.Message, msg MessageContent) <-chan Event {
@@ -122,11 +125,12 @@ func (r chatFakeRunner) Chat(ctx context.Context, _ []ai.Message, msg MessageCon
 	return ch
 }
 
-func (r chatFakeRunner) Alive() bool             { return true }
-func (r chatFakeRunner) Busy() bool              { return false }
-func (r chatFakeRunner) LastActivity() time.Time { return time.Now() }
-func (r chatFakeRunner) SystemPrompt() string    { return r.system }
-func (r chatFakeRunner) Close() error            { return nil }
+func (r chatFakeRunner) Alive() bool                  { return true }
+func (r chatFakeRunner) Busy() bool                   { return false }
+func (r chatFakeRunner) LastActivity() time.Time      { return time.Now() }
+func (r chatFakeRunner) SystemPrompt() string         { return r.system }
+func (r chatFakeRunner) PluginContext() PluginContext { return r.pluginContext }
+func (r chatFakeRunner) Close() error                 { return nil }
 
 func TestTelemetryChannelDoesNotChangeDurableConversationChannel(t *testing.T) {
 	mem := &recordingMemory{}
@@ -196,7 +200,7 @@ func TestGuestChatCarriesGuestIdentityWithoutUserIdentity(t *testing.T) {
 			params = p
 			return chatFakeRunner{ctx: &runnerCtx, events: []Event{{Text: "ok"}}}, nil
 		},
-		BeforeRun: func(context.Context, session.Info, string, string, string, []ai.Message) (string, error) {
+		BeforeRun: func(context.Context, session.Info, string, string, string, []ai.Message, PluginContext) (string, error) {
 			t.Fatal("guest must not run before-run hooks")
 			return "", nil
 		},
@@ -236,14 +240,14 @@ func TestChatRebuildsSnapshotPromptAtVersionZero(t *testing.T) {
 		NewRunner: func(context.Context, RunnerParams) (Runner, error) {
 			return chatFakeRunner{system: "live base prompt", events: []Event{{Text: "ok"}}}, nil
 		},
-		SnapshotPrompt: func(_ context.Context, _ session.Info, snap memory.SessionSnapshot) (string, error) {
+		SnapshotPrompt: func(_ context.Context, _ session.Info, snap memory.SessionSnapshot, _ PluginContext) (string, error) {
 			promptCalls++
 			if snap.Version != 0 {
 				t.Fatalf("snapshot version = %d, want 0", snap.Version)
 			}
 			return "frozen snapshot prompt", nil
 		},
-		BeforeRun: func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message, _ PluginContext) (string, error) {
 			beforeRunSystem = system
 			return "", nil
 		},
@@ -277,15 +281,20 @@ func TestAdmittedChatKeepsPromptBuilderSnapshot(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	systemsSeen := make(chan string, 2)
+	pluginContext := NewPluginContext(plugin.Snapshot{}, pkgplugins.SessionPluginView{RegisteredPluginIDs: []string{"plugin/a"}, ExposedPluginIDs: []string{"plugin/a"}})
 	rt, err := New(Config{
 		Memory: mem,
 		NewRunner: func(context.Context, RunnerParams) (Runner, error) {
-			return chatFakeRunner{system: "runner prompt", events: []Event{{Text: "ok"}}}, nil
+			return chatFakeRunner{system: "runner prompt", events: []Event{{Text: "ok"}}, pluginContext: pluginContext}, nil
 		},
-		SnapshotPrompt: func(context.Context, session.Info, memory.SessionSnapshot) (string, error) {
+		SnapshotPrompt: func(_ context.Context, _ session.Info, _ memory.SessionSnapshot, got PluginContext) (string, error) {
+			view := got.SessionPluginView()
+			if len(view.ExposedPluginIDs) != 1 || view.ExposedPluginIDs[0] != "plugin/a" {
+				t.Fatalf("snapshot prompt plugin context = %#v", view)
+			}
 			return "admitted prompt", nil
 		},
-		BeforeRun: func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message, _ PluginContext) (string, error) {
 			systemsSeen <- system
 			return "", nil
 		},
@@ -299,11 +308,11 @@ func TestAdmittedChatKeepsPromptBuilderSnapshot(t *testing.T) {
 	}
 	<-mem.started
 	rt.SetPromptBuilders(
-		func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message) (string, error) {
+		func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message, _ PluginContext) (string, error) {
 			systemsSeen <- system
 			return "", nil
 		},
-		func(context.Context, session.Info, memory.SessionSnapshot) (string, error) {
+		func(context.Context, session.Info, memory.SessionSnapshot, PluginContext) (string, error) {
 			return "refreshed prompt", nil
 		},
 	)
@@ -335,20 +344,23 @@ func (r countingChatRunner) Chat(context.Context, []ai.Message, MessageContent) 
 	close(ch)
 	return ch
 }
-func (countingChatRunner) Alive() bool             { return true }
-func (countingChatRunner) Busy() bool              { return false }
-func (countingChatRunner) LastActivity() time.Time { return time.Now() }
-func (countingChatRunner) SystemPrompt() string    { return "base" }
-func (countingChatRunner) Close() error            { return nil }
+func (countingChatRunner) Alive() bool                  { return true }
+func (countingChatRunner) Busy() bool                   { return false }
+func (countingChatRunner) LastActivity() time.Time      { return time.Now() }
+func (countingChatRunner) SystemPrompt() string         { return "base" }
+func (countingChatRunner) PluginContext() PluginContext { return PluginContext{} }
+func (countingChatRunner) Close() error                 { return nil }
 
 func TestChatSnapshotPromptErrorIsTerminalBeforeRunnerChat(t *testing.T) {
 	mem := &snapshotRecordingMemory{recordingMemory: &recordingMemory{}, snapshot: memory.SessionSnapshot{Version: 1}}
 	var calls int
 	want := errors.New("Home unavailable")
 	rt, err := New(Config{
-		Memory:         mem,
-		NewRunner:      func(context.Context, RunnerParams) (Runner, error) { return countingChatRunner{calls: &calls}, nil },
-		SnapshotPrompt: func(context.Context, session.Info, memory.SessionSnapshot) (string, error) { return "", want },
+		Memory:    mem,
+		NewRunner: func(context.Context, RunnerParams) (Runner, error) { return countingChatRunner{calls: &calls}, nil },
+		SnapshotPrompt: func(context.Context, session.Info, memory.SessionSnapshot, PluginContext) (string, error) {
+			return "", want
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -722,7 +734,7 @@ func TestSinkDeliversExactlyOneResultOnEveryExit(t *testing.T) {
 		events    []Event
 	}{
 		{name: "assemble failure", mem: &recordingMemory{assembleError: boom}},
-		{name: "before run failure", mem: &recordingMemory{}, beforeRun: func(context.Context, session.Info, string, string, string, []ai.Message) (string, error) {
+		{name: "before run failure", mem: &recordingMemory{}, beforeRun: func(context.Context, session.Info, string, string, string, []ai.Message, PluginContext) (string, error) {
 			return "", boom
 		}},
 		{name: "runner error", mem: &recordingMemory{}, events: []Event{{Err: boom}}},

@@ -1,0 +1,116 @@
+# MCP management tools have no HTTP operation of their own. The public HTTP
+# management surface is the unified plugin API; these model-facing tools keep
+# their established authority-bound dispatch and safe input contract here.
+family: settings_mcp
+package: mcp
+tools:
+  - resource: server
+    action: create
+    description: "Register a no-auth MCP server in an authorized scope. Credentials must be configured in the Web UI."
+    input:
+      type: object
+      properties:
+        name: { type: string }
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+        target_agent_id:
+          type: string
+          description: Optional Agent whose scoped registration is created.
+        transport:
+          type: string
+          enum: [streamable_http, sse]
+          default: streamable_http
+        url: { type: string }
+      required: [name, scope, url]
+  - resource: server
+    action: delete
+    description: "Delete an MCP registration using the version from settings_mcp_server_get. This refuses a stale version."
+    input:
+      type: object
+      properties:
+        expected_version:
+          type: string
+          minLength: 1
+          description: Opaque version returned by settings_mcp_server_get.
+        id: { type: string }
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+          default: user
+        target_agent_id:
+          type: string
+          description: Optional Agent whose scoped registration is deleted.
+      required: [expected_version, id]
+  - resource: server
+    action: get
+    description: "Read one authorized MCP registration and its version. Bearer credentials are never returned."
+    input:
+      type: object
+      properties:
+        id: { type: string }
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+          default: user
+        target_agent_id:
+          type: string
+          description: Optional Agent whose scoped registration is read.
+      required: [id]
+  - resource: server
+    action: list
+    description: "List up to 50 MCP registrations in one authorized scope. Bearer credentials are never returned."
+    input:
+      type: object
+      properties:
+        limit:
+          type: integer
+          default: 50
+          maximum: 50
+          description: Maximum registrations to return before truncation.
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+          default: user
+        target_agent_id:
+          type: string
+          description: Optional Agent whose scoped registrations are listed.
+  - resource: server
+    action: probe
+    description: "Probe one authorized MCP registration: connect, list its tools, and persist the result. A failed probe still returns the server with a redacted error status."
+    input:
+      type: object
+      properties:
+        id: { type: string }
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+          default: user
+        target_agent_id:
+          type: string
+          description: Optional Agent whose scoped registration is probed.
+      required: [id]
+  - resource: server
+    action: update
+    description: "Update safe MCP metadata using the version from settings_mcp_server_get. Bearer credentials and their scope cannot change here."
+    input:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        expected_version:
+          type: string
+          minLength: 1
+          description: Opaque version returned by settings_mcp_server_get.
+        id: { type: string }
+        name: { type: string }
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+        target_agent_id:
+          type: string
+          description: Optional Agent whose scoped registration is updated.
+        transport:
+          type: string
+          enum: [streamable_http, sse]
+        url: { type: string }
+      required: [expected_version, id]

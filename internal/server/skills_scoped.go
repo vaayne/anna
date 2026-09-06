@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"sort"
@@ -15,7 +14,6 @@ import (
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/skill"
 	"github.com/CherryHQ/stella/internal/skill/access"
-	"github.com/CherryHQ/stella/resources"
 )
 
 // beginSkillAccess opens one Skill policy evaluation for an authenticated caller.
@@ -574,13 +572,14 @@ func (s *Server) ListAgentSkills(w http.ResponseWriter, r *http.Request, id stri
 		_, err = s.agentAccess.Manage(r.Context(), authority, agentID)
 		canManage = err == nil
 	}
-	policyRefs, err := policyAddressableSkillRefs(dbSkills)
-	if err != nil {
-		s.writeManagedSkillError(w, err)
-		return
-	}
+	policyRefs := policyAddressableSkillRefs(dbSkills)
 	dangling := make([]string, 0, len(policy.Disabled))
 	for _, ref := range policy.Disabled {
+		// Legacy builtin refs remain readable in storage but no longer have a
+		// policy effect or an independent management surface.
+		if strings.HasPrefix(ref, "builtin:") {
+			continue
+		}
 		if !policyRefs[ref] {
 			dangling = append(dangling, ref)
 		}
@@ -605,7 +604,7 @@ func (s *Server) ListAgentSkills(w http.ResponseWriter, r *http.Request, id stri
 // policyAddressableSkillRefs builds diagnostics from the full applicable DB
 // catalog, before precedence merging hides shadowed rows. Policy refs describe
 // addressable catalog entries, not the one current UI winner.
-func policyAddressableSkillRefs(dbSkills []skill.Skill) (map[string]bool, error) {
+func policyAddressableSkillRefs(dbSkills []skill.Skill) map[string]bool {
 	refs := make(map[string]bool, len(dbSkills))
 	for _, sk := range dbSkills {
 		if sk.Status == skill.SkillStatusDeprecated {
@@ -615,14 +614,7 @@ func policyAddressableSkillRefs(dbSkills []skill.Skill) (map[string]bool, error)
 			refs[sk.Scope+":"+sk.Name] = true
 		}
 	}
-	registry, err := resources.Default()
-	if err != nil {
-		return nil, fmt.Errorf("load builtin Skill catalog: %w", err)
-	}
-	for _, descriptor := range registry.BuiltinSkills() {
-		refs["builtin:"+descriptor.Name] = true
-	}
-	return refs, nil
+	return refs
 }
 
 func normalizedSkillPageQuery(userID, agentID string, params apiserver.ListAgentSkillsParams) skillPageQuery {

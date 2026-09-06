@@ -9,6 +9,7 @@ import (
 	"testing/fstest"
 
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
+	"github.com/CherryHQ/stella/resources"
 )
 
 func promptRevision(identity Skill, digest, content string) ManagedRevision {
@@ -120,5 +121,42 @@ func TestBuildAuthorizedPromptSectionFiltersRegistryPluginSkill(t *testing.T) {
 	}
 	if !strings.Contains(enabled.Content, "<name>lark-cli</name>") {
 		t.Fatalf("enabled plugin-owned builtin missing from prompt: %s", enabled.Content)
+	}
+}
+
+func TestSkillVisibilityIgnoresMutableOwnerMetadata(t *testing.T) {
+	visible := filterVisibleResolvedSkills([]ResolvedSkill{{
+		Skill: Skill{
+			Scope:    "system",
+			Name:     "spoofed",
+			Metadata: []byte(`{"owner_plugin":"tool/lark-cli"}`),
+		},
+	}}, pkgplugins.SystemPromptContext{})
+	if len(visible) != 1 || visible[0].Name != "spoofed" {
+		t.Fatalf("mutable owner metadata changed visibility: %#v", visible)
+	}
+}
+
+func TestSkillVisibilityRequiresTrustedBuiltinOwner(t *testing.T) {
+	web := ResolvedSkill{
+		Skill: Skill{Scope: "system", Name: "web"},
+		builtin: &resources.BuiltinSkillDescriptor{
+			Name:          "web",
+			OwnerPluginID: "tool/bun",
+		},
+	}
+	withoutBun := filterVisibleResolvedSkills([]ResolvedSkill{web}, pkgplugins.SystemPromptContext{
+		RegisteredPluginIDs: []string{"tool/bun"},
+		EnabledPluginIDs:    []string{},
+	})
+	if len(withoutBun) != 0 {
+		t.Fatalf("web skill visible with missing dependency: %#v", withoutBun)
+	}
+	withBun := filterVisibleResolvedSkills([]ResolvedSkill{web}, pkgplugins.SystemPromptContext{
+		RegisteredPluginIDs: []string{"tool/bun"},
+		EnabledPluginIDs:    []string{"tool/bun"},
+	})
+	if len(withBun) != 1 || withBun[0].Name != "web" {
+		t.Fatalf("web skill hidden with dependency enabled: %#v", withBun)
 	}
 }

@@ -59,9 +59,11 @@ var dockerEnvKinds = map[string]dockerEnvKind{
 	"MISE_SYSTEM_CONFIG_FILE":     dockerEnvHostPath,
 	"MISE_GLOBAL_CONFIG_FILE":     dockerEnvHostPath,
 	"MISE_TRUSTED_CONFIG_PATHS":   dockerEnvHostPathList,
+	sandboxpkg.EnvCoreRuntimeDir:  dockerEnvHostPath,
 	// Host PATH may contain host-platform binaries and must never override the
 	// image PATH. injectToolPaths adds container-native tool directories later.
 	"PATH":            dockerEnvDrop,
+	"MISE_SHIMS_DIR":  dockerEnvDrop,
 	"STELLA_USER_DIR": dockerEnvDrop,
 }
 
@@ -181,11 +183,11 @@ func dockerExecEnvironment(policyEnv, overrides map[string]string, mountTable []
 	return injectToolPaths(mergeEnv(policyEnv, overrides), toolBinPaths)
 }
 
-// containerDefaultPATH is the image-baked PATH from the Dockerfile ENV directive.
-// It is used as the base when building a container exec PATH that prepends
-// container-native user tool cache paths. Keep in sync with the ENV PATH line
-// in plugins/sandbox/docker/Dockerfile.
-const containerDefaultPATH = "/opt/stella/bin:/opt/stella/.mise-tools/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+// containerDefaultPATH is the image-baked system PATH from the Dockerfile ENV
+// directive. Stella's shared bin and mise shims are deliberately absent: plugin
+// commands enter through selection-local paths supplied by the runner snapshot.
+// Keep in sync with the ENV PATH line in plugins/sandbox/docker/Dockerfile.
+const containerDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // injectToolPaths prepends container-native tool directories to PATH (the
 // per-user mise shims so an agent's own installs win, then any manifest tool

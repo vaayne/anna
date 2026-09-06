@@ -73,7 +73,7 @@ func NewService(db DB, masterIdentityStr string, agents *agentaccess.Service) (*
 		masterRecipient:       recipient,
 		agents:                agents,
 		systemManagedNames:    defaultSystemManagedNames(),
-		systemManagedPrefixes: []string{"OAUTH_", "MCP_TOKEN_"},
+		systemManagedPrefixes: []string{"OAUTH_", "MCP_TOKEN_", "MCP_OAUTH_"},
 	}, nil
 }
 

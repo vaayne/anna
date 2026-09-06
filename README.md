@@ -66,11 +66,19 @@ You can bind each channel to a specific agent in the Web UI.
 
 Stella connects agents to remote MCP (Model Context Protocol) servers over streamable HTTP — with OAuth 2.1, bearer, or no auth — and installs new servers from the official MCP Registry marketplace in the Web UI. Every tool a server exposes is per-agent and per-user switchable, with the same four-scope permissions as everything else.
 
+MCP registrations keep their UUID when they become plugin configurations. Shared
+and per-user OAuth observations stay isolated; older per-user catalogs are cold
+probed after migration. OAuth client initialization for system and system-agent
+configurations requires an administrator.
+
 ## Skills
 
 Skills are reusable playbooks that teach Stella how to perform specific tasks. In conversation, Stella can search the Skills already available to the active Agent and load an exact revision. Install, upload, edit, and remove Skills from the Web UI, where every write has an explicit ownership scope.
 
-Release-provided skills are read-only; administrators manage shared skills separately. See the [Skills guide](web/content/docs/guides/skills.md) for scopes, per-Agent activation, and precedence.
+Release-provided core Skills are read-only resources. Plugin Skills inherit the
+plugin's four-scope decision, while core Skills keep their explicit core
+dependencies. Administrators can disable any builtin plugin; a disabled winning
+scope does not fall back to a broader configuration. See the [Skills guide](web/content/docs/guides/skills.md) for scopes, per-Agent activation, and precedence.
 
 ## Documentation
 
@@ -92,7 +100,9 @@ stellad upgrade                         # Self-update to latest release
 stellad upgrade 0.50.0                   # Self-update to a specific release
 stellad version                         # Print version
 stellad vault keygen                    # Generate a vault bootstrap key
-stellad mise reconcile-builtins         # Reconcile builtin sandbox tools
+stellad system-bundle revision          # Print the builtin Skill bundle revision
+stellad system-bundle install            # Install the verified builtin Skill bundle
+stellad system-bundle verify             # Verify the builtin Skill bundle
 ```
 
 ## Development

@@ -57,6 +57,9 @@ func NewBuiltinHandler(cfg Config) (scheduler.OnJobFunc, error) {
 	if cfg.Services == nil {
 		return nil, fmt.Errorf("reflect: Services is required")
 	}
+	if cfg.CapabilityGate == nil {
+		return nil, fmt.Errorf("reflect: CapabilityGate is required")
+	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}

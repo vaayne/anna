@@ -170,7 +170,7 @@ export function NewChannelForm({
             agent_id: agentId,
             // SAFETY: the draft's name field is the string form value.
             name: channelString(draft.name) || "Feishu",
-            enabled: true,
+            is_active: true,
             config: serializePlatformConfig("feishu", draft),
           },
           throwOnError: true,
@@ -198,15 +198,15 @@ export function NewChannelForm({
     [draft, onRegistered, stopScanPolling],
   );
 
-  async function pollWeixinScan(qrCode: string) {
+  async function pollWeixinScan(qrCode: string, channelID: string) {
     // SAFETY: the draft's agent_id field is stored as a string form value.
     const agentId = channelString(draft.agent_id).trim();
     if (!qrCode || !agentId) return;
     try {
-      // WeChat is singleton-only; the server pins the id to "weixin".
       const { data: result } = await pollWeixinRegistration({
         body: {
           qrcode: qrCode,
+          channel_id: channelID,
           agent_id: agentId,
           // SAFETY: the draft's name field is the string form value.
           name: channelString(draft.name) || "WeChat",
@@ -219,7 +219,7 @@ export function NewChannelForm({
         stopScanPolling();
         if (weixinScanRefreshesRef.current < 3) {
           weixinScanRefreshesRef.current += 1;
-          await beginWeixinScanPolling();
+          await beginWeixinScanPolling(channelID);
         } else {
           setScanError(t("channels.scanExpired"));
         }
@@ -236,7 +236,7 @@ export function NewChannelForm({
     }
   }
 
-  async function beginWeixinScanPolling() {
+  async function beginWeixinScanPolling(existingChannelID = "") {
     setScanQrUrl("");
     setScanStatus("waiting");
     setScanError("");
@@ -244,12 +244,13 @@ export function NewChannelForm({
     setScanning(true);
     try {
       const { data: result } = await beginWeixinRegistration({
+        body: existingChannelID ? { channel_id: existingChannelID } : {},
         throwOnError: true,
       });
       setScanQrUrl(await QRCode.toDataURL(result.qr_image_url, { width: 256, margin: 2 }));
       const intervalSeconds = result.poll_interval || 2;
       scanIntervalRef.current = setInterval(
-        () => void pollWeixinScan(result.qrcode),
+        () => void pollWeixinScan(result.qrcode, result.channel_id),
         intervalSeconds * 1000,
       );
       setScanning(true);
@@ -389,7 +390,7 @@ export function NewChannelForm({
           </div>
 
           {isWeixin && (
-            <p className="text-xs text-muted-foreground">{t("channels.weixinSingletonDesc")}</p>
+            <p className="text-xs text-muted-foreground">{t("channels.weixinInstanceDesc")}</p>
           )}
 
           {lockAgent ? (

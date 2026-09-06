@@ -241,12 +241,11 @@ func nonWorkspacePolicyMounts(mounts []sessionfs.Mount) []sessionfs.Mount {
 
 // dockerImageProvidedStellaDirs are STELLA_HOME subdirs the sandbox image bakes
 // itself, built for the container's linux platform: the mise binary (bin) and the
-// shared system mise tree (.mise-tools). They must NOT be mounted from the host —
-// whose binaries may be a different platform — so the /opt/stella image versions
-// win and the per-user relative symlinks resolve against a runnable system tree.
+// core runtime bin. It must NOT be mounted from the host, whose binaries may be
+// a different platform. Selection-owned config and artifact directories are
+// mounted separately from the snapshot, never by mounting .mise-tools wholesale.
 var dockerImageProvidedStellaDirs = map[string]struct{}{
 	"bin":            {},
-	".mise-tools":    {},
 	"skills/builtin": {},
 }
 

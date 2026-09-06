@@ -19,8 +19,8 @@ const Version = 1
 var ErrCommitOutcomeUnknown = errors.New("AgentSkillPolicy commit outcome unknown")
 
 // Policy is the decoded, immutable value of agent.enabled_builtin_skills.
-// Despite the historical column name it applies to builtin, system, and
-// system_agent Skills.
+// Legacy builtin refs remain readable for compatibility, but builtin Skills do
+// not participate in policy decisions and are controlled by their owner plugin.
 type Policy struct {
 	Disabled []string
 }
@@ -142,7 +142,7 @@ func (p Policy) DisabledRef(ref string) bool {
 // SetEnabled changes exactly one logical ref. Enabling is deliberately allowed
 // for a stored dangling ref, which is the sole explicit prune operation.
 func (p Policy) SetEnabled(ref string, enabled bool) (Policy, error) {
-	if err := ValidateRef(ref); err != nil {
+	if err := ValidateMutationRef(ref); err != nil {
 		return Policy{}, err
 	}
 	next := append([]string(nil), p.Disabled...)
@@ -158,6 +158,17 @@ func (p Policy) SetEnabled(ref string, enabled bool) (Policy, error) {
 	return Policy{Disabled: canonical}, nil
 }
 
+// ValidateMutationRef accepts only scopes that remain independently writable.
+// ValidateRef intentionally remains broader so old builtin policy bytes can be
+// decoded and preserved while their effect is ignored.
+func ValidateMutationRef(ref string) error {
+	scope, name, ok := strings.Cut(ref, ":")
+	if !ok || name == "" || (scope != "system" && scope != "system_agent") {
+		return fmt.Errorf("invalid AgentSkillPolicy ref %q", ref)
+	}
+	return validateName(name, ref)
+}
+
 func remove(refs []string, ref string) []string {
 	out := refs[:0]
 	for _, candidate := range refs {
@@ -168,13 +179,17 @@ func remove(refs []string, ref string) []string {
 	return out
 }
 
-// ValidateRef accepts only policy-addressable scopes and the existing Skill
-// name grammar: lowercase alphanumerics separated by single hyphens, max 64.
+// ValidateRef accepts policy-addressable scopes, including the legacy builtin
+// scope so old rows remain readable, and the existing Skill name grammar.
 func ValidateRef(ref string) error {
 	scope, name, ok := strings.Cut(ref, ":")
 	if !ok || name == "" || (scope != "builtin" && scope != "system" && scope != "system_agent") {
 		return fmt.Errorf("invalid AgentSkillPolicy ref %q", ref)
 	}
+	return validateName(name, ref)
+}
+
+func validateName(name, ref string) error {
 	if len(name) > 64 || strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") || strings.Contains(name, "--") {
 		return fmt.Errorf("invalid AgentSkillPolicy ref %q", ref)
 	}

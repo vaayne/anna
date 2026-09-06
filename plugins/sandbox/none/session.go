@@ -21,8 +21,8 @@ import (
 
 // Config configures the none factory.
 type Config struct {
-	// StellaHome is the host path to the stella home directory, used for
-	// building a PATH that includes $STELLA_HOME/bin.
+	// StellaHome is the host path to the Stella home directory, used to resolve
+	// per-user paths and runner-owned environment values.
 	StellaHome string
 }
 
@@ -114,7 +114,13 @@ func (f *Factory) adjustPolicy(policy sandboxpkg.Policy, workspace, userData, tm
 		if dir := sandboxpkg.PerUserMiseDataDir(env, f.cfg.StellaHome); dir != "" {
 			userShims = sandboxpkg.MiseUserShimsDir(dir)
 		}
-		env["PATH"] = sandboxpkg.HostEnvBuildPath(f.cfg.StellaHome, userShims)
+		selectionShims := env[sandboxpkg.EnvNativeSelectionDir]
+		if selectionShims == "" {
+			selectionShims = env["MISE_SHIMS_DIR"]
+		}
+		bundledShims := env[sandboxpkg.EnvCoreRuntimeDir]
+		userSelectionShims := env[sandboxpkg.EnvUserNativeSelectionDir]
+		env["PATH"] = sandboxpkg.HostEnvBuildPath(f.cfg.StellaHome, userShims, userSelectionShims, selectionShims, bundledShims)
 		env[sandboxpkg.EnvRunnerPath] = env["PATH"]
 	}
 	policy.Env = env

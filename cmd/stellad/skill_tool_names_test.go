@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -141,7 +140,11 @@ func TestBuiltinProseOnlyNamesRegisteredTools(t *testing.T) {
 var wildcardToolFamily = regexp.MustCompile(`(?m)^([a-z][a-z_]*)\*\s+#`)
 
 func TestStellaSkillWildcardFamiliesMatchRegisteredTools(t *testing.T) {
-	body, err := fs.ReadFile(resources.FS(), "skills/system/stella/SKILL.md")
+	registry, err := resources.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, err := registry.ReadBuiltinSkillFile("stella", "SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,23 +184,21 @@ func TestStellaSkillWildcardFamiliesMatchRegisteredTools(t *testing.T) {
 func builtinProse(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	skills := resources.FS()
-	err := fs.WalkDir(skills, "skills", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		if ext := filepath.Ext(path); ext != ".md" && ext != ".mdx" {
-			return nil
-		}
-		body, readErr := fs.ReadFile(skills, path)
-		if readErr != nil {
-			return readErr
-		}
-		out[path] = string(body)
-		return nil
-	})
+	registry, err := resources.Default()
 	if err != nil {
-		t.Fatalf("walk builtin skills: %v", err)
+		t.Fatalf("load builtin skills: %v", err)
+	}
+	for _, skill := range registry.BuiltinSkills() {
+		for _, file := range skill.Files {
+			if ext := filepath.Ext(file.Path); ext != ".md" && ext != ".mdx" {
+				continue
+			}
+			body, _, readErr := registry.ReadBuiltinSkillFile(skill.Name, file.Path)
+			if readErr != nil {
+				t.Fatalf("read builtin skill %q/%q: %v", skill.Name, file.Path, readErr)
+			}
+			out[skill.Root+"/"+file.Path] = string(body)
+		}
 	}
 	if len(out) == 0 {
 		t.Fatal("no builtin skills found: the walk root is wrong, not the skills")
@@ -360,10 +361,10 @@ func TestProseGuardRejectsStaleToolNames(t *testing.T) {
 // settingsDefaultDocs are the surfaces that must agree on the exceptional
 // default for the reserved built-in Stella Agent.
 var settingsDefaultDocs = map[string]string{
-	filepath.Join("..", "..", "resources", "skills", "system", "stella", "SKILL.md"):                       "Built-in `stella` starts with them enabled; every other Agent starts disabled",
-	filepath.Join("..", "..", "resources", "skills", "system", "stella", "references", "configuration.md"): "Stella starts enabled, including after an upgrade",
-	filepath.Join("..", "..", "web", "content", "docs", "start-here", "configuration.md"):                  "Built-in **Stella** starts with System settings tools enabled. Every other Agent",
-	filepath.Join("..", "..", "web", "content", "docs", "start-here", "configuration.zh.md"):               "内置 **Stella** 初始开启系统设置工具；其他 Agent 初始关闭",
+	filepath.Join("..", "..", "plugins", "core", "skills", "stella", "SKILL.md"):                       "Built-in `stella` starts with them enabled; every other Agent starts disabled",
+	filepath.Join("..", "..", "plugins", "core", "skills", "stella", "references", "configuration.md"): "Stella starts enabled, including after an upgrade",
+	filepath.Join("..", "..", "web", "content", "docs", "start-here", "configuration.md"):              "Built-in **Stella** starts with System settings tools enabled. Every other Agent",
+	filepath.Join("..", "..", "web", "content", "docs", "start-here", "configuration.zh.md"):           "内置 **Stella** 初始开启系统设置工具；其他 Agent 初始关闭",
 }
 
 func TestSettingsDefaultPolicyProseMatchesBuiltInStella(t *testing.T) {
@@ -384,7 +385,7 @@ func TestSettingsDefaultPolicyProseMatchesBuiltInStella(t *testing.T) {
 // that disagrees with the code teaches a call the runtime will not honour.
 var hotSetDocs = []string{
 	filepath.Join("..", "..", "internal", "agent", "prompt", "template", "system_prompt.tmpl"),
-	filepath.Join("..", "..", "resources", "skills", "system", "stella", "references", "configuration.md"),
+	filepath.Join("..", "..", "plugins", "core", "skills", "stella", "references", "configuration.md"),
 	filepath.Join("..", "..", "web", "content", "docs", "start-here", "configuration.md"),
 	filepath.Join("..", "..", "web", "content", "docs", "start-here", "configuration.zh.md"),
 }

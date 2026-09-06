@@ -9,7 +9,6 @@ package toolmeta
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/CherryHQ/stella/pkg/tools"
 )
@@ -18,8 +17,16 @@ import (
 // Family and Resource are carried, not inferred — a plugin free to call itself
 // "goal_helper" must never be mistaken for a member of the goal family.
 type ActionTool struct {
-	// Name is the model-facing tool name, e.g. "recally_feed_add".
+	// Name is the model-facing exported tool name, e.g. "recally__feed_add".
 	Name string
+	// PluginID is the trusted logical plugin identity. It is empty for core
+	// tools; callers must not infer ownership from Name.
+	PluginID string
+	// Namespace is the stable plugin namespace used in Name. It is empty for
+	// core tools and is validated by toolgen for generated plugin tools.
+	Namespace string
+	// LocalName is the plugin-local tool name. It is empty for core tools.
+	LocalName string
 	// Family groups tools that share a domain, e.g. "recally".
 	Family string
 	// Resource is the family's sub-resource, e.g. "feed". Empty when the
@@ -58,11 +65,14 @@ type Registry struct {
 }
 
 // NewRegistry indexes tools by name. A duplicate name is a build-time bug in
-// toolgen's uniqueness check; last one wins here rather than panicking at
-// startup.
+// toolgen's uniqueness check, so reject it rather than silently changing the
+// trusted metadata selected by callers.
 func NewRegistry(all ...ActionTool) *Registry {
 	byName := make(map[string]ActionTool, len(all))
 	for _, tool := range all {
+		if _, exists := byName[tool.Name]; exists {
+			panic("toolmeta: duplicate tool name " + tool.Name)
+		}
 		byName[tool.Name] = tool
 	}
 	return &Registry{byName: byName}
@@ -97,6 +107,20 @@ func (r *Registry) Names() []string {
 		out = append(out, name)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// Tools returns every generated declaration in stable name order. The result
+// is a value snapshot, so callers cannot mutate the registry's trusted index.
+func (r *Registry) Tools() []ActionTool {
+	if r == nil {
+		return nil
+	}
+	names := r.Names()
+	out := make([]ActionTool, 0, len(names))
+	for _, name := range names {
+		out = append(out, r.byName[name])
+	}
 	return out
 }
 
@@ -191,23 +215,10 @@ var handWritten = map[string]bool{
 	"code":         true, // meta-tool over the other tools
 }
 
-// handWrittenPrefixes covers the one family whose names are not fixed at build
-// time: MCP tools come from a remote server, so no declaration can enumerate
-// them.
-var handWrittenPrefixes = []string{"mcp__"}
-
 // HandWritten reports whether a tool name is an accepted exception to "every
 // model-facing tool is generated". The list is closed: memory was the last
 // union awaiting a split, so the pendingSplit map that held it is gone rather
 // than kept empty — an empty second mechanism only invites a third entry.
 func HandWritten(name string) bool {
-	if handWritten[name] {
-		return true
-	}
-	for _, prefix := range handWrittenPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
+	return handWritten[name]
 }

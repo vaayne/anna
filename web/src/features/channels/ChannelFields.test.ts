@@ -62,7 +62,7 @@ describe("Telegram channel configuration", () => {
       name: "Telegram",
       type: "telegram",
       agent_id: "agent-1",
-      enabled: true,
+      is_active: true,
       config: JSON.stringify({
         token: "redacted",
         allowed_chat_ids: ["-100"],
@@ -78,6 +78,21 @@ describe("Telegram channel configuration", () => {
       allowed_chat_ids: ["-100"],
       allowed_topic_ids: ["-100:42"],
     });
+  });
+
+  it("keeps the instance active state outside the platform config", () => {
+    const channel = normalizeChannel({
+      id: "telegram-main",
+      name: "Telegram",
+      type: "telegram",
+      agent_id: "agent-1",
+      is_active: false,
+      config: JSON.stringify({ token: "redacted" }),
+    });
+
+    expect(channel.is_active).toBe(false);
+    expect(channel).not.toHaveProperty("enabled");
+    expect(JSON.parse(channelConfig(channel))).not.toHaveProperty("is_active");
   });
 });
 

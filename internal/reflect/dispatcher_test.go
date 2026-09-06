@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/CherryHQ/stella/internal/agent"
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/scheduler"
@@ -101,6 +102,7 @@ func validConfig(store Store) Config {
 		SkillAuthorizer:   dispatcherSkillAuthorizer{},
 		UsageCuratorStore: fakeUsageCuratorStore{},
 		Services:          emptyReflectServiceManager{},
+		CapabilityGate:    func(context.Context, authz.Authority, string, ...string) error { return nil },
 	}
 }
 

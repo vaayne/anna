@@ -9,15 +9,20 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/CherryHQ/stella/internal/agent/prompt"
+	agentruntime "github.com/CherryHQ/stella/internal/agent/runtime"
 	"github.com/CherryHQ/stella/internal/agent/sandbox"
+	"github.com/CherryHQ/stella/internal/authz"
 	oauth "github.com/CherryHQ/stella/internal/connections/oauth"
+	agentaccess "github.com/CherryHQ/stella/internal/core/access"
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/sessionmedia"
 	skillstool "github.com/CherryHQ/stella/internal/skill"
 	"github.com/CherryHQ/stella/internal/vault"
@@ -28,14 +33,19 @@ import (
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 	"github.com/CherryHQ/stella/pkg/toolmeta"
 	"github.com/CherryHQ/stella/pkg/tools"
+	"github.com/CherryHQ/stella/plugins/core"
 )
 
-// MCPToolProvider surfaces external MCP-server tools into an agent's tool
-// registry for a (user, agent) context. Implemented by *mcp.ToolProvider; kept
-// as an interface here so the agent package need not depend on the MCP client
-// internals and tests can stub it.
+type (
+	PluginContext        = agentruntime.PluginContext
+	PluginContextBuilder = agentruntime.PluginContextBuilder
+)
+
+// MCPToolProvider surfaces external MCP-server tools from the runner's
+// authority-bound plugin snapshot. Implemented by *mcp.ToolProvider; kept as
+// an interface here so the agent package need not depend on MCP internals.
 type MCPToolProvider interface {
-	ToolsForContext(ctx context.Context, userID, agentID string) []tools.Tool
+	ToolsForSnapshot(ctx context.Context, snapshot plugin.Snapshot) ([]tools.Tool, error)
 }
 
 type ToolUnavailableReason string
@@ -146,29 +156,43 @@ func BuiltinToolAvailable(_ context.Context, params RunnerParams) (bool, error) 
 	return params.UserID != "" && params.AgentID != "", nil
 }
 
+func runnerPluginAuthority(params RunnerParams) (authz.Authority, error) {
+	switch {
+	case params.GroupID != "":
+		return agentaccess.GroupAgentAuthority(params.GroupID, params.AgentID)
+	case params.UserID != "" && params.AgentID != "":
+		return agentaccess.WorkerAgentAuthority(params.UserID, params.AgentID)
+	default:
+		return authz.Authority{}, nil
+	}
+}
+
 // runnerBuilderConfig holds all dependencies needed to assemble a NewRunnerFunc.
 type runnerBuilderConfig struct {
-	Snap                     *config.Snapshot
-	BuiltinTools             []BuiltinTool
-	ToolMetaRegistry         *toolmeta.Registry
-	PluginToolsBuilder       PluginToolsBuilder
-	ProviderStreamBuilder    ProviderStreamBuilder
-	SandboxBackends          *sandbox.BackendRegistry
-	PromptSectionsBuilder    prompt.SectionsBuilder
-	SessionPluginViewBuilder SessionPluginViewBuilder
-	SkillRevisionReader      skillstool.RuntimeReader
-	SkillReadAuthorizer      skillstool.SkillReadAuthorizer
-	MCPToolProvider          MCPToolProvider
-	ToolOverrideFetcher      ToolOverrideFetcher
-	ToolLifecycle            *coreagent.ToolLifecycle
-	SandboxBackendFn         func(ctx context.Context) string
-	VaultEnvLoader           sandbox.VaultEnvLoader
-	TokenManager             *oauth.TokenManager
-	ProjectResolver          ProjectResolverFunc
-	SessionImages            SessionImagePipeline
-	GroupRosterLoader        func(context.Context, string, string) prompt.GroupRoster
-	Home                     home.Workspace
-	CodeToolSurface          coreagent.CodeToolSurface
+	Snap                  *config.Snapshot
+	BuiltinTools          []BuiltinTool
+	ToolMetaRegistry      *toolmeta.Registry
+	PluginToolsBuilder    PluginToolsBuilder
+	ProviderStreamBuilder ProviderStreamBuilder
+	SandboxBackends       *sandbox.BackendRegistry
+	PromptSectionsBuilder PromptSectionsBuilder
+	PluginContextBuilder  PluginContextBuilder
+	PluginHooksBuilder    PluginHooksBuilder
+	ToolLifecycleBuilder  ToolLifecycleBuilder
+	SkillRevisionReader   skillstool.RuntimeReader
+	SkillReadAuthorizer   skillstool.SkillReadAuthorizer
+	MCPToolProvider       MCPToolProvider
+	ToolOverrideFetcher   ToolOverrideFetcher
+	ToolLifecycle         *coreagent.ToolLifecycle
+	SandboxBackendFn      func(ctx context.Context) string
+	CoreRuntimePlan       *core.RuntimePlan
+	VaultEnvLoader        sandbox.VaultEnvLoader
+	TokenManager          *oauth.TokenManager
+	ProjectResolver       ProjectResolverFunc
+	SessionImages         SessionImagePipeline
+	GroupRosterLoader     func(context.Context, string, string) prompt.GroupRoster
+	Home                  home.Workspace
+	CodeToolSurface       coreagent.CodeToolSurface
 }
 
 // canonicalImageConfig is the session image policy every runner gets, group or
@@ -222,13 +246,24 @@ func canonicalImageConfig(images SessionImagePipeline, params RunnerParams) *cor
 // injected per-session from RunnerParams. Runner execution is always user-scoped,
 // so per-user workspace directories are created for every runner instance.
 //
-// Hooks are not part of the builder — they are injected via RunnerParams.HooksFn
-// by the Pool, keeping hook lifecycle fully decoupled from model/provider config.
+// Plugin hooks are built per runner from its captured plugin snapshot. Stable
+// core hooks are injected via RunnerParams.HooksFn by the Pool.
 func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 	if cfg.CodeToolSurface == "" {
 		cfg.CodeToolSurface = coreagent.CodeToolSurfaceHot
 	}
-	return func(ctx context.Context, params RunnerParams) (Runner, error) {
+	return func(ctx context.Context, params RunnerParams) (built Runner, err error) {
+		var scratchCleanup func() error
+		var pluginHooks []hooks.HookPlugin
+		runnerOwnsPluginHooks := false
+		defer func() {
+			if err != nil && scratchCleanup != nil {
+				_ = scratchCleanup()
+			}
+			if err != nil && !runnerOwnsPluginHooks {
+				closeHookPlugins(pluginHooks)
+			}
+		}()
 		modelRef := params.Model
 		if modelRef == "" {
 			modelRef = cfg.Snap.Model
@@ -282,7 +317,6 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 			// live under: a project is owned by the agent (see #442), so it stays
 			// scoped to the agent's subdir of the shared user/group home.
 			projectValidateRoot string
-			scratchCleanup      func() error
 		)
 		if params.UserID != "" || params.GroupID != "" {
 			userRoot = view.PrincipalRoot
@@ -341,20 +375,46 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 			memProvider, _ = params.Memory.(memory.Provider)
 		}
 
-		pluginView := pkgplugins.SessionPluginView{}
-		if cfg.SessionPluginViewBuilder != nil {
-			pluginView, _ = cfg.SessionPluginViewBuilder(ctx)
+		pluginContext := PluginContext{}
+		hasPluginAuthority := false
+		if cfg.PluginContextBuilder != nil {
+			authority, authorityErr := runnerPluginAuthority(params)
+			err = authorityErr
+			if err != nil {
+				return nil, fmt.Errorf("runner: build plugin authority: %w", err)
+			}
+			if authority.Valid() {
+				pluginContext, err = cfg.PluginContextBuilder(ctx, authority, params.AgentID)
+				if err != nil {
+					return nil, fmt.Errorf("runner: build plugin context: %w", err)
+				}
+				hasPluginAuthority = true
+			}
+		}
+		pluginView := pluginContext.SessionPluginView()
+		backendName := config.SandboxBackendLocal
+		if cfg.SandboxBackendFn != nil {
+			if selected := cfg.SandboxBackendFn(ctx); selected != "" {
+				backendName = selected
+			}
+		}
+		disabledSkillRefs := slices.Clone(cfg.Snap.DisabledSkillRefs)
+		if backendName != config.SandboxBackendDocker {
+			disabledSkillRefs = append(disabledSkillRefs, core.UnavailableSkillRefs()...)
 		}
 		promptBuild := pkgplugins.SystemPromptContext{
 			UserID:              params.UserID,
 			AgentID:             params.AgentID,
-			RegisteredPluginIDs: append([]string(nil), pluginView.RegisteredPluginIDs...),
-			EnabledPluginIDs:    append([]string(nil), pluginView.EnabledPluginIDs...),
-			DisabledSkillRefs:   append([]string(nil), cfg.Snap.DisabledSkillRefs...),
+			RegisteredPluginIDs: slices.Clone(pluginView.RegisteredPluginIDs),
+			EnabledPluginIDs:    slices.Clone(pluginView.ExposedPluginIDs),
+			DisabledSkillRefs:   slices.Clone(disabledSkillRefs),
 		}
 		var sections []pkgplugins.SystemPromptSection
-		if cfg.PromptSectionsBuilder != nil {
-			sections, _ = cfg.PromptSectionsBuilder(ctx, promptBuild)
+		if hasPluginAuthority && cfg.PromptSectionsBuilder != nil {
+			sections, err = cfg.PromptSectionsBuilder(ctx, promptBuild, pluginContext.Snapshot())
+			if err != nil {
+				return nil, fmt.Errorf("runner: build prompt sections: %w", err)
+			}
 		}
 		skillPromptBuild := promptBuild
 		if params.GroupID != "" {
@@ -410,15 +470,36 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 		})
 
 		// Resolve hooks from RunnerParams — injected by Pool, not the builder.
-		var hookPlugins []hooks.HookPlugin
+		if hasPluginAuthority && cfg.PluginHooksBuilder != nil {
+			pluginHooks, err = cfg.PluginHooksBuilder(ctx, pluginContext.Snapshot())
+			if err != nil {
+				return nil, fmt.Errorf("runner: build plugin hooks: %w", err)
+			}
+		}
+		hookPlugins := pluginHooks
 		if params.HooksFn != nil {
-			hookPlugins = params.HooksFn()
+			hookPlugins = append(hookPlugins, params.HooksFn()...)
+		}
+		pluginToolsBuilder := cfg.PluginToolsBuilder
+		if !hasPluginAuthority {
+			pluginToolsBuilder = nil
+		}
+		toolLifecycle := cfg.ToolLifecycle
+		if !hasPluginAuthority {
+			toolLifecycle = nil
+		}
+		if hasPluginAuthority && cfg.ToolLifecycleBuilder != nil {
+			toolLifecycle, err = cfg.ToolLifecycleBuilder(ctx, pluginContext.Snapshot())
+			if err != nil {
+				return nil, fmt.Errorf("runner: build tool lifecycle: %w", err)
+			}
 		}
 
 		sessionSecretValues := sandbox.NewSessionSecretValues()
 		sandboxCfg := sandbox.Config{
 			SandboxConfig:    cfg.Snap.Sandbox,
 			SandboxBackendFn: cfg.SandboxBackendFn,
+			CoreRuntimePlan:  cfg.CoreRuntimePlan,
 			Backends:         cfg.SandboxBackends,
 			Paths: sandbox.Paths{
 				StellaHome:    config.StellaHome(),
@@ -433,7 +514,8 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 			AgentID:             params.AgentID,
 			SessionID:           params.SessionID,
 			ProjectID:           params.ProjectID,
-			SessionEnvSpecs:     append([]pkgplugins.SessionEnvSpec(nil), pluginView.SessionEnvSpecs...),
+			SessionEnvSpecs:     slices.Clone(pluginView.SessionEnvSpecs),
+			BinarySpecs:         slices.Clone(pluginView.BinarySpecs),
 			VaultEnvLoader:      cfg.VaultEnvLoader,
 			SessionSecretValues: sessionSecretValues,
 			TokenManager:        cfg.TokenManager,
@@ -445,7 +527,11 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 
 		canonicalImages := canonicalImageConfig(cfg.SessionImages, params)
 
-		runner, err := newRunner(ctx, runnerConfig{
+		// Ownership transfers to newRunner before the call. It closes the
+		// hooks on every construction error, including provider setup failures;
+		// this defer handles errors that occur before that handoff.
+		runnerOwnsPluginHooks = true
+		built, err = newRunner(ctx, runnerConfig{
 			Provider: providerConfig{
 				ProviderID: providerID,
 				API:        apiName,
@@ -462,18 +548,19 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 			Sections:             sections,
 			BuiltinTools:         builtinTools,
 			BuiltinParams:        params,
-			DisabledSkillRefs:    append([]string(nil), cfg.Snap.DisabledSkillRefs...),
+			DisabledSkillRefs:    slices.Clone(disabledSkillRefs),
 			PerRunTools:          perRunTools,
 			SkillRevisionReader:  cfg.SkillRevisionReader,
 			ProjectSkillSnapshot: projectSkillSnapshot,
 			SkillReadAuthorizer:  cfg.SkillReadAuthorizer,
-			PluginView:           pluginView,
-			MCPToolProvider:      cfg.MCPToolProvider,
+			PluginContext:        pluginContext,
 			ToolOverrideFetcher:  cfg.ToolOverrideFetcher,
 			ToolMetaRegistry:     cfg.ToolMetaRegistry,
-			PluginTools:          cfg.PluginToolsBuilder,
+			PluginTools:          pluginToolsBuilder,
 			HookPlugins:          hookPlugins,
-			ToolLifecycle:        cfg.ToolLifecycle,
+			PluginHookPlugins:    pluginHooks,
+			ToolLifecycle:        toolLifecycle,
+			MCPToolProvider:      cfg.MCPToolProvider,
 			CodeToolSurface:      cfg.CodeToolSurface,
 			DelegateRunner:       params.DelegateRunner,
 			DelegateTimeout:      cfg.Snap.Runner.DelegateTimeoutDuration(),
@@ -484,10 +571,7 @@ func newRunnerFunc(cfg runnerBuilderConfig) NewRunnerFunc {
 			Vision:  vision.NewFromSnapshot(cfg.Snap, vision.StreamBuilder(cfg.ProviderStreamBuilder)),
 			Cleanup: scratchCleanup,
 		})
-		if err != nil && scratchCleanup != nil {
-			_ = scratchCleanup()
-		}
-		return runner, err
+		return built, err
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 
 // ListTool is the scheduler action that lists what this agent can reach. Error
 // prose points at it, so a rename shows up here rather than in a string.
-const ListTool = "scheduler_job_list"
+const ListTool = "scheduler__job_list"
 
 // actionDescriptions is the model-facing description per generated tool. A
 // split tool's schema is exact, so each description only says what the call
@@ -20,9 +20,9 @@ var actionDescriptions = map[string]string{
 	"create": "Schedule a prompt to run later or repeatedly, as a one-time at, an interval every, or a cron expression; template_key subscribes to a built-in job instead. Use goal_create for durable acceptance-tracked work, not this.",
 	"list":   "List this agent's scheduled jobs with their schedule, next run, and enabled state.",
 	"get":    "Read one scheduled job by id, including its message and its run history summary.",
-	"update": "Change one scheduled job's name, message, or schedule. Missing fields keep their current values; use scheduler_job_pause to stop it instead.",
+	"update": "Change one scheduled job's name, message, or schedule. Missing fields keep their current values; use scheduler__job_pause to stop it instead.",
 	"delete": "Delete one scheduled job by id. This is not reversible; pause it instead when it should come back.",
-	"pause":  "Stop one scheduled job from running without deleting it. Its schedule and message are kept for scheduler_job_resume.",
+	"pause":  "Stop one scheduled job from running without deleting it. Its schedule and message are kept for scheduler__job_resume.",
 	"resume": "Let a paused job run again on its existing schedule. Missed runs are not replayed.",
 }
 

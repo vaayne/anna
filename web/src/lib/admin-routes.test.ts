@@ -32,10 +32,8 @@ describe("adminCompatibilityHref", () => {
 });
 
 describe("personalCompatibilityHref", () => {
-  it("moves only the former Plugins root to personal MCP", () => {
-    expect(personalCompatibilityHref("/settings/plugins", "?from=bookmark")).toBe(
-      "/settings/mcp?from=bookmark",
-    );
+  it("leaves the active unified Plugins root in place", () => {
+    expect(personalCompatibilityHref("/settings/plugins", "?from=bookmark")).toBeNull();
     expect(personalCompatibilityHref("/settings/plugins/tool-id")).toBeNull();
   });
 });

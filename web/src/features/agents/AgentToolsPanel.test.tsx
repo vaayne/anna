@@ -321,25 +321,25 @@ describe("AgentToolsPanel control contract", () => {
 
 // SAFETY: fixed response fixture satisfies the AgentMCPServer projection shape.
 const healthyServer = {
-  id: "srv-1",
-  name: "github",
-  url: "https://mcp.example.com",
+  plugin_id: "mcp/github",
+  config_id: "srv-1",
+  namespace: "github",
   scope: "user",
-  auth_type: "none",
-  transport: "streamable_http",
   enabled: true,
   status: "ok",
   credential_mode: "shared",
-  version: "v1",
+  needs_auth: false,
+  tools: [],
   readable: true,
 } as import("@/lib/api-client/types.gen").AgentMcpServer;
 
 // SAFETY: derived fixture preserves the projection shape with a rejected credential.
 const needsAuthServer = {
   ...healthyServer,
-  id: "srv-2",
-  name: "notion",
+  config_id: "srv-2",
+  namespace: "notion",
   status: "needs_auth",
+  needs_auth: true,
 } as import("@/lib/api-client/types.gen").AgentMcpServer;
 
 // SAFETY: fixed fixture preserves the MCP override-controlled tool row shape.

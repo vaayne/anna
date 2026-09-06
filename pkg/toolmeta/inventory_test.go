@@ -131,9 +131,6 @@ func TestEveryBuiltinIsGeneratedOrAnAcceptedException(t *testing.T) {
 // shows what was accepted.
 func TestExceptionListsAreExactlyWhatTheRuleDocuments(t *testing.T) {
 	assertKeys(t, "handWritten", handWritten, []string{"bash", "code", "goal_control", "notify", "view_image"})
-	if want := []string{"mcp__"}; !slices.Equal(handWrittenPrefixes, want) {
-		t.Errorf("handWrittenPrefixes=%v, want exactly %v", handWrittenPrefixes, want)
-	}
 }
 
 func assertKeys(t *testing.T, label string, set map[string]bool, want []string) {

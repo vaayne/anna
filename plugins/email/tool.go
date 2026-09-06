@@ -15,14 +15,14 @@ const (
 
 // ListTool is the email action that lists what this agent can reach. Error
 // prose points at it, so a rename shows up here rather than in a string.
-const ListTool = "email_message_list"
+const ListTool = "email__message_list"
 
 // actionDescriptions is the model-facing description per generated tool. A
 // split tool's schema is exact, so each description only says what the call
 // does and what it costs.
 var actionDescriptions = map[string]string{
 	"account_list": "List this user's configured email accounts and which one is the default. Never returns passwords or any other EMAIL_CONFIG contents.",
-	"message_list": "List message envelopes in one folder, filtered by sender, subject, unread state, or date. Envelopes only; call email_message_read for a body.",
+	"message_list": "List message envelopes in one folder, filtered by sender, subject, unread state, or date. Envelopes only; call email__message_read for a body.",
 	"message_read": "Read one message by uid and folder. Long bodies are truncated for token safety.",
 	"message_send": "Send one mail as this user. It leaves the server immediately and cannot be recalled, so idempotency_key is required: reuse a key only when retrying the exact same send.",
 }

@@ -37,9 +37,9 @@ paths:
       tags: [channels]
       summary: Create a channel (admin, or the owner of the bound agent)
       description: >-
-        `type` is required. `id` is optional: the server mints a uuid when it is
-        omitted, except for the singleton weixin channel, which always gets the
-        id "weixin". `name` is optional and defaults to "{type}-{random suffix}".
+        `type` is required. `id` is optional: the server mints an independent
+        uuid when it is omitted. `name` is optional and defaults to
+        "{type}-{random suffix}".
       operationId: createChannel
       requestBody:
         required: true
@@ -168,7 +168,7 @@ paths:
       tags: [channels]
       summary: List group chats currently joined by a Feishu channel bot
       description: >-
-        Reads the running Feishu channel directly. The channel must be enabled
+        Reads the running Feishu channel directly. The channel instance must be active
         and connected; this endpoint never persists a group directory.
       operationId: listFeishuChannelChats
       parameters:
@@ -306,6 +306,12 @@ paths:
       tags: [channels]
       summary: Begin WeChat iLink bot registration (admin only)
       operationId: beginWeixinRegistration
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/WeixinRegistrationBeginRequest"
       responses:
         "200":
           description: ok

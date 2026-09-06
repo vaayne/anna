@@ -23,7 +23,7 @@ func TestRuntimeChatGroupSpeakerContextNoUserPromotion(t *testing.T) {
 		NewRunner: func(context.Context, RunnerParams) (Runner, error) {
 			return chatFakeRunner{events: []Event{{Text: "ok"}}}, nil
 		},
-		BeforeRun: func(ctx context.Context, _ session.Info, _, _, system string, _ []ai.Message) (string, error) {
+		BeforeRun: func(ctx context.Context, _ session.Info, _, _, system string, _ []ai.Message, _ PluginContext) (string, error) {
 			cs, ok := memory.CurrentSpeakerFromContext(ctx)
 			if !ok {
 				t.Fatal("missing current speaker in group turn context")

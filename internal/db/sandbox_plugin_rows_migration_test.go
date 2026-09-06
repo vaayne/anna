@@ -17,14 +17,8 @@ const (
 // the near misses that a careless LIKE pattern would swallow ("sandbox" with no
 // slash, "sandboxed/local", a tool whose name merely contains "sandbox").
 func TestDropSandboxPluginRows(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, dropSandboxPluginRowsBeforeMigration); err != nil {
-		t.Fatalf("restore pre-migration schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, dropSandboxPluginRowsBeforeMigration)
+	ctx := t.Context()
 
 	deleted := []string{"sandbox/docker", "sandbox/local", "sandbox/none", "sandbox/custom"}
 	kept := []string{
@@ -61,11 +55,9 @@ func TestDropSandboxPluginRows(t *testing.T) {
 		}
 	}
 
-	// Down is inert, so a re-run must be a no-op rather than an error: an
-	// operator replaying migrations cannot be punished for it.
-	if _, err := provider.DownTo(ctx, dropSandboxPluginRowsBeforeMigration); err != nil {
-		t.Fatalf("mark cleanup down: %v", err)
-	}
+	// Re-applying an already-applied migration is the supported idempotence
+	// check. The current database may not be rolled back through irreversible
+	// migration 41 just to reach this historical boundary.
 	if _, err := provider.UpTo(ctx, dropSandboxPluginRowsMigration); err != nil {
 		t.Fatalf("repeat cleanup: %v", err)
 	}

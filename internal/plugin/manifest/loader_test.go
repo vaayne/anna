@@ -15,6 +15,18 @@ func TestLoadBuiltin(t *testing.T) {
 	}
 }
 
+func TestLoadBuiltinExcludesCoreRuntimePlugins(t *testing.T) {
+	m, err := LoadBuiltin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range m.Plugins {
+		if slices.Contains([]string{"tool/mise", "tool/xberg", "tool/fd", "tool/rg"}, p.ID) {
+			t.Fatalf("mandatory core runtime leaked into configurable plugins: %s", p.ID)
+		}
+	}
+}
+
 func TestLoadBuiltinLarkCLIUsesManagedFeishuOAuth(t *testing.T) {
 	m, err := LoadBuiltin()
 	if err != nil {

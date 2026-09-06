@@ -45,22 +45,21 @@ func TestRuntimeMiseEnv_PerUser(t *testing.T) {
 		t.Fatalf("auto-install should be enabled for a writable per-user tree, got %q", env["MISE_NOT_FOUND_AUTO_INSTALL"])
 	}
 
-	// The release-owned config is the lower-precedence system layer.
-	wantSystem := ScopeConfigPath(stellaHome, builtinScope)
-	if env["MISE_SYSTEM_CONFIG_FILE"] != wantSystem {
-		t.Fatalf("MISE_SYSTEM_CONFIG_FILE = %q, want _builtin %q", env["MISE_SYSTEM_CONFIG_FILE"], wantSystem)
+	// The system layer is supplied only by the immutable snapshot selection.
+	if _, ok := env["MISE_SYSTEM_CONFIG_FILE"]; ok {
+		t.Fatalf("MISE_SYSTEM_CONFIG_FILE must stay unset without a snapshot selection, got %q", env["MISE_SYSTEM_CONFIG_FILE"])
 	}
 
-	// System, principal-global, and project paths are trusted in precedence order.
+	// Principal-global and project paths are trusted in precedence order.
 	trusted := strings.Split(env["MISE_TRUSTED_CONFIG_PATHS"], string(filepath.ListSeparator))
-	for _, want := range []string{wantSystem, userConfigDir, pkgsandbox.MountWorkspace, workspace} {
+	for _, want := range []string{userConfigDir, pkgsandbox.MountWorkspace, workspace} {
 		if !slices.Contains(trusted, want) {
 			t.Fatalf("trusted paths %v missing %q", trusted, want)
 		}
 	}
 }
 
-func TestRuntimeMiseEnv_FallbackWhenNoUser(t *testing.T) {
+func TestRuntimeMiseEnv_NoUserHasNoSystemFallback(t *testing.T) {
 	stellaHome := t.TempDir()
 
 	env := RuntimeMiseEnv(stellaHome, "", "", "")
@@ -75,8 +74,8 @@ func TestRuntimeMiseEnv_FallbackWhenNoUser(t *testing.T) {
 	if env["MISE_NOT_FOUND_AUTO_INSTALL"] != "false" {
 		t.Fatalf("auto-install must stay off without a writable tree, got %q", env["MISE_NOT_FOUND_AUTO_INSTALL"])
 	}
-	if got, want := env["MISE_SYSTEM_CONFIG_FILE"], ScopeConfigPath(stellaHome, builtinScope); got != want {
-		t.Fatalf("MISE_SYSTEM_CONFIG_FILE = %q, want %q", got, want)
+	if _, ok := env["MISE_SYSTEM_CONFIG_FILE"]; ok {
+		t.Fatalf("MISE_SYSTEM_CONFIG_FILE must stay unset without a snapshot selection, got %q", env["MISE_SYSTEM_CONFIG_FILE"])
 	}
 	for _, key := range []string{"MISE_CONFIG_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR", "MISE_GLOBAL_CONFIG_FILE"} {
 		if value, ok := env[key]; ok {

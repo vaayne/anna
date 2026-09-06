@@ -15,7 +15,7 @@ Stella 现在只有一个二进制：`stellad`。它负责启动服务器、后�
 - `stellad version` — 打印版本。
 - `stellad postgres ...` — 管理内嵌 PostgreSQL runtime。
 - `stellad vault keygen` — 生成引导用的 `STELLA_VAULT_KEY`。
-- `stellad mise reconcile-builtins` — 安装内置 sandbox 工具。
+- `stellad system-bundle ...` — 查看、安装和验证 builtin Skill bundle。
 
 为服务端功能设计命令行为前，先读[CLI 与原生代理工具](../cli-as-client)和 [API 设计规则](./api-design)。
 
@@ -39,14 +39,14 @@ stellad <domain> <verb> [args] [flags]
 
 ```text
 stellad vault keygen
-stellad mise reconcile-builtins
+stellad system-bundle verify
 stellad service install --system
 ```
 
 ### 命名
 
-- 顶层命令是守护进程领域或生命周期动词：`server`、`service`、`upgrade`、`version`、`postgres`、`vault`、`mise`。
-- 子命令使用动词，或在需要更深层级时使用资源名：`keygen`、`reconcile-builtins`、`install`、`status`。
+- 顶层命令是守护进程领域或生命周期动词：`server`、`service`、`upgrade`、`version`、`postgres`、`vault`、`system-bundle`。
+- 子命令使用动词，或在需要更深层级时使用资源名：`keygen`、`revision`、`install`、`verify`、`status`。
 - 多词命令和 flag 使用小写短横线。
 - 常见动作保持一致：
 
@@ -184,7 +184,7 @@ invalid input
 Go 中包装错误时，只加一次操作上下文：
 
 ```go
-return fmt.Errorf("mise reconcile-builtins: %w", err)
+return fmt.Errorf("system-bundle install: %w", err)
 ```
 
 不要每层都重复同一个名词，把消息包成闹鬼堆栈。

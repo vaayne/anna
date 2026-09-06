@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	skillstool "github.com/CherryHQ/stella/internal/skill"
 	"github.com/CherryHQ/stella/internal/skill/policy"
 	coreagent "github.com/CherryHQ/stella/pkg/agent"
@@ -30,18 +32,29 @@ import (
 	"github.com/CherryHQ/stella/pkg/providers"
 	"github.com/CherryHQ/stella/pkg/toolmeta"
 	"github.com/CherryHQ/stella/pkg/tools"
+	core "github.com/CherryHQ/stella/plugins/core"
 )
 
-// PluginToolsBuilder creates tools from enabled plugin state.
-type PluginToolsBuilder func(ctx context.Context, build pkgplugins.ToolBuildContext) []tools.Tool
+// PromptSectionsBuilder builds prompt sections from the runner's authority-bound
+// plugin snapshot.
+type PromptSectionsBuilder func(ctx context.Context, build pkgplugins.SystemPromptContext, snapshot plugin.Snapshot) ([]pkgplugins.SystemPromptSection, error)
 
-// PluginHooksBuilder creates hook plugins from enabled plugin state.
-type PluginHooksBuilder func(ctx context.Context) []hooks.HookPlugin
+// PluginHooksBuilder creates hooks from the runner's authority-bound plugin
+// snapshot. Hooks belong to the runner generation that built them.
+type PluginHooksBuilder func(ctx context.Context, snapshot plugin.Snapshot) ([]hooks.HookPlugin, error)
+
+// ToolLifecycleBuilder creates the per-run core tool lifecycle from the same
+// authority-bound snapshot as tools and hooks.
+type ToolLifecycleBuilder func(ctx context.Context, snapshot plugin.Snapshot) (*coreagent.ToolLifecycle, error)
+
+// PluginToolsBuilder creates tools from the runner's authority-bound plugin
+// snapshot. The snapshot is the final argument so callers cannot accidentally
+// use an ambient or independently resolved plugin state.
+type PluginToolsBuilder func(ctx context.Context, build pkgplugins.ToolBuildContext, snapshot plugin.Snapshot) ([]tools.Tool, error)
 
 type (
-	SessionPluginViewBuilder func(ctx context.Context) (pkgplugins.SessionPluginView, error)
-	BeforeRunBuilder         func(ctx context.Context, build pkgplugins.BeforeRunContext) (pkgplugins.BeforeRunResult, error)
-	ProviderStreamBuilder    func(api, apiKey, baseURL string) (providers.StreamFunc, error)
+	BeforeRunBuilder      func(ctx context.Context, build pkgplugins.BeforeRunContext, snapshot plugin.Snapshot) (pkgplugins.BeforeRunResult, error)
+	ProviderStreamBuilder func(api, apiKey, baseURL string) (providers.StreamFunc, error)
 )
 
 // PoolManagerOption configures a PoolManager.
@@ -56,6 +69,13 @@ func WithCodeToolSurface(surface coreagent.CodeToolSurface) PoolManagerOption {
 		}
 		pm.codeToolSurface = surface
 	}
+}
+
+// WithCoreRuntimePlan supplies the startup-prepared release runtime selection
+// to every runner factory. Docker leaves this unset because its Linux runtime
+// artifacts are owned by the container preparation path.
+func WithCoreRuntimePlan(plan *core.RuntimePlan) PoolManagerOption {
+	return func(pm *PoolManager) { pm.coreRuntimePlan = plan }
 }
 
 // WithSnapshotLoader overrides the loader used for per-agent Snapshots. The
@@ -101,12 +121,12 @@ func WithCoreHooks(h []hooks.HookPlugin) PoolManagerOption {
 	return func(pm *PoolManager) { pm.coreHooks = h }
 }
 
-func WithPromptSectionsBuilder(b prompt.SectionsBuilder) PoolManagerOption {
+func WithPromptSectionsBuilder(b PromptSectionsBuilder) PoolManagerOption {
 	return func(pm *PoolManager) { pm.promptSectionsBuilder = b }
 }
 
-func WithSessionPluginViewBuilder(b SessionPluginViewBuilder) PoolManagerOption {
-	return func(pm *PoolManager) { pm.sessionPluginViewBuilder = b }
+func WithPluginContextBuilder(b PluginContextBuilder) PoolManagerOption {
+	return func(pm *PoolManager) { pm.pluginContextBuilder = b }
 }
 
 func WithBeforeRunBuilderPM(b BeforeRunBuilder) PoolManagerOption {
@@ -115,6 +135,10 @@ func WithBeforeRunBuilderPM(b BeforeRunBuilder) PoolManagerOption {
 
 func WithToolLifecyclePM(tl *coreagent.ToolLifecycle) PoolManagerOption {
 	return func(pm *PoolManager) { pm.toolLifecycle = tl }
+}
+
+func WithToolLifecycleBuilder(b ToolLifecycleBuilder) PoolManagerOption {
+	return func(pm *PoolManager) { pm.toolLifecycleBuilder = b }
 }
 
 func WithProviderStreamBuilder(b ProviderStreamBuilder) PoolManagerOption {
@@ -191,36 +215,38 @@ type PoolManager struct {
 	// started is set true when StartAll runs. The one-shot pre-start binds
 	// (Bind* below) refuse to run once started, while the dynamic reconfigure
 	// surface (ReloadPlugin*/SyncAgent/Invalidate*) stays available afterward.
-	started                  bool
-	idleTimeout              time.Duration
-	compaction               CompactionConfig
-	builtinTools             []BuiltinTool
-	toolMetaRegistry         *toolmeta.Registry
-	pluginToolsBuilder       PluginToolsBuilder
-	hookPlugins              []hooks.HookPlugin
-	coreHooks                []hooks.HookPlugin
-	pluginHooksBuilder       PluginHooksBuilder
-	promptSectionsBuilder    prompt.SectionsBuilder
-	sessionPluginViewBuilder SessionPluginViewBuilder
-	beforeRunBuilder         BeforeRunBuilder
-	toolLifecycle            *coreagent.ToolLifecycle
-	providerStreamBuilder    ProviderStreamBuilder
-	sandboxBackends          *sandbox.BackendRegistry
-	skillRevisionReader      skillstool.RuntimeReader
-	skillReadAuthz           skillstool.SkillReadAuthorizer
-	mcpToolProvider          MCPToolProvider
-	toolOverrideFetcher      ToolOverrideFetcher
-	vaultEnvLoader           sandbox.VaultEnvLoader
-	projectResolver          ProjectResolverFunc
-	tokenManager             *oauth.TokenManager
-	oauthRegistry            *oauth.ProviderRegistry
-	sessionImages            SessionImagePipeline
-	sessionAccess            SessionAccessService
-	sessionInbox             SessionInbox
-	groupRosterLoader        func(context.Context, string, string) prompt.GroupRoster
-	codeToolSurface          coreagent.CodeToolSurface
-	homeWorkspace            home.Workspace
-	log                      *slog.Logger
+	started               bool
+	idleTimeout           time.Duration
+	compaction            CompactionConfig
+	builtinTools          []BuiltinTool
+	toolMetaRegistry      *toolmeta.Registry
+	pluginToolsBuilder    PluginToolsBuilder
+	hookPlugins           []hooks.HookPlugin
+	coreHooks             []hooks.HookPlugin
+	pluginHooksBuilder    PluginHooksBuilder
+	promptSectionsBuilder PromptSectionsBuilder
+	pluginContextBuilder  PluginContextBuilder
+	beforeRunBuilder      BeforeRunBuilder
+	toolLifecycle         *coreagent.ToolLifecycle
+	toolLifecycleBuilder  ToolLifecycleBuilder
+	providerStreamBuilder ProviderStreamBuilder
+	sandboxBackends       *sandbox.BackendRegistry
+	skillRevisionReader   skillstool.RuntimeReader
+	skillReadAuthz        skillstool.SkillReadAuthorizer
+	mcpToolProvider       MCPToolProvider
+	toolOverrideFetcher   ToolOverrideFetcher
+	vaultEnvLoader        sandbox.VaultEnvLoader
+	projectResolver       ProjectResolverFunc
+	tokenManager          *oauth.TokenManager
+	oauthRegistry         *oauth.ProviderRegistry
+	sessionImages         SessionImagePipeline
+	sessionAccess         SessionAccessService
+	sessionInbox          SessionInbox
+	groupRosterLoader     func(context.Context, string, string) prompt.GroupRoster
+	codeToolSurface       coreagent.CodeToolSurface
+	coreRuntimePlan       *core.RuntimePlan
+	homeWorkspace         home.Workspace
+	log                   *slog.Logger
 }
 
 func NewPoolManager(store config.Store, mem memory.Provider, opts ...PoolManagerOption) *PoolManager {
@@ -329,14 +355,12 @@ func (pm *PoolManager) BindMCPToolProvider(p MCPToolProvider) error {
 	return nil
 }
 
-// HookPlugins returns a snapshot of the active hook plugins: the reloadable
-// user plugins plus the stable core hooks. Ordering is irrelevant — NewHookSet
-// sorts by Priority — so core hooks are simply appended.
+// HookPlugins returns the stable process-level hooks. User plugin hooks are
+// built per runner from that runner's authority-bound plugin snapshot.
 func (pm *PoolManager) HookPlugins() []hooks.HookPlugin {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	out := make([]hooks.HookPlugin, 0, len(pm.hookPlugins)+len(pm.coreHooks))
-	out = append(out, pm.hookPlugins...)
+	out := make([]hooks.HookPlugin, 0, len(pm.coreHooks))
 	out = append(out, pm.coreHooks...)
 	return out
 }
@@ -360,10 +384,6 @@ func (pm *PoolManager) StartAll(ctx context.Context) error {
 	}
 	pm.started = true
 	pm.mu.Unlock()
-
-	if pm.pluginHooksBuilder != nil {
-		pm.hookPlugins = pm.pluginHooksBuilder(ctx)
-	}
 
 	agents, err := pm.store.ListEnabledAgents(ctx)
 	if err != nil {
@@ -505,21 +525,22 @@ func (pm *PoolManager) promptScope(info session.Info) (promptUserID, groupID str
 	return info.UserID, ""
 }
 
-func (pm *PoolManager) promptSections(ctx context.Context, snap *config.Snapshot, info session.Info, projectSkills *skillstool.ProjectSnapshot) ([]pkgplugins.SystemPromptSection, error) {
-	pluginView := pkgplugins.SessionPluginView{}
-	if pm.sessionPluginViewBuilder != nil {
-		pluginView, _ = pm.sessionPluginViewBuilder(ctx)
-	}
+func (pm *PoolManager) promptSections(ctx context.Context, snap *config.Snapshot, info session.Info, projectSkills *skillstool.ProjectSnapshot, pluginContext PluginContext) ([]pkgplugins.SystemPromptSection, error) {
+	pluginView := pluginContext.SessionPluginView()
 	promptBuild := pkgplugins.SystemPromptContext{
 		UserID:              info.UserID,
 		AgentID:             info.AgentID,
-		RegisteredPluginIDs: append([]string(nil), pluginView.RegisteredPluginIDs...),
-		EnabledPluginIDs:    append([]string(nil), pluginView.EnabledPluginIDs...),
-		DisabledSkillRefs:   append([]string(nil), snap.DisabledSkillRefs...),
+		RegisteredPluginIDs: slices.Clone(pluginView.RegisteredPluginIDs),
+		EnabledPluginIDs:    slices.Clone(pluginView.ExposedPluginIDs),
+		DisabledSkillRefs:   slices.Clone(snap.DisabledSkillRefs),
 	}
 	var sections []pkgplugins.SystemPromptSection
 	if pm.promptSectionsBuilder != nil {
-		sections, _ = pm.promptSectionsBuilder(ctx, promptBuild)
+		var err error
+		sections, err = pm.promptSectionsBuilder(ctx, promptBuild, pluginContext.Snapshot())
+		if err != nil {
+			return nil, fmt.Errorf("build prompt sections: %w", err)
+		}
 	}
 	skillBuild := promptBuild
 	if info.GroupID != "" {
@@ -536,7 +557,7 @@ func (pm *PoolManager) promptSections(ctx context.Context, snap *config.Snapshot
 }
 
 func (pm *PoolManager) buildSnapshotPromptFunc(snap *config.Snapshot) agentruntime.SnapshotPromptFunc {
-	return func(ctx context.Context, info session.Info, ss memory.SessionSnapshot) (string, error) {
+	return func(ctx context.Context, info session.Info, ss memory.SessionSnapshot, pluginContext PluginContext) (string, error) {
 		// Keep an addressable copy so version zero remains an explicit snapshot.
 		version := ss.Version
 		promptUserID, groupID := pm.promptScope(info)
@@ -552,7 +573,7 @@ func (pm *PoolManager) buildSnapshotPromptFunc(snap *config.Snapshot) agentrunti
 			}
 			projectContext, projectSkills = projectSnapshot.Context, projectSnapshot.Skills
 		}
-		sections, err := pm.promptSections(ctx, snap, info, projectSkills)
+		sections, err := pm.promptSections(ctx, snap, info, projectSkills, pluginContext)
 		if err != nil {
 			return "", err
 		}
@@ -571,8 +592,8 @@ func (pm *PoolManager) buildSnapshotPromptFunc(snap *config.Snapshot) agentrunti
 	}
 }
 
-func (pm *PoolManager) runtimeBeforeRunFunc(snap *config.Snapshot) agentruntime.BeforeRunFunc {
-	return func(ctx context.Context, info session.Info, model, msgText, system string, history []ai.Message) (string, error) {
+func (pm *PoolManager) runtimeBeforeRunFunc(_ *config.Snapshot) agentruntime.BeforeRunFunc {
+	return func(ctx context.Context, info session.Info, model, msgText, system string, history []ai.Message, pluginContext PluginContext) (string, error) {
 		if pm.beforeRunBuilder == nil {
 			return system, nil
 		}
@@ -584,8 +605,8 @@ func (pm *PoolManager) runtimeBeforeRunFunc(snap *config.Snapshot) agentruntime.
 			Model:        model,
 			MessageText:  msgText,
 			SystemPrompt: system,
-			History:      append([]ai.Message(nil), history...),
-		})
+			History:      slices.Clone(history),
+		}, pluginContext.Snapshot())
 		if err != nil {
 			return "", err
 		}
@@ -659,65 +680,41 @@ func (pm *PoolManager) ReloadModelDefaults(ctx context.Context) error {
 	return nil
 }
 
-// ReloadPluginHooks rebuilds the hook plugin set and propagates to every service.
+// ReloadPluginHooks refreshes runner factories so future runners build hooks
+// from their own frozen plugin snapshots. Existing admitted runners retain the
+// hook generation captured at construction.
 func (pm *PoolManager) ReloadPluginHooks(ctx context.Context) error {
 	if pm.pluginHooksBuilder == nil {
 		return nil
 	}
-
-	hookPlugins := pm.pluginHooksBuilder(ctx)
-	if err := pm.lifecycle.lockShared(ctx); err != nil {
-		closeHookPlugins(hookPlugins)
-		return err
-	}
-
-	pm.mu.Lock()
-	if pm.closing || pm.closed {
-		pm.mu.Unlock()
-		pm.lifecycle.unlockShared()
-		closeHookPlugins(hookPlugins)
-		return errPoolManagerClosing
-	}
+	pm.mu.RLock()
 	ids := make([]string, 0, len(pm.services))
 	for id := range pm.services {
 		ids = append(ids, id)
 	}
+	pm.mu.RUnlock()
 	sort.Strings(ids)
-	services := make([]*Service, len(ids))
-	for i, id := range ids {
-		services[i] = pm.services[id]
-	}
-	pm.mu.Unlock()
-
-	locked := 0
-	for _, svc := range services {
-		if err := svc.admissionMu.Lock(ctx); err != nil {
-			for i := locked - 1; i >= 0; i-- {
-				services[i].admissionMu.Unlock()
-			}
-			pm.lifecycle.unlockShared()
-			closeHookPlugins(hookPlugins)
-			return err
+	if len(ids) == 0 {
+		// Keep the pre-start hook generation available for a manager that has no
+		// services yet. It is never exposed to a runner; once services exist,
+		// each runner receives hooks from its own snapshot.
+		hookPlugins, err := pm.pluginHooksBuilder(ctx, plugin.Snapshot{})
+		if err != nil {
+			return fmt.Errorf("build plugin hooks: %w", err)
 		}
-		locked++
+		pm.mu.Lock()
+		oldPlugins := pm.hookPlugins
+		pm.hookPlugins = hookPlugins
+		pm.mu.Unlock()
+		closeHookPlugins(oldPlugins)
+		return nil
 	}
-	pm.mu.Lock()
-	oldPlugins := pm.hookPlugins
-	pm.hookPlugins = hookPlugins
-	pm.mu.Unlock()
-	for _, svc := range services {
-		svc.Runtime.SetHooks(pm.HookPlugins)
+	for _, agentID := range ids {
+		if err := pm.rebuildRunnerFunc(ctx, agentID); err != nil {
+			pm.log.Error("failed to rebuild factory after plugin hook reload", "agent_id", agentID, "error", err)
+		}
 	}
-	for i := len(services) - 1; i >= 0; i-- {
-		services[i].admissionMu.Unlock()
-	}
-	pm.lifecycle.unlockShared()
-
-	// Active turns release lifecycle shared ownership after synchronous
-	// admission, so this gate stabilizes Service lifetime but does not provide
-	// hook-generation retirement. That pre-existing limitation remains explicit.
-	closeHookPlugins(oldPlugins)
-	pm.log.Info("plugin hooks reloaded", "hook_count", len(hookPlugins))
+	pm.log.Info("plugin hooks reloaded", "runner_count", len(ids))
 	return nil
 }
 
@@ -879,27 +876,30 @@ func (pm *PoolManager) buildRunnerFunc(_ context.Context, snap *config.Snapshot)
 
 	sandboxBackendFn := func(context.Context) string { return config.ActiveSandboxBackend() }
 	return newRunnerFunc(runnerBuilderConfig{
-		Snap:                     snap,
-		BuiltinTools:             builtinTools,
-		ToolMetaRegistry:         pm.toolMetaRegistry,
-		PluginToolsBuilder:       pm.pluginToolsBuilder,
-		ProviderStreamBuilder:    pm.providerStreamBuilder,
-		SandboxBackends:          pm.sandboxBackends,
-		PromptSectionsBuilder:    pm.promptSectionsBuilder,
-		SessionPluginViewBuilder: pm.sessionPluginViewBuilder,
-		SkillRevisionReader:      pm.skillRevisionReader,
-		SkillReadAuthorizer:      pm.skillReadAuthz,
-		MCPToolProvider:          pm.mcpToolProvider,
-		ToolOverrideFetcher:      pm.toolOverrideFetcher,
-		ToolLifecycle:            pm.toolLifecycle,
-		SandboxBackendFn:         sandboxBackendFn,
-		VaultEnvLoader:           pm.vaultEnvLoader,
-		TokenManager:             pm.tokenManager,
-		ProjectResolver:          pm.projectResolver,
-		SessionImages:            pm.sessionImages,
-		GroupRosterLoader:        pm.groupRosterLoader,
-		Home:                     pm.homeWorkspace,
-		CodeToolSurface:          pm.codeToolSurface,
+		Snap:                  snap,
+		BuiltinTools:          builtinTools,
+		ToolMetaRegistry:      pm.toolMetaRegistry,
+		PluginToolsBuilder:    pm.pluginToolsBuilder,
+		ProviderStreamBuilder: pm.providerStreamBuilder,
+		SandboxBackends:       pm.sandboxBackends,
+		PromptSectionsBuilder: pm.promptSectionsBuilder,
+		PluginContextBuilder:  pm.pluginContextBuilder,
+		PluginHooksBuilder:    pm.pluginHooksBuilder,
+		ToolLifecycleBuilder:  pm.toolLifecycleBuilder,
+		SkillRevisionReader:   pm.skillRevisionReader,
+		SkillReadAuthorizer:   pm.skillReadAuthz,
+		MCPToolProvider:       pm.mcpToolProvider,
+		ToolOverrideFetcher:   pm.toolOverrideFetcher,
+		ToolLifecycle:         pm.toolLifecycle,
+		SandboxBackendFn:      sandboxBackendFn,
+		VaultEnvLoader:        pm.vaultEnvLoader,
+		TokenManager:          pm.tokenManager,
+		ProjectResolver:       pm.projectResolver,
+		SessionImages:         pm.sessionImages,
+		GroupRosterLoader:     pm.groupRosterLoader,
+		Home:                  pm.homeWorkspace,
+		CodeToolSurface:       pm.codeToolSurface,
+		CoreRuntimePlan:       pm.coreRuntimePlan,
 	})
 }
 

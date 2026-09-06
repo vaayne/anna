@@ -349,7 +349,7 @@ func runServer(ctx context.Context, s *setupResult, loginConfig oidc.LoginConfig
 	var coordOpts []channel.CoordinatorOption
 	var vaultRecipient *age.X25519Recipient
 	coordOpts = append(coordOpts, channel.WithCoordinatorAuth(as, agentAccess, linkCodes))
-	coordOpts = append(coordOpts, channel.WithGuestPolicyDecoder(s.pluginHost.GuestPolicyResolver))
+	coordOpts = append(coordOpts, channel.WithGuestPolicyDecoder(s.pluginHost.GuestPolicyResolver), channel.WithSnapshotResolver(s.pluginService.ResolveSnapshot), channel.WithListenerCap(s.pluginService.AdministrativeCap))
 	coordOpts = append(coordOpts, channel.WithRootOpener(s.workspaceManager))
 	if s.vaultSvc != nil {
 		vaultRecipient = s.vaultSvc.MasterRecipient()
@@ -498,6 +498,7 @@ func runServer(ctx context.Context, s *setupResult, loginConfig oidc.LoginConfig
 		LinkCodes:            linkCodes,
 		PoolManager:          s.poolManager,
 		PluginHost:           s.pluginHost,
+		PluginService:        s.pluginService,
 		WeixinRegistrar:      newWeixinRegistrar(),
 		BuiltinTools:         s.builtinTools,
 		ToolMeta:             s.toolMeta,
@@ -712,7 +713,10 @@ func runServer(ctx context.Context, s *setupResult, loginConfig oidc.LoginConfig
 	// Helm enforces one replica with a Recreate rollout, so managed channel
 	// pollers start unconditionally after their dependencies are wired. Drain-time
 	// Quiesce stops new polling; the final Stop remains after River drains.
-	applyManagedChannelPlugins(ingressCtx, s.pluginHost)
+	if _, err := applyManagedChannelPlugins(ingressCtx, s.pluginHost); err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("start managed channel runtimes: %w", err)
+	}
 	// HTTP serve — the final ingress source to come up.
 	g.Go(func() error { return normalizeServeErr(httpSrv.Serve(ln)) })
 

@@ -106,3 +106,49 @@ func TestVaultAccessOwnerAdminAndForeign(t *testing.T) {
 		t.Fatalf("admin system Get = %q, %v; want s", got, err)
 	}
 }
+
+func TestVaultAccessHidesManagedMCPOAuthEntries(t *testing.T) {
+	svc, _, ownerID := vaultPEP(t)
+	ctx := context.Background()
+	managedNames := []string{
+		"MCP_OAUTH_0198F9A4_1B2C_7DEF_8123_456789ABCDEF",
+		"MCP_OAUTH_CLIENT_0198F9A4_1B2C_7DEF_8123_456789ABCDEF",
+	}
+	for _, name := range managedNames {
+		if err := svc.Set(ctx, ownerID, name, "managed-value"); err != nil {
+			t.Fatalf("trusted Set %q: %v", name, err)
+		}
+	}
+	if err := svc.Set(ctx, ownerID, "VISIBLE_SECRET", "visible-value"); err != nil {
+		t.Fatalf("trusted Set visible: %v", err)
+	}
+
+	access, err := svc.Begin(ctx, userAuthority(t, ownerID))
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	entries, err := access.ListScoped(ctx, vault.ScopeUser, "")
+	if err != nil {
+		t.Fatalf("ListScoped: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "VISIBLE_SECRET" {
+		t.Fatalf("ListScoped = %+v, managed names must be hidden", entries)
+	}
+	for _, name := range managedNames {
+		if _, err := access.GetScoped(ctx, vault.ScopeUser, "", name); !errors.Is(err, authz.ErrForbidden) {
+			t.Fatalf("GetScoped(%q) = %v, want forbidden", name, err)
+		}
+		if _, err := access.GetScopedMeta(ctx, vault.ScopeUser, "", name); !errors.Is(err, authz.ErrForbidden) {
+			t.Fatalf("GetScopedMeta(%q) = %v, want forbidden", name, err)
+		}
+		if err := access.SetScoped(ctx, vault.ScopeUser, "", name, "user-value", vault.SetOptions{}); !errors.Is(err, authz.ErrForbidden) {
+			t.Fatalf("SetScoped(%q) = %v, want forbidden", name, err)
+		}
+		if err := access.DeleteScoped(ctx, vault.ScopeUser, "", name); !errors.Is(err, authz.ErrForbidden) {
+			t.Fatalf("DeleteScoped(%q) = %v, want forbidden", name, err)
+		}
+		if got, err := svc.Get(ctx, ownerID, name); err != nil || got != "managed-value" {
+			t.Fatalf("trusted Get(%q) = %q, %v; raw trusted access must remain available", name, got, err)
+		}
+	}
+}

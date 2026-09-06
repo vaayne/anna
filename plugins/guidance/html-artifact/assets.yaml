@@ -1,0 +1,5 @@
+assets:
+  - name: html-artifact
+    source: skills/html-artifact
+    logical_root: core/html-artifact
+    owner_plugin_id: skill/html-artifact

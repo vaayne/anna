@@ -1,0 +1,10 @@
+id: tool/x
+kind: tool
+name: x
+display_name: X (Twitter)
+description: X API integration with OAuth 2.0-backed session auth.
+enabled: true
+oauth_provider: x
+session_env:
+  - env_var: X_ACCESS_TOKEN
+    source: oauth.access_token

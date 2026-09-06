@@ -77,7 +77,7 @@ internal/
     embedding/         Embedding providers, indexing, storage
   skill/               Managed Skill authority, exact revisions, search, and loading
     access/            Who may see or change a skill
-    policy/            Per-agent enabled-builtin-skill policy
+    policy/            Per-agent managed skill policy
   library/             Document library: raw storage, derivation, retrieval
     recally/           Read-later and feed backend over the same storage
   db/                  PostgreSQL (pgx/v5), goose migrations, sqlc queries, embedded runtime
@@ -219,7 +219,7 @@ The core local-workspace tools run through a Docker sandbox backend. `bash` exec
 
 The sandbox system provides process, filesystem, and network isolation for agent tool execution. All core tools share the same `sandbox.Session` per runner: `bash` uses `Session.Exec`; `view_image` uses `Session.Files`. Public policy contains only process-visible roots; each backend owns the physical mount mapping and rooted file capabilities. Concrete backends live in `plugins/sandbox/`, export public sandbox interfaces, and are adapted into a validated registry by `cmd/stellad`; `internal/agent/sandbox` selects only from that injected registry. Runner startup fails closed when the selected backend is unavailable. See [Sandbox Backend Abstraction](/docs/development/sandbox) for the full Session interface, execution mediation, fail-closed behavior, and exception boundaries.
 
-Sandbox tools (`bash`, `view_image`) live in `internal/agent/sandbox/`; public-web research is a skill, not a tool package: `resources/skills/system/web/` ships the `web` skill (`web.ts` search/fetch plus site scripts) and `cmd/stellad` registers the builtin tools in the catalog. Declarative CLI integrations use the built-in manifest. See [plugin-system](/docs/development/plugin-system) for the extension boundaries.
+Sandbox tools (`bash`, `view_image`) live in `internal/agent/sandbox/`; public-web research is a skill, not a tool package: `plugins/tools/bun/skills/web/` ships the `web` skill (`web.ts` search/fetch plus site scripts) and `cmd/stellad` registers the builtin tools in the catalog. Declarative CLI integrations use the built-in manifest. See [plugin-system](/docs/development/plugin-system) for the extension boundaries.
 
 ### Session Tool
 
@@ -236,13 +236,13 @@ Agent sends first persist an input row, then enter a process-local per-Session F
 
 ### Builtin Shared Tools
 
-| Tool              | Condition                         | Description                                                                        |
-| ----------------- | --------------------------------- | ---------------------------------------------------------------------------------- |
-| `memory`          | Always                            | Unified search and read across conversation and durable memory                     |
-| `session_*`       | One-to-one agent sessions         | Session listing, bounded inspection, creation, and synchronous sends               |
-| `skill_*`         | Always                            | Search installed Skills and load one exact selected revision                       |
-| `scheduler_job_*` | Always                            | Schedule tasks: one tool per action (`scheduler_job_create`, `_list`, `_pause`, …) |
-| `notify`          | Gateway mode + channel configured | Send notifications via dispatcher                                                  |
+| Tool               | Condition                         | Description                                                                         |
+| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------- |
+| `memory`           | Always                            | Unified search and read across conversation and durable memory                      |
+| `session_*`        | One-to-one agent sessions         | Session listing, bounded inspection, creation, and synchronous sends                |
+| `skill_*`          | Always                            | Search installed Skills and load one exact selected revision                        |
+| `scheduler__job_*` | Scheduler plugin enabled          | Schedule tasks: one tool per action (`scheduler__job_create`, `_list`, `_pause`, …) |
+| `notify`           | Gateway mode + channel configured | Send notifications via dispatcher                                                   |
 
 Memory is two tools over one shared `memory.Recall`: `memory_search` federates snapshot-visible LCM messages/summaries with durable facts, profile, soul, and constraints; `memory_read` resolves an opaque result ref or a well-known identity/constraint/history ref. Dynamic reads reauthorize through Session access, and summary reads preserve LCM describe/expand through bounded child refs. Transcript statistics, whole-message reads, and durable profile, soul, or constraint management are not tools at all — they belong to the internal, Reflect, or manual surfaces that own their authorization.
 

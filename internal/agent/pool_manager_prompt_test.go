@@ -11,6 +11,7 @@ import (
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
 
@@ -31,11 +32,11 @@ func TestPoolSnapshotPromptPassesLogicalIdentityWithoutPhysicalPaths(t *testing.
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var got pkgplugins.SystemPromptContext
-			pm := &PoolManager{homeWorkspace: testWorkspaceViewer{root: stellaHome}, skillRevisionReader: emptySkillRuntime{}, skillReadAuthz: allowSkillReads{}, promptSectionsBuilder: func(_ context.Context, build pkgplugins.SystemPromptContext) ([]pkgplugins.SystemPromptSection, error) {
+			pm := &PoolManager{homeWorkspace: testWorkspaceViewer{root: stellaHome}, skillRevisionReader: emptySkillRuntime{}, skillReadAuthz: allowSkillReads{}, promptSectionsBuilder: func(_ context.Context, build pkgplugins.SystemPromptContext, _ plugin.Snapshot) ([]pkgplugins.SystemPromptSection, error) {
 				got = build
 				return nil, nil
 			}}
-			if _, err := pm.buildSnapshotPromptFunc(snap)(context.Background(), tt.info, memory.SessionSnapshot{}); err != nil {
+			if _, err := pm.buildSnapshotPromptFunc(snap)(context.Background(), tt.info, memory.SessionSnapshot{}, PluginContext{}); err != nil {
 				t.Fatal(err)
 			}
 			if got.UserID != tt.info.UserID || got.AgentID != tt.info.AgentID {
@@ -47,7 +48,7 @@ func TestPoolSnapshotPromptPassesLogicalIdentityWithoutPhysicalPaths(t *testing.
 
 func TestPoolSnapshotPromptDoesNotResolvePhysicalWorkspaceWithoutProject(t *testing.T) {
 	pm := &PoolManager{homeWorkspace: failingWorkspaceViewer{err: os.ErrPermission}, skillRevisionReader: emptySkillRuntime{}, skillReadAuthz: allowSkillReads{}}
-	if _, err := pm.buildSnapshotPromptFunc(&config.Snapshot{AgentID: "a"})(context.Background(), session.Info{UserID: "u", AgentID: "a"}, memory.SessionSnapshot{}); err != nil {
+	if _, err := pm.buildSnapshotPromptFunc(&config.Snapshot{AgentID: "a"})(context.Background(), session.Info{UserID: "u", AgentID: "a"}, memory.SessionSnapshot{}, PluginContext{}); err != nil {
 		t.Fatalf("snapshot prompt consulted physical workspace: %v", err)
 	}
 }
@@ -80,7 +81,7 @@ func TestPoolSnapshotPromptUsesAuthorizedRootToLeafProjectContextWithoutHostPath
 			return ProjectDescriptor{ID: projectID, UserID: userID, AgentID: agentID, Path: "projects/app"}, nil
 		},
 	}
-	got, err := pm.buildSnapshotPromptFunc(&config.Snapshot{AgentID: "a1"})(context.Background(), session.Info{UserID: "u1", AgentID: "a1", ProjectID: "p1"}, memory.SessionSnapshot{})
+	got, err := pm.buildSnapshotPromptFunc(&config.Snapshot{AgentID: "a1"})(context.Background(), session.Info{UserID: "u1", AgentID: "a1", ProjectID: "p1"}, memory.SessionSnapshot{}, PluginContext{})
 	if err != nil {
 		t.Fatal(err)
 	}

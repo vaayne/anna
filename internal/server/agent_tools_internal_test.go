@@ -3,8 +3,18 @@ package server
 import (
 	"testing"
 
+	"github.com/CherryHQ/stella/internal/mcp"
 	"github.com/CherryHQ/stella/pkg/toolmeta"
 )
+
+func TestMCPToolNameRequiresPluginNamespace(t *testing.T) {
+	if got, ok := mcpToolName(mcp.Registration{Namespace: "settings_server"}, mcp.CatalogTool{Name: "list"}); !ok || got != "settings_server__list" {
+		t.Fatalf("mcpToolName with namespace = %q, %v; want settings_server__list, true", got, ok)
+	}
+	if got, ok := mcpToolName(mcp.Registration{Name: "settings_server"}, mcp.CatalogTool{Name: "list"}); ok || got != "" {
+		t.Fatalf("mcpToolName without namespace = %q, %v; want empty, false", got, ok)
+	}
+}
 
 func TestToolFamilyUsesRegistryBeforeStableFallbacks(t *testing.T) {
 	s := &Server{toolMeta: toolmeta.NewRegistry(

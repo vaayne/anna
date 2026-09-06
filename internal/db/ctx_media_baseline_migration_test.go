@@ -21,14 +21,8 @@ const (
 // marker is a rendering failure, and a media object nobody ever described has no
 // baseline to inherit.
 func TestCtxMediaBaselineBackfillsBothLegacyHomes(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, mediaBaselineBeforeMigration); err != nil {
-		t.Fatalf("restore pre-baseline schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, mediaBaselineBeforeMigration)
+	ctx := t.Context()
 
 	userID := seedMediaUser(t, db)
 	groupID := seedMediaGroup(t, db)

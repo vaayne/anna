@@ -19,7 +19,7 @@ type ActionTool = toolmeta.ActionTool
 // ActionTools lists every generated tool in a stable order.
 func ActionTools() []ActionTool {
 	return []ActionTool{
-		{Name: "recally_article_get", Family: "recally", Action: "article_get", InputSchemaJSON: `{
+		{Name: "recally__article_get", PluginID: "system/recally", Namespace: "recally", LocalName: "article_get", Family: "recally", Action: "article_get", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -31,7 +31,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_article_list", Family: "recally", Action: "article_list", InputSchemaJSON: `{
+		{Name: "recally__article_list", PluginID: "system/recally", Namespace: "recally", LocalName: "article_list", Family: "recally", Action: "article_list", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "canonical_url": {
@@ -74,7 +74,7 @@ func ActionTools() []ActionTool {
   },
   "type": "object"
 }`},
-		{Name: "recally_article_save", Family: "recally", Action: "article_save", InputSchemaJSON: `{
+		{Name: "recally__article_save", PluginID: "system/recally", Namespace: "recally", LocalName: "article_save", Family: "recally", Action: "article_save", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "articles": {
@@ -149,12 +149,12 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_digest_get", Family: "recally", Action: "digest_get", InputSchemaJSON: `{
+		{Name: "recally__digest_get", PluginID: "system/recally", Namespace: "recally", LocalName: "digest_get", Family: "recally", Action: "digest_get", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {},
   "type": "object"
 }`},
-		{Name: "recally_digest_save", Family: "recally", Action: "digest_save", InputSchemaJSON: `{
+		{Name: "recally__digest_save", PluginID: "system/recally", Namespace: "recally", LocalName: "digest_save", Family: "recally", Action: "digest_save", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "date": {
@@ -170,7 +170,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_entry_add", Family: "recally", Action: "entry_add", InputSchemaJSON: `{
+		{Name: "recally__entry_add", PluginID: "system/recally", Namespace: "recally", LocalName: "entry_add", Family: "recally", Action: "entry_add", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "feed_id": {
@@ -193,7 +193,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_entry_list", Family: "recally", Action: "entry_list", InputSchemaJSON: `{
+		{Name: "recally__entry_list", PluginID: "system/recally", Namespace: "recally", LocalName: "entry_list", Family: "recally", Action: "entry_list", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "feed_id": {
@@ -221,7 +221,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_entry_update", Family: "recally", Action: "entry_update", InputSchemaJSON: `{
+		{Name: "recally__entry_update", PluginID: "system/recally", Namespace: "recally", LocalName: "entry_update", Family: "recally", Action: "entry_update", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "article_id": {
@@ -255,7 +255,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_feed_add", Family: "recally", Action: "feed_add", InputSchemaJSON: `{
+		{Name: "recally__feed_add", PluginID: "system/recally", Namespace: "recally", LocalName: "feed_add", Family: "recally", Action: "feed_add", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "kind": {
@@ -281,7 +281,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "recally_feed_list", Family: "recally", Action: "feed_list", InputSchemaJSON: `{
+		{Name: "recally__feed_list", PluginID: "system/recally", Namespace: "recally", LocalName: "feed_list", Family: "recally", Action: "feed_list", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "page_size": {
@@ -300,7 +300,7 @@ func ActionTools() []ActionTool {
   },
   "type": "object"
 }`},
-		{Name: "recally_feed_poll", Family: "recally", Action: "feed_poll", InputSchemaJSON: `{
+		{Name: "recally__feed_poll", PluginID: "system/recally", Namespace: "recally", LocalName: "feed_poll", Family: "recally", Action: "feed_poll", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -315,7 +315,7 @@ func ActionTools() []ActionTool {
   },
   "type": "object"
 }`},
-		{Name: "recally_feed_remove", Family: "recally", Action: "feed_remove", InputSchemaJSON: `{
+		{Name: "recally__feed_remove", PluginID: "system/recally", Namespace: "recally", LocalName: "feed_remove", Family: "recally", Action: "feed_remove", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {

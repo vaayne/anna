@@ -510,6 +510,10 @@ type SchedulerChatRequest struct {
 	Message   MessageContent
 	Model     string
 	Authority authz.Authority
+	// BeforeStart is the final scheduler capability fence. It runs while the
+	// service holds its lifecycle and per-Agent admission locks, after Runtime
+	// registers the active turn but before any turn side effects.
+	BeforeStart func() error
 }
 
 // ChatForScheduler resolves or creates a scheduler session using a trusted
@@ -545,7 +549,7 @@ func (s *Service) ChatForScheduler(ctx context.Context, req SchedulerChatRequest
 		agentruntime.WithExcludedTools(settingspolicy.ToolNames()...),
 		agentruntime.WithInputActor(messageActor(req.Authority, memory.CurrentSpeaker{}, memory.SessionIDFromContext(ctx))),
 	)
-	stream, err := s.admit(ctx, info, req.Message, opts...)
+	stream, err := s.admitControlled(ctx, info, req.Message, req.BeforeStart, opts...)
 	if err != nil {
 		return errorEvents(err)
 	}

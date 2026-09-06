@@ -311,8 +311,7 @@ func (s *Server) UpdateChannel(w http.ResponseWriter, r *http.Request, id string
 	existing, existingErr := access.GetChannel(ctx, id)
 	hasExisting := existingErr == nil
 	// The platform a channel speaks is fixed at creation. Retyping it would carry
-	// the old row's credentials into a different platform's validation and, for
-	// the singleton platforms, past the id rules the create path enforces.
+	// the old row's credentials into a different platform's validation.
 	if requested := requestChannelType(req); hasExisting && requested != "" && requested != effectiveChannelType(existing) {
 		writeError(w, http.StatusBadRequest, "channel type cannot be changed")
 		return
@@ -358,13 +357,6 @@ func (s *Server) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		id = generateChannelID(channelType)
 	}
-	if channelType == pkgchannel.PlatformWeixin {
-		if err := validateWeixinChannelID(id); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
 	cfgMap, err := parseChannelConfig(requestConfig(req, config.Channel{}, false))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid config JSON")
@@ -393,14 +385,10 @@ func (s *Server) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusCreated, channelToView(saved))
 }
 
-// generateChannelID mints the id for a create that did not pin one. WeChat is
-// singleton-only (one iLink account cannot back multiple bots), so its id is the
-// fixed platform id; every other platform gets the same uuidv7 the rest of the
-// deployment's rows use.
+// generateChannelID mints the id for a create that did not pin one. Every
+// platform, including Weixin, gets an independent UUID instance ID.
 func generateChannelID(channelType string) string {
-	if channelType == pkgchannel.PlatformWeixin {
-		return pkgchannel.PlatformWeixin
-	}
+	_ = channelType
 	return uuid.Must(uuid.NewV7()).String()
 }
 

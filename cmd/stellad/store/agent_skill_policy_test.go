@@ -94,7 +94,7 @@ func TestAgentSkillPolicyMutationsSerializeAndRollback(t *testing.T) {
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
-	for _, ref := range []string{"builtin:alpha", "system:beta"} {
+	for _, ref := range []string{"system:alpha", "system:beta"} {
 		wg.Go(func() {
 			<-start
 			_, err := s.SetAgentSkillPolicy(ctx, "policy-concurrent", ref, false)
@@ -113,7 +113,7 @@ func TestAgentSkillPolicyMutationsSerializeAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAgentSkillPolicy: %v", err)
 	}
-	if got, want := policy.Disabled, []string{"builtin:alpha", "system:beta"}; !reflect.DeepEqual(got, want) {
+	if got, want := policy.Disabled, []string{"system:alpha", "system:beta"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("concurrent disabled = %#v, want %#v", got, want)
 	}
 
@@ -130,12 +130,12 @@ func TestAgentSkillPolicyMutationsSerializeAndRollback(t *testing.T) {
 	}
 	sameRefErrs := make(chan error, 2)
 	go func() {
-		_, err := s.SetAgentSkillPolicy(ctx, "policy-concurrent", "builtin:alpha", true)
+		_, err := s.SetAgentSkillPolicy(ctx, "policy-concurrent", "system:alpha", true)
 		sameRefErrs <- err
 	}()
 	waitForPolicyRowLocks(t, db, 1)
 	go func() {
-		_, err := s.SetAgentSkillPolicy(ctx, "policy-concurrent", "builtin:alpha", false)
+		_, err := s.SetAgentSkillPolicy(ctx, "policy-concurrent", "system:alpha", false)
 		sameRefErrs <- err
 	}()
 	waitForPolicyRowLocks(t, db, 2)
@@ -148,7 +148,7 @@ func TestAgentSkillPolicyMutationsSerializeAndRollback(t *testing.T) {
 		}
 	}
 	policy, err = s.ReadAgentSkillPolicy(ctx, "policy-concurrent")
-	if err != nil || !policy.DisabledRef("builtin:alpha") {
+	if err != nil || !policy.DisabledRef("system:alpha") {
 		t.Fatalf("same-ref last committed update = %#v, %v; want disabled", policy, err)
 	}
 

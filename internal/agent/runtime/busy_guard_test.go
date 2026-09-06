@@ -25,11 +25,12 @@ func (r *blockingRunner) Chat(_ context.Context, _ []ai.Message, _ MessageConten
 	}()
 	return out
 }
-func (r *blockingRunner) Alive() bool             { return true }
-func (r *blockingRunner) Busy() bool              { return false }
-func (r *blockingRunner) LastActivity() time.Time { return time.Now() }
-func (r *blockingRunner) SystemPrompt() string    { return "" }
-func (r *blockingRunner) Close() error            { return nil }
+func (r *blockingRunner) Alive() bool                  { return true }
+func (r *blockingRunner) Busy() bool                   { return false }
+func (r *blockingRunner) LastActivity() time.Time      { return time.Now() }
+func (r *blockingRunner) SystemPrompt() string         { return "" }
+func (r *blockingRunner) PluginContext() PluginContext { return PluginContext{} }
+func (r *blockingRunner) Close() error                 { return nil }
 
 func newTestRuntime(gate chan struct{}) *Runtime {
 	mem := &recordingMemory{}
@@ -232,11 +233,12 @@ func (r *contextRunner) Chat(ctx context.Context, _ []ai.Message, _ MessageConte
 	}()
 	return out
 }
-func (r *contextRunner) Alive() bool             { return true }
-func (r *contextRunner) Busy() bool              { return false }
-func (r *contextRunner) LastActivity() time.Time { return time.Now() }
-func (r *contextRunner) SystemPrompt() string    { return "" }
-func (r *contextRunner) Close() error            { return nil }
+func (r *contextRunner) Alive() bool                  { return true }
+func (r *contextRunner) Busy() bool                   { return false }
+func (r *contextRunner) LastActivity() time.Time      { return time.Now() }
+func (r *contextRunner) SystemPrompt() string         { return "" }
+func (r *contextRunner) PluginContext() PluginContext { return PluginContext{} }
+func (r *contextRunner) Close() error                 { return nil }
 
 func TestStopSessionCancelsOnlyExplicitly(t *testing.T) {
 	mem := &activityRecordingMemory{}

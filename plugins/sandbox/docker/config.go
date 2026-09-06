@@ -73,11 +73,11 @@ type Config struct {
 	// auto-detected by NewFactory as stellad's address on SandboxNetwork.
 	ServerURL string
 
-	// UserToolBinaries are manifest-declared, user-configured CLIs that are not
-	// baked into the versioned sandbox image. They are installed in a Linux
-	// helper container and exposed to sessions through a Docker-managed tool
-	// cache, never through host $STELLA_HOME/bin.
-	UserToolBinaries []ToolBinary
+	// SelectionToolBinaries are all authorized snapshot binaries, across system,
+	// system-agent, user, and user-agent scopes. The Linux helper prepares them
+	// from the resolved image, never from the host filesystem. Writable per-user
+	// trees remain ordered ahead of this immutable selection in PATH.
+	SelectionToolBinaries []ToolBinary
 }
 
 // TranslateToDaemonPath rewrites a stella-process-view absolute path into the

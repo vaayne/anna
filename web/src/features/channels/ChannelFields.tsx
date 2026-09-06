@@ -307,7 +307,7 @@ export interface NormalizedChannel extends ChannelForm {
   label?: string;
   agent_id: string;
   agent_name?: string;
-  enabled: boolean;
+  is_active: boolean;
 }
 
 /**
@@ -854,7 +854,7 @@ export function ChannelConfigFields({
 }
 
 /**
- * Everything an existing channel is edited by — name, enabled, credentials.
+ * Everything an existing channel is edited by — name, active state, credentials.
  * Shared so the settings inventory (`ChannelsPage`) and the agent profile's
  * channels tab ask for a channel in exactly the same words; neither owns the
  * binding, which is the agent page's dedicated bind endpoint.
@@ -888,13 +888,13 @@ export function ChannelFields({
       </Field>
 
       <Field>
-        <FieldLabel>{t("channels.enabled")}</FieldLabel>
+        <FieldLabel>{t("channels.active")}</FieldLabel>
         <Switch
-          checked={Boolean(channel.enabled)}
-          aria-label={t("channels.enabled")}
-          onCheckedChange={(checked) => onChange("enabled", checked)}
+          checked={Boolean(channel.is_active)}
+          aria-label={t("channels.active")}
+          onCheckedChange={(checked) => onChange("is_active", checked)}
         />
-        <FieldDescription>{t("channels.enabledDesc")}</FieldDescription>
+        <FieldDescription>{t("channels.activeDesc")}</FieldDescription>
       </Field>
 
       {hasConfigFields && <ChannelConfigFields channel={channel} onChange={onChange} />}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	agentsandbox "github.com/CherryHQ/stella/internal/agent/sandbox"
@@ -30,11 +31,21 @@ func setupSandboxBackends() (*agentsandbox.BackendRegistry, error) {
 			if err != nil {
 				return nil, fmt.Errorf("load builtin skill bundle: %w", err)
 			}
-			factory, err := dockerbackend.NewFactoryWithMountSources(dockerbackend.Config{
+			backendConfig := dockerbackend.Config{
 				Image:                  sandboxDockerImage(),
 				StellaHome:             request.Paths.StellaHome,
 				ExpectedBundleRevision: resourceRegistry.BundleRevision(),
-			}, request.MountSources)
+			}
+			// Every resolved selection is prepared in the isolated Linux helper.
+			// User-scoped installers never execute on the host.
+			for _, spec := range request.BinarySpecs {
+				backendConfig.SelectionToolBinaries = append(backendConfig.SelectionToolBinaries, dockerbackend.ToolBinary{
+					PluginID: spec.PluginID, ConfigID: spec.ConfigID, Scope: spec.Scope, Revision: spec.Revision,
+					Name: spec.Name, Tool: spec.Tool, Version: spec.Version, Options: maps.Clone(spec.Options),
+				})
+			}
+
+			factory, err := dockerbackend.NewFactoryWithMountSources(backendConfig, request.MountSources)
 			if err != nil {
 				return nil, err
 			}

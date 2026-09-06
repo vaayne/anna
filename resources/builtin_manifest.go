@@ -35,16 +35,22 @@ type BuiltinSkillFile struct {
 // BuiltinSkillDescriptor is the release-owned identity and complete file list
 // for one builtin skill. Metadata retains nested frontmatter fields verbatim.
 type BuiltinSkillDescriptor struct {
-	Ref                    string             `json:"ref"`
-	APIID                  string             `json:"api_id"`
-	Name                   string             `json:"name"`
-	Description            string             `json:"description"`
-	Tags                   []string           `json:"tags"`
-	DisableModelInvocation bool               `json:"disable_model_invocation"`
-	Metadata               map[string]any     `json:"metadata"`
-	Root                   string             `json:"root"`
-	Files                  []BuiltinSkillFile `json:"files"`
-	Digest                 string             `json:"digest"`
+	Ref                    string         `json:"ref"`
+	APIID                  string         `json:"api_id"`
+	Name                   string         `json:"name"`
+	Description            string         `json:"description"`
+	Tags                   []string       `json:"tags"`
+	DisableModelInvocation bool           `json:"disable_model_invocation"`
+	Metadata               map[string]any `json:"metadata"`
+	Root                   string         `json:"root"`
+	// SourceRoot is the explicit physical asset path inside the plugin bundle.
+	// Root remains the stable path used by installed bundles and references.
+	SourceRoot string             `json:"source_root,omitempty"`
+	Files      []BuiltinSkillFile `json:"files"`
+	Digest     string             `json:"digest"`
+	// OwnerPluginID is an explicit trusted release declaration. It is empty only
+	// for the mandatory core allowlist and never comes from skill frontmatter.
+	OwnerPluginID string `json:"owner_plugin_id,omitempty"`
 }
 
 // BuiltinManifest is the generated, deterministic description of every
@@ -54,8 +60,8 @@ type BuiltinManifest struct {
 	Skills   []BuiltinSkillDescriptor `json:"skills"`
 }
 
-// GenerateBuiltinManifest validates sourceRoot and returns its deterministic
-// manifest. sourceRoot is the on-disk resources/skills directory, not a user path.
+// GenerateBuiltinManifest validates a legacy fixture root and returns its
+// deterministic manifest. Release generation uses GenerateBuiltinManifestFromAssets.
 func GenerateBuiltinManifest(sourceRoot string) (BuiltinManifest, error) {
 	info, err := os.Lstat(sourceRoot)
 	if err != nil {
@@ -86,15 +92,115 @@ func GenerateBuiltinManifest(sourceRoot string) (BuiltinManifest, error) {
 		seen[skill.Name] = struct{}{}
 	}
 
+	if err := finalizeBuiltinManifest(&manifest); err != nil {
+		return BuiltinManifest{}, err
+	}
+	return manifest, nil
+}
+
+// BuiltinSkillSource maps one explicit plugin-owned source tree to its stable
+// bundle path. It is supplied by plugin packages, so ownership is not inferred
+// from directory depth or duplicated in the resource generator.
+type BuiltinSkillSource struct {
+	Name          string
+	SourceRoot    string
+	LogicalRoot   string
+	OwnerPluginID string
+}
+
+// GenerateBuiltinManifestFromAssets builds the release manifest from explicit
+// plugin asset declarations. sourceRoot is the repository root.
+func GenerateBuiltinManifestFromAssets(sourceRoot string, assets []BuiltinSkillSource) (BuiltinManifest, error) {
+	if sourceRoot == "" || len(assets) == 0 {
+		return BuiltinManifest{}, fmt.Errorf("builtin asset declarations are empty")
+	}
+	pluginRoot := filepath.Join(sourceRoot, "plugins")
+	manifest := BuiltinManifest{Skills: make([]BuiltinSkillDescriptor, 0, len(assets))}
+	seenNames := make(map[string]struct{}, len(assets))
+	seenRoots := make(map[string]struct{}, len(assets))
+	seenSources := make(map[string]struct{}, len(assets))
+	var totalFiles int
+	var totalBytes int64
+	for _, asset := range assets {
+		if !canonicalBuiltinPath(asset.Name) || strings.Contains(asset.Name, "/") || !canonicalBuiltinPath(asset.SourceRoot) || !canonicalBuiltinPath(asset.LogicalRoot) {
+			return BuiltinManifest{}, fmt.Errorf("invalid builtin asset declaration %q", asset.Name)
+		}
+		if _, ok := seenNames[asset.Name]; ok {
+			return BuiltinManifest{}, fmt.Errorf("duplicate builtin skill name %q", asset.Name)
+		}
+		if _, ok := seenRoots[asset.LogicalRoot]; ok {
+			return BuiltinManifest{}, fmt.Errorf("duplicate builtin skill root %q", asset.LogicalRoot)
+		}
+		if _, ok := seenSources[asset.SourceRoot]; ok {
+			return BuiltinManifest{}, fmt.Errorf("duplicate builtin skill source root %q", asset.SourceRoot)
+		}
+		if err := validateExplicitSkillOwner(asset.LogicalRoot, asset.OwnerPluginID); err != nil {
+			return BuiltinManifest{}, err
+		}
+		sourcePath := filepath.Join(pluginRoot, filepath.FromSlash(asset.SourceRoot))
+		info, err := os.Lstat(sourcePath)
+		if err != nil {
+			return BuiltinManifest{}, fmt.Errorf("stat builtin skill source %q: %w", asset.SourceRoot, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return BuiltinManifest{}, fmt.Errorf("builtin skill source %q must be a non-symlink directory", asset.SourceRoot)
+		}
+		skill, files, bytes, err := scanBuiltinSkill(pluginRoot, asset.SourceRoot)
+		if err != nil {
+			return BuiltinManifest{}, err
+		}
+		if skill.Name != asset.Name {
+			return BuiltinManifest{}, fmt.Errorf("builtin asset source %q has skill name %q, want %q", asset.SourceRoot, skill.Name, asset.Name)
+		}
+		skill.Root = asset.LogicalRoot
+		skill.SourceRoot = asset.SourceRoot
+		skill.OwnerPluginID = asset.OwnerPluginID
+		manifest.Skills = append(manifest.Skills, skill)
+		totalFiles += files
+		totalBytes += bytes
+	}
+	if len(manifest.Skills) > maxBuiltinSkills || totalFiles > maxBuiltinFiles || totalBytes > maxBuiltinBytes {
+		return BuiltinManifest{}, fmt.Errorf("builtin bundle exceeds ceilings: skills=%d/%d files=%d/%d bytes=%d/%d", len(manifest.Skills), maxBuiltinSkills, totalFiles, maxBuiltinFiles, totalBytes, maxBuiltinBytes)
+	}
+	sort.Slice(manifest.Skills, func(i, j int) bool { return manifest.Skills[i].Name < manifest.Skills[j].Name })
+	if err := finalizeBuiltinManifest(&manifest); err != nil {
+		return BuiltinManifest{}, err
+	}
+	return manifest, nil
+}
+
+func finalizeBuiltinManifest(manifest *BuiltinManifest) error {
+	seen := make(map[string]struct{}, len(manifest.Skills))
+	for _, skill := range manifest.Skills {
+		if _, ok := seen[skill.Name]; ok {
+			return fmt.Errorf("duplicate builtin skill name %q", skill.Name)
+		}
+		seen[skill.Name] = struct{}{}
+	}
+	revision, err := builtinManifestRevision(manifest.Skills)
+	if err != nil {
+		return err
+	}
+	manifest.Revision = revision
+	return nil
+}
+
+func builtinManifestRevision(skills []BuiltinSkillDescriptor) (string, error) {
+	// SourceRoot is a build allocator detail. Excluding it keeps bundle
+	// revisions stable when a plugin moves its physical source directory.
+	stable := make([]BuiltinSkillDescriptor, len(skills))
+	copy(stable, skills)
+	for i := range stable {
+		stable[i].SourceRoot = ""
+	}
 	revisionInput, err := json.Marshal(struct {
 		Skills []BuiltinSkillDescriptor `json:"skills"`
-	}{manifest.Skills})
+	}{stable})
 	if err != nil {
-		return BuiltinManifest{}, fmt.Errorf("encode builtin manifest: %w", err)
+		return "", fmt.Errorf("encode builtin manifest: %w", err)
 	}
 	sum := sha256.Sum256(revisionInput)
-	manifest.Revision = hex.EncodeToString(sum[:])
-	return manifest, nil
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func discoverBuiltinSkills(sourceRoot, relative string, skills *[]BuiltinSkillDescriptor, totalFiles *int, totalBytes *int64) error {
@@ -111,10 +217,15 @@ func discoverBuiltinSkills(sourceRoot, relative string, skills *[]BuiltinSkillDe
 		}
 	}
 	if hasSkill {
+		owner, err := skillOwner(relative)
+		if err != nil {
+			return err
+		}
 		skill, files, bytes, err := scanBuiltinSkill(sourceRoot, relative)
 		if err != nil {
 			return err
 		}
+		skill.OwnerPluginID = owner
 		*skills = append(*skills, skill)
 		*totalFiles += files
 		*totalBytes += bytes
@@ -135,6 +246,41 @@ func discoverBuiltinSkills(sourceRoot, relative string, skills *[]BuiltinSkillDe
 		if err := discoverBuiltinSkills(sourceRoot, child, skills, totalFiles, totalBytes); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func skillOwner(root string) (string, error) {
+	parts := strings.Split(root, "/")
+	if len(parts) == 2 && parts[0] == "core" && parts[1] != "" {
+		return "", nil
+	}
+	if len(parts) != 4 || parts[0] != "plugins" || parts[1] == "" || parts[2] == "" || parts[3] == "" {
+		return "", fmt.Errorf("builtin skill %q must be rooted at core/<skill> or plugins/<kind>/<plugin>/<skill>", root)
+	}
+	return parts[1] + "/" + parts[2], nil
+}
+
+func validateSkillOwner(root, owner string) error {
+	derived, err := skillOwner(root)
+	if err != nil {
+		return err
+	}
+	if derived != owner {
+		return fmt.Errorf("builtin skill %q owner %q does not match layout owner %q", root, owner, derived)
+	}
+	return nil
+}
+
+func validateExplicitSkillOwner(root, owner string) error {
+	if owner == "" {
+		if strings.HasPrefix(root, "core/") && strings.Count(root, "/") == 1 {
+			return nil
+		}
+		return fmt.Errorf("builtin skill %q has empty owner outside the core allowlist", root)
+	}
+	if !canonicalBuiltinPath(owner) || strings.Count(owner, "/") != 1 {
+		return fmt.Errorf("builtin skill %q has invalid explicit owner %q", root, owner)
 	}
 	return nil
 }
@@ -287,7 +433,48 @@ func WriteBuiltinManifest(sourceRoot, output string) error {
 	if current, err := os.ReadFile(output); err == nil && string(current) == string(rendered) {
 		return nil
 	}
-	return os.WriteFile(output, rendered, 0o644)
+	return writeGeneratedFile(output, rendered)
+}
+
+// WriteBuiltinManifestFromAssets generates and atomically publishes the
+// manifest after validating every declared source tree.
+func WriteBuiltinManifestFromAssets(sourceRoot, output string, assets []BuiltinSkillSource) error {
+	manifest, err := GenerateBuiltinManifestFromAssets(sourceRoot, assets)
+	if err != nil {
+		return err
+	}
+	rendered, err := renderBuiltinManifest(manifest)
+	if err != nil {
+		return err
+	}
+	if current, err := os.ReadFile(output); err == nil && string(current) == string(rendered) {
+		return nil
+	}
+	return writeGeneratedFile(output, rendered)
+}
+
+func writeGeneratedFile(output string, content []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(output), ".builtin-manifest-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create generated resource temporary file: %w", err)
+	}
+	temporaryName := temporary.Name()
+	defer func() { _ = os.Remove(temporaryName) }()
+	if err := temporary.Chmod(0o644); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("set generated resource mode: %w", err)
+	}
+	if _, err := temporary.Write(content); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write generated resource: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close generated resource: %w", err)
+	}
+	if err := os.Rename(temporaryName, output); err != nil {
+		return fmt.Errorf("publish generated resource: %w", err)
+	}
+	return nil
 }
 
 // GeneratedBuiltinManifest returns the manifest compiled into this binary.
@@ -311,12 +498,20 @@ func validateBuiltinManifest(manifest BuiltinManifest) error {
 	}
 	seenNames := make(map[string]struct{}, len(manifest.Skills))
 	seenRoots := make(map[string]struct{}, len(manifest.Skills))
+	seenSources := make(map[string]struct{}, len(manifest.Skills))
 	seenFiles := make(map[string]struct{})
 	var totalFiles int
 	var totalBytes int64
 	for _, skill := range manifest.Skills {
 		if skill.Ref != "builtin:"+skill.Name || skill.APIID != "builtin-"+skill.Name || !canonicalBuiltinPath(skill.Name) || strings.Contains(skill.Name, "/") || !canonicalBuiltinPath(skill.Root) || path.Base(skill.Root) != skill.Name || len(skill.Files) == 0 || len(skill.Files) > maxBuiltinFilesPerKey || len(skill.Digest) != sha256.Size*2 {
 			return fmt.Errorf("invalid builtin skill descriptor %q", skill.Name)
+		}
+		ownerValidator := validateSkillOwner
+		if skill.SourceRoot != "" {
+			ownerValidator = validateExplicitSkillOwner
+		}
+		if err := ownerValidator(skill.Root, skill.OwnerPluginID); err != nil {
+			return err
 		}
 		if _, err := hex.DecodeString(skill.Digest); err != nil {
 			return fmt.Errorf("invalid builtin skill descriptor %q: %w", skill.Name, err)
@@ -326,6 +521,15 @@ func validateBuiltinManifest(manifest BuiltinManifest) error {
 		}
 		if _, exists := seenRoots[skill.Root]; exists {
 			return fmt.Errorf("duplicate builtin skill root %q", skill.Root)
+		}
+		if skill.SourceRoot != "" {
+			if !canonicalBuiltinPath(skill.SourceRoot) {
+				return fmt.Errorf("invalid builtin skill source root %q", skill.SourceRoot)
+			}
+			if _, exists := seenSources[skill.SourceRoot]; exists {
+				return fmt.Errorf("duplicate builtin skill source root %q", skill.SourceRoot)
+			}
+			seenSources[skill.SourceRoot] = struct{}{}
 		}
 		seenNames[skill.Name] = struct{}{}
 		seenRoots[skill.Root] = struct{}{}
@@ -356,14 +560,11 @@ func validateBuiltinManifest(manifest BuiltinManifest) error {
 	if totalFiles > maxBuiltinFiles || totalBytes > maxBuiltinBytes {
 		return fmt.Errorf("builtin bundle exceeds ceilings: files=%d/%d bytes=%d/%d", totalFiles, maxBuiltinFiles, totalBytes, maxBuiltinBytes)
 	}
-	revisionInput, err := json.Marshal(struct {
-		Skills []BuiltinSkillDescriptor `json:"skills"`
-	}{manifest.Skills})
+	revision, err := builtinManifestRevision(manifest.Skills)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(revisionInput)
-	if manifest.Revision != hex.EncodeToString(sum[:]) {
+	if manifest.Revision != revision {
 		return fmt.Errorf("builtin manifest revision does not match descriptors")
 	}
 	return nil

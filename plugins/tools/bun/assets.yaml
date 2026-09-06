@@ -1,0 +1,5 @@
+assets:
+  - name: web
+    source: skills/web
+    logical_root: core/web
+    owner_plugin_id: tool/bun

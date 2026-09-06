@@ -43,7 +43,7 @@ func TestAgentSkillActivationAuthorizationAndErrors(t *testing.T) {
 			"/api/agents/"+agentID+"/skills/"+ref+"/activation", map[string]bool{"enabled": enabled})
 	}
 
-	for _, ref := range []string{"builtin:stella", "system:activation-system", "system_agent:activation-system-agent"} {
+	for _, ref := range []string{"system:activation-system", "system_agent:activation-system-agent"} {
 		rr := patch(creatorToken, ref, false)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("creator disable %s: status=%d body=%s", ref, rr.Code, rr.Body.String())
@@ -61,17 +61,23 @@ func TestAgentSkillActivationAuthorizationAndErrors(t *testing.T) {
 	}
 
 	// Admin can commit too; a non-creator ordinary user cannot.
-	if rr := patch(env.bearerToken, "builtin:stella", true); rr.Code != http.StatusOK {
+	if rr := patch(env.bearerToken, "system:activation-system", true); rr.Code != http.StatusOK {
 		t.Fatalf("admin enable: status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if rr := patch(otherToken, "builtin:stella", false); rr.Code != http.StatusForbidden {
+	if rr := patch(otherToken, "system:activation-system", false); rr.Code != http.StatusForbidden {
 		t.Fatalf("other user: status=%d want 403 body=%s", rr.Code, rr.Body.String())
 	}
 	if rr := patch(creatorToken, "user:forbidden", false); rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid ref: status=%d want 400 body=%s", rr.Code, rr.Body.String())
 	}
-	if rr := patch(creatorToken, "builtin:not-real", false); rr.Code != http.StatusNotFound {
+	if rr := patch(creatorToken, "builtin:stella", false); rr.Code != http.StatusBadRequest {
+		t.Fatalf("builtin disable: status=%d want 400 body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := patch(creatorToken, "system:not-real", false); rr.Code != http.StatusNotFound {
 		t.Fatalf("unknown disable: status=%d want 404 body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := patch(creatorToken, "system:activation-system", false); rr.Code != http.StatusOK {
+		t.Fatalf("creator re-disable: status=%d body=%s", rr.Code, rr.Body.String())
 	}
 	// Management keeps a disabled winning row visible and exposes contextual
 	// activation separately from disable_model_invocation.
@@ -120,7 +126,7 @@ func TestAgentSkillActivationAuthorizationAndErrors(t *testing.T) {
 	// Persistence/catalog failures are internal errors, never an opaque clean
 	// not-found response that would invite the caller to overwrite state.
 	env.rebuild(t, func(deps *server.Deps) { deps.AgentSkillPolicy = failingAgentSkillPolicyStore{} })
-	rr = patch(env.bearerToken, "builtin:stella", false)
+	rr = patch(env.bearerToken, "system:activation-system", false)
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("policy store failure: status=%d want 500 body=%s", rr.Code, rr.Body.String())
 	}

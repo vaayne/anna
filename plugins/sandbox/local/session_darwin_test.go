@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,6 +173,51 @@ func TestLocalSession_darwinProductionMountUsesHostCwd(t *testing.T) {
 	})
 }
 
+func TestNativeSelectionPathRunsSelectedCommand(t *testing.T) {
+	if !seatbeltFunctional() {
+		t.Skip("macOS Seatbelt is unavailable in this environment")
+	}
+	stellaHome := t.TempDir()
+	selection := filepath.Join(stellaHome, ".mise-tools", "public", "selection")
+	if err := os.MkdirAll(selection, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := filepath.Join(selection, "selected-tool")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\nprintf 'selected\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	policy := sandboxpkg.Policy{
+		Env: map[string]string{
+			sandboxpkg.EnvNativeSelectionDir: selection,
+			"PATH":                           selection,
+		},
+		Filesystem: sandboxpkg.FilesystemPolicy{
+			WorkingDir: sandboxpkg.MountWorkspace,
+			Mounts: []sandboxpkg.Mount{
+				{SandboxPath: sandboxpkg.MountWorkspace, Access: sandboxpkg.MountReadWrite},
+				{SandboxPath: sandboxpkg.MountStellaHome + "/bin", Access: sandboxpkg.MountReadOnly},
+			},
+		},
+	}
+	f := NewFactoryWithMountSources(map[string]string{
+		sandboxpkg.MountWorkspace:           t.TempDir(),
+		sandboxpkg.MountStellaHome + "/bin": selection,
+	}, Config{StellaHome: stellaHome})
+	sess, err := f.CreateSession(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer sess.Close() //nolint:errcheck
+	result, err := sess.Exec(context.Background(), "selected-tool", sandboxpkg.ExecOptions{})
+	if err != nil || result.ExitCode != 0 || result.Stdout != "selected\n" {
+		t.Fatalf("selected command result = %+v, err=%v", result, err)
+	}
+	result, err = sess.Exec(context.Background(), "command -v selected-tool", sandboxpkg.ExecOptions{})
+	if err != nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) != command {
+		t.Fatalf("command -v selected-tool = %q, err=%v", result.Stdout, err)
+	}
+}
+
 func TestBuildSeatbeltProfile_structure(t *testing.T) {
 	policy := makePolicy("/tmp/ws", sandboxpkg.NetworkDisabled)
 	profile := buildSeatbeltProfile(policy, darwinTestMounts("/tmp/ws"), "/tmp/ws", "")
@@ -207,6 +253,166 @@ func TestBuildSeatbeltProfile_allowsMiseRuntimeWriteDirs(t *testing.T) {
 	} {
 		if !strings.Contains(profile, want) {
 			t.Errorf("profile missing: %s", want)
+		}
+	}
+}
+
+func TestBuildSeatbeltProfileDeniesNativePrivateRoot(t *testing.T) {
+	stellaHome := t.TempDir()
+	privateRoot := filepath.Join(stellaHome, ".mise-private")
+	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(privateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := buildSeatbeltProfile(makePolicy("/tmp/ws", sandboxpkg.NetworkDisabled), nil, "/tmp/ws", stellaHome)
+	allow := strings.Index(profile, "(allow default)")
+	deny := strings.Index(profile, `(deny file-read* (subpath "`+canonicalRoot+`"))`)
+	if allow < 0 || deny < 0 || deny < allow {
+		t.Fatalf("private root read deny must follow allow default, profile=%s", profile)
+	}
+	if strings.Contains(profile[deny+1:], `(allow file-read* (subpath "`+canonicalRoot+`"))`) {
+		t.Fatal("private root read deny was reopened")
+	}
+}
+
+func TestSeatbeltDeniesNativePrivateRootRead(t *testing.T) {
+	if !seatbeltFunctional() {
+		t.Skip("macOS Seatbelt is unavailable in this environment")
+	}
+	stellaHome := t.TempDir()
+	privateRoot := filepath.Join(stellaHome, ".mise-private")
+	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(privateRoot, "config.toml")
+	if err := os.WriteFile(secret, []byte("private-option"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profile := buildSeatbeltProfile(makePolicy("/tmp/ws", sandboxpkg.NetworkAllowAll), nil, "/tmp/ws", stellaHome)
+	cmd := exec.Command(seatbeltExecPath, "-p", profile, "/bin/cat", secret)
+	output, err := cmd.CombinedOutput()
+	if err == nil || strings.Contains(string(output), "private-option") {
+		t.Fatalf("Seatbelt allowed native private root read: err=%v output=%q", err, output)
+	}
+}
+
+func TestSeatbeltDeniesSharedRuntimeRootsAndAllowsCurrentSelection(t *testing.T) {
+	if !seatbeltFunctional() {
+		t.Skip("macOS Seatbelt is unavailable in this environment")
+	}
+	stellaHome := t.TempDir()
+	sharedBin := filepath.Join(stellaHome, "bin")
+	sharedMise := filepath.Join(stellaHome, ".mise-tools", "installs", "bun")
+	selection := filepath.Join(stellaHome, ".mise-tools", "public", "selection")
+	for _, dir := range []string{sharedBin, sharedMise, selection} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBin := filepath.Join(sharedBin, "mise")
+	oldInstall := filepath.Join(sharedMise, "bun")
+	current := filepath.Join(selection, "bun")
+	for _, file := range []string{oldBin, oldInstall} {
+		if err := os.WriteFile(file, []byte("old"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(current, []byte("current"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mounts := []sessionfs.Mount{{HostPath: selection, SandboxPath: "/opt/stella/bin", ReadOnly: true}}
+	profile := buildSeatbeltProfile(makePolicy("/tmp/ws", sandboxpkg.NetworkAllowAll), mounts, "/tmp/ws", stellaHome)
+	for _, file := range []string{oldBin, oldInstall} {
+		output, err := exec.Command(seatbeltExecPath, "-p", profile, "/bin/cat", file).CombinedOutput()
+		if err == nil || string(output) == "old" {
+			t.Fatalf("Seatbelt allowed shared runtime %s: err=%v output=%q", file, err, output)
+		}
+	}
+	output, err := exec.Command(seatbeltExecPath, "-p", profile, "/bin/cat", current).CombinedOutput()
+	if err != nil || string(output) != "current" {
+		t.Fatalf("Seatbelt rejected current selection: err=%v output=%q", err, output)
+	}
+}
+
+func TestSeatbeltFinalSelectionKeepsSystemAndUserPathsSeparate(t *testing.T) {
+	if !seatbeltFunctional() {
+		t.Skip("macOS Seatbelt is unavailable in this environment")
+	}
+	stellaHome := t.TempDir()
+	workspace := t.TempDir()
+	coreSelection := filepath.Join(stellaHome, ".mise-tools", "public", "system-selection")
+	userSelection := filepath.Join(stellaHome, ".mise-managed", "user", "agent", "selection", "public", "user-selection")
+	for _, dir := range []string{filepath.Join(stellaHome, "bin"), filepath.Join(stellaHome, ".mise-tools", "installs", "bun"), coreSelection, userSelection} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBin := filepath.Join(stellaHome, "bin", "mise")
+	oldInstall := filepath.Join(stellaHome, ".mise-tools", "installs", "bun", "bun")
+	if err := os.WriteFile(oldBin, []byte("old mise"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldInstall, []byte("old bun"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []struct {
+		path string
+		body string
+	}{
+		{filepath.Join(coreSelection, "system-tool"), "system"},
+		{filepath.Join(userSelection, "user-tool"), "user"},
+	} {
+		if err := os.WriteFile(file.path, []byte(file.body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	policy := sandboxpkg.Policy{
+		Filesystem: sandboxpkg.FilesystemPolicy{
+			WorkingDir: sandboxpkg.MountWorkspace,
+			Mounts: []sandboxpkg.Mount{
+				{SandboxPath: sandboxpkg.MountWorkspace, Access: sandboxpkg.MountReadWrite},
+				{SandboxPath: coreSelection, Access: sandboxpkg.MountReadOnly},
+				{SandboxPath: userSelection, Access: sandboxpkg.MountReadOnly},
+			},
+		},
+		Env: map[string]string{
+			sandboxpkg.EnvNativeSelectionDir:     coreSelection,
+			sandboxpkg.EnvUserNativeSelectionDir: userSelection,
+			"PATH":                               "/usr/bin",
+		},
+	}
+	f := NewFactoryWithMountSources(map[string]string{
+		sandboxpkg.MountWorkspace: workspace,
+		coreSelection:             coreSelection,
+		userSelection:             userSelection,
+	}, Config{StellaHome: stellaHome})
+	session, err := f.CreateSession(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer session.Close() //nolint:errcheck
+
+	for _, want := range []struct {
+		name string
+		path string
+	}{
+		{"system-tool", filepath.Join(coreSelection, "system-tool")},
+		{"user-tool", filepath.Join(userSelection, "user-tool")},
+	} {
+		result, err := session.Exec(context.Background(), "command -v "+want.name, sandboxpkg.ExecOptions{})
+		if err != nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) != want.path {
+			t.Fatalf("command -v %s = %q, exit=%d, err=%v; want %q", want.name, result.Stdout, result.ExitCode, err, want.path)
+		}
+	}
+	for _, path := range []string{oldBin, oldInstall} {
+		quoted := "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+		result, err := session.Exec(context.Background(), "cat "+quoted, sandboxpkg.ExecOptions{})
+		if err == nil && result.ExitCode == 0 {
+			t.Fatalf("final selection exposed stale managed path %s: output=%q", path, result.Stdout)
 		}
 	}
 }

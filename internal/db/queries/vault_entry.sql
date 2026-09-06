@@ -46,3 +46,12 @@ WHERE scope = sqlc.arg(scope)
   AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
   AND name = sqlc.arg(name);
 
+
+-- name: DeleteMCPConfigCredentials :exec
+-- Names are derived here so the caller cannot broaden the deletion to a prefix.
+DELETE FROM vault_entry
+WHERE name IN (
+    'MCP_TOKEN_' || upper(replace(sqlc.arg(config_id)::uuid::text, '-', '_')),
+    'MCP_OAUTH_' || upper(replace(sqlc.arg(config_id)::uuid::text, '-', '_')),
+    'MCP_OAUTH_CLIENT_' || upper(replace(sqlc.arg(config_id)::uuid::text, '-', '_'))
+);

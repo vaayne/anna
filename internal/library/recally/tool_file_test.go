@@ -165,7 +165,7 @@ func TestCodeFetchFileSaveShareJourneyKeepsBodyOutOfCode(t *testing.T) {
 	body := "# Orchestrated article\n\npassword: preserved-as-data\n\n" + strings.Repeat("article body ", 20)
 	source := `
 await tools.invoke("bash", {command:"fetch-to-file"});
-const saved = tools.json(await tools.invoke("recally_article_save", {articles:[{url:"https://example.com/orchestrated", title:"Orchestrated", content_path:"$TMPDIR/article.md"}]}));
+const saved = tools.json(await tools.invoke("recally__article_save", {articles:[{url:"https://example.com/orchestrated", title:"Orchestrated", content_path:"$TMPDIR/article.md"}]}));
 return await tools.invoke("share", {action:"article", article_id:saved.results[0].id});
 `
 	if strings.Contains(source, body) {
@@ -198,7 +198,7 @@ return await tools.invoke("share", {action:"article", article_id:saved.results[0
 				files.files["/tmp/session/article.md"] = []byte(body)
 				return []ai.ContentBlock{ai.TextContent{Text: "fetched"}}, nil
 			},
-			"recally_article_save": func(ctx context.Context, call ai.ToolCall) ([]ai.ContentBlock, error) {
+			"recally__article_save": func(ctx context.Context, call ai.ToolCall) ([]ai.ContentBlock, error) {
 				out, err := recallyTool.Execute(ctx, call.Arguments)
 				return []ai.ContentBlock{ai.TextContent{Text: out}}, err
 			},

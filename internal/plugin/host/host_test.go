@@ -8,11 +8,16 @@ import (
 	"testing"
 
 	"github.com/CherryHQ/stella/internal/platform/config"
+	internalplugin "github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/plugin/manifest"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
 
-type stubStore struct{ plugins map[string]config.Plugin }
+type stubStore struct {
+	plugins       map[string]config.Plugin
+	channels      map[string][]config.Channel
+	channelsError error
+}
 
 func (s *stubStore) ListProviders(context.Context) ([]config.Provider, error) { return nil, nil }
 func (s *stubStore) GetProvider(context.Context, string) (config.Provider, error) {
@@ -35,12 +40,22 @@ func (s *stubStore) CreateAgent(context.Context, config.Agent) error        { re
 func (s *stubStore) UpdateAgent(context.Context, config.Agent) error        { return nil }
 func (s *stubStore) DeleteAgent(context.Context, string) error              { return nil }
 func (s *stubStore) ListChannels(context.Context) ([]config.Channel, error) { return nil, nil }
-func (s *stubStore) ListChannelsByType(context.Context, string) ([]config.Channel, error) {
-	return nil, nil
+func (s *stubStore) ListChannelsByType(_ context.Context, channelType string) ([]config.Channel, error) {
+	if s.channelsError != nil {
+		return nil, s.channelsError
+	}
+	return slices.Clone(s.channels[channelType]), nil
 }
 
-func (s *stubStore) GetChannel(context.Context, string) (config.Channel, error) {
-	return config.Channel{}, nil
+func (s *stubStore) GetChannel(_ context.Context, id string) (config.Channel, error) {
+	for _, channels := range s.channels {
+		for _, channel := range channels {
+			if channel.ID == id {
+				return channel, nil
+			}
+		}
+	}
+	return config.Channel{}, config.ErrChannelNotFound
 }
 func (s *stubStore) CreateChannel(context.Context, config.Channel) error { return nil }
 func (s *stubStore) UpdateChannel(context.Context, config.Channel) error { return nil }
@@ -135,7 +150,7 @@ func TestPromptToolsUsesPluginIDDirectly(t *testing.T) {
 	host.AddPromptInventory(pkgplugins.PromptInventorySpec{PluginID: "tool/test", Name: "tools", GetTools: func(context.Context, pkgplugins.PromptInventoryContext) ([]pkgplugins.PromptToolInfo, error) {
 		return []pkgplugins.PromptToolInfo{{Name: "test__docs__search"}}, nil
 	}})
-	tools, err := host.PromptTools(context.Background(), "tool/test")
+	tools, err := host.PromptTools(context.Background(), "tool/test", testHostSnapshot(t, map[string]bool{"tool/test": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +174,7 @@ func TestSystemPromptSectionsUsePluginIDDirectly(t *testing.T) {
 			}, nil
 		},
 	})
-	sections, err := host.SystemPromptSections(context.Background(), pkgplugins.SystemPromptContext{})
+	sections, err := host.SystemPromptSections(context.Background(), pkgplugins.SystemPromptContext{}, testHostSnapshot(t, map[string]bool{"tool/skills": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +196,7 @@ func TestBeforeRunUsesPluginIDDirectly(t *testing.T) {
 		},
 	})
 
-	result, err := host.BeforeRun(context.Background(), pkgplugins.BeforeRunContext{SystemPrompt: "base"})
+	result, err := host.BeforeRun(context.Background(), pkgplugins.BeforeRunContext{SystemPrompt: "base"}, testHostSnapshot(t, map[string]bool{"tool/skills": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +225,7 @@ func TestBeforeToolCallUsesPluginIDDirectly(t *testing.T) {
 	result, err := host.BeforeToolCall(context.Background(), pkgplugins.BeforeToolCallContext{
 		ToolName:  "web_fetch",
 		Arguments: map[string]any{"q": "original"},
-	})
+	}, testHostSnapshot(t, map[string]bool{"tool/filter": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +256,7 @@ func TestAfterToolResultUsesPluginIDDirectly(t *testing.T) {
 		ToolName: "web_fetch",
 		Result:   "original",
 		IsError:  true,
-	})
+	}, testHostSnapshot(t, map[string]bool{"tool/filter": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +285,7 @@ func TestAfterToolResultNoopDoesNotReturnTextMutation(t *testing.T) {
 		ToolName: "read",
 		Result:   "Read image file [image/jpeg]",
 		IsError:  false,
-	})
+	}, testHostSnapshot(t, map[string]bool{"tool/noop": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,25 +358,19 @@ func TestValidateRegistrationsAcceptsToolLifecycleOnly(t *testing.T) {
 	}
 }
 
-func TestSessionPluginViewRegistersDisabledManifestPlugins(t *testing.T) {
+func TestSessionPluginViewUsesOnlySnapshot(t *testing.T) {
 	host := New(&stubStore{plugins: map[string]config.Plugin{}})
 	host.RegisterManifestPlugins(&manifest.Manifest{Plugins: []manifest.ManifestPlugin{
 		{ID: "tool/xberg", Kind: "tool", Enabled: false, ManifestPluginDefinition: manifest.ManifestPluginDefinition{Name: "xberg", Binaries: []manifest.ManifestBinary{{Name: "xberg", Tool: "github:xberg-io/xberg"}}}},
 		{ID: "tool/enabled", Kind: "tool", Enabled: true, ManifestPluginDefinition: manifest.ManifestPluginDefinition{Name: "enabled", Prompt: "enabled"}},
 	}})
 
-	view, err := host.SessionPluginView(context.Background())
+	view, err := host.SessionPluginView(internalplugin.Snapshot{})
 	if err != nil {
 		t.Fatalf("SessionPluginView: %v", err)
 	}
-	if !slices.Contains(view.RegisteredPluginIDs, "tool/xberg") {
-		t.Fatalf("RegisteredPluginIDs = %v, want disabled manifest plugin", view.RegisteredPluginIDs)
-	}
-	if slices.Contains(view.EnabledPluginIDs, "tool/xberg") {
-		t.Fatalf("EnabledPluginIDs = %v, contains disabled manifest plugin", view.EnabledPluginIDs)
-	}
-	if !slices.Contains(view.EnabledPluginIDs, "tool/enabled") {
-		t.Fatalf("EnabledPluginIDs = %v, missing enabled manifest plugin", view.EnabledPluginIDs)
+	if len(view.RegisteredPluginIDs) != 0 || len(view.ExposedPluginIDs) != 0 {
+		t.Fatalf("SessionPluginView = %+v, manifest registrations must not enter snapshot view", view)
 	}
 }
 
@@ -426,7 +435,7 @@ func TestManifestSessionEnvPropagatesOAuthProvider(t *testing.T) {
 	}
 }
 
-func TestValidateRegistrationsRejectsDuplicateSessionEnvAndBundledSkills(t *testing.T) {
+func TestValidateRegistrationsRejectsDuplicateSessionEnvs(t *testing.T) {
 	store := &stubStore{plugins: map[string]config.Plugin{}}
 	host := New(store)
 	host.RegisterPluginID("tool/gh")
@@ -435,23 +444,6 @@ func TestValidateRegistrationsRejectsDuplicateSessionEnvAndBundledSkills(t *test
 	host.AddSessionEnv(pkgplugins.SessionEnvSpec{PluginID: "tool/acme", EnvVar: "GH_TOKEN", Source: pkgplugins.SessionEnvSourceStatic, Value: "x"})
 	if err := host.ValidateRegistrations(); err == nil || !strings.Contains(err.Error(), `session env "GH_TOKEN"`) {
 		t.Fatalf("ValidateRegistrations error = %v, want duplicate env", err)
-	}
-
-	host = New(store)
-	host.RegisterPluginID("tool/gh")
-	host.RegisterPluginID("tool/acme")
-	host.AddBundledSkill(pkgplugins.BundledSkillSpec{
-		PluginID: "tool/gh",
-		Name:     "shared-skill",
-		Sync:     func(context.Context, pkgplugins.BundledSkillSyncContext) error { return nil },
-	})
-	host.AddBundledSkill(pkgplugins.BundledSkillSpec{
-		PluginID: "tool/acme",
-		Name:     "shared-skill",
-		Sync:     func(context.Context, pkgplugins.BundledSkillSyncContext) error { return nil },
-	})
-	if err := host.ValidateRegistrations(); err == nil || !strings.Contains(err.Error(), `bundled skill "shared-skill"`) {
-		t.Fatalf("ValidateRegistrations error = %v, want duplicate bundled skill", err)
 	}
 }
 

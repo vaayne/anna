@@ -156,8 +156,11 @@ func buildBearerTransport(reg Registration, bearer string, policy EndpointPolicy
 // buildTransport is the Service-level choke point: OAuth rides the streamable
 // transport's OAuthHandler (SSE has no handler hook, so oauth + sse is
 // refused); everything else delegates to the bearer transport.
-func (s *Service) buildTransport(reg Registration, owner CredentialOwner) (mcpsdk.Transport, error) {
+func (s *Service) buildTransport(ctx context.Context, reg Registration, owner CredentialOwner) (mcpsdk.Transport, error) {
 	if reg.AuthType == AuthTypeOAuth {
+		if _, err := s.loadCredentialSnapshot(ctx, reg, owner); err != nil {
+			return nil, err
+		}
 		if reg.Transport != TransportStreamableHTTP {
 			return nil, fmt.Errorf("mcp: auth_type %q requires the streamable_http transport", AuthTypeOAuth)
 		}
@@ -169,11 +172,11 @@ func (s *Service) buildTransport(reg Registration, owner CredentialOwner) (mcpsd
 			OAuthHandler: &oauthSession{svc: s, reg: reg, owner: owner},
 		}, nil
 	}
-	bearer, err := s.BearerToken(context.Background(), reg)
+	snapshot, err := s.loadCredentialSnapshot(ctx, reg, owner)
 	if err != nil {
 		return nil, err
 	}
-	return buildBearerTransport(reg, bearer, s.endpoints)
+	return buildBearerTransport(reg, snapshot.BearerToken, s.endpoints)
 }
 
 // ListTools returns the tools the server currently advertises.
@@ -204,17 +207,17 @@ func (c *Client) Close() error {
 }
 
 // isCredentialRejection reports whether an MCP client error is an HTTP 401/403
-// from the server. The streamable SDK surfaces the status as its HTTP status
-// text ("tools/call: Unauthorized"), so the check matches those exact words;
-// false positives just flip a server to needs_auth, which is recoverable from
-// the Web UI, while a miss would keep calling with a dead credential.
+// from the server, or an OAuth refresh rejected with the protocol's
+// invalid_grant error. The streamable SDK surfaces the status as its HTTP
+// status text ("tools/call: Unauthorized"), while x/oauth2 includes the OAuth
+// error code in its 400 response; both cases must persist needs_auth.
 //
 // The whole chain is inspected: connectionFailure deliberately hides its cause
 // from Error(), so a 401 during connect would otherwise read as a plain error.
 func isCredentialRejection(err error) bool {
 	for e := err; e != nil; e = errors.Unwrap(e) {
 		msg := e.Error()
-		if strings.Contains(msg, http.StatusText(http.StatusUnauthorized)) || strings.Contains(msg, http.StatusText(http.StatusForbidden)) || strings.Contains(msg, credentialRejectedHint) {
+		if strings.Contains(msg, http.StatusText(http.StatusUnauthorized)) || strings.Contains(msg, http.StatusText(http.StatusForbidden)) || strings.Contains(msg, credentialRejectedHint) || strings.Contains(msg, "invalid_grant") {
 			return true
 		}
 	}

@@ -62,11 +62,17 @@ stellad server
 
 你可以在 Web UI 中把每个渠道绑定到特定 agent。
 
+## MCP 工具
+
+Stella 通过 streamable HTTP 连接远程 MCP（Model Context Protocol）服务器，支持 OAuth 2.1、bearer 和无认证，并可在 Web UI 中从官方 MCP Registry marketplace 安装服务器。服务器暴露的每个工具都可以按 Agent 和用户切换，使用与其他能力相同的四层范围权限。
+
+MCP registration 转为插件配置时保留原 UUID。Shared 与 per-user OAuth 的观测相互隔离；迁移后的旧 per-user 目录会重新冷探测。System 和 system agent 配置的 OAuth 客户端初始化需要管理员先完成。
+
 ## 技能
 
-技能是可复用的操作手册，教会 Stella 如何执行特定任务。在对话中，Stella 可以搜索当前 Agent 已有的技能，并加载其精确版本。请在 Web UI 中安装、上传、编辑和删除技能；每次写入都必须选择明确的所有权作用域。
+技能是可复用的操作手册，教会 Stella 如何执行特定任务。在对话中，Stella 可以搜索当前 Agent 已有的技能，并加载其精确版本。请在 Web UI 中安装、上传、编辑和删除技能；每次写入都必须选择明确的所有权作用域。发行版提供的 core Skill 是只读资源；插件 Skill 继承插件的四层范围决策，core Skill 保留自己的显式依赖。管理员可以禁用任何 builtin 插件，禁用的胜出范围不会回退到更宽配置。
 
-随发行版提供的技能为只读；管理员单独管理共享技能。作用域、按 Agent 启用和优先级详见[技能指南](web/content/docs/guides/skills.zh.md)。
+作用域、按 Agent 启用和优先级详见[技能指南](web/content/docs/guides/skills.zh.md)。
 
 ## 文档
 
@@ -87,7 +93,9 @@ stellad server --port 8080              # 自定义端口
 stellad upgrade                         # 自升级到最新版本
 stellad version                         # 打印版本
 stellad vault keygen                    # 生成保险库引导密钥
-stellad mise reconcile-builtins         # 同步内置沙箱工具
+stellad system-bundle revision          # 打印 builtin Skill bundle 版本
+stellad system-bundle install           # 安装已验证的 builtin Skill bundle
+stellad system-bundle verify            # 验证 builtin Skill bundle
 ```
 
 ## 开发

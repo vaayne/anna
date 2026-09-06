@@ -2,7 +2,6 @@ package skill
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -65,11 +64,11 @@ func BuildAuthorizedPromptSection(ctx context.Context, build pkgplugins.SystemPr
 
 func buildPromptSection(build pkgplugins.SystemPromptContext, merged []ResolvedSkill) (pkgplugins.SystemPromptSection, error) {
 	// Apply plugin visibility filtering.
-	all := make([]Skill, 0, len(merged))
-	for _, rs := range merged {
+	visible := filterVisibleResolvedSkills(merged, build)
+	all := make([]Skill, 0, len(visible))
+	for _, rs := range visible {
 		all = append(all, rs.Skill)
 	}
-	all = filterVisibleSkills(all, build)
 
 	if len(all) == 0 {
 		return pkgplugins.SystemPromptSection{}, nil
@@ -127,7 +126,7 @@ func escapeXML(s string) string {
 	return s
 }
 
-func filterVisibleSkills(skills []Skill, build pkgplugins.SystemPromptContext) []Skill {
+func filterVisibleResolvedSkills(skills []ResolvedSkill, build pkgplugins.SystemPromptContext) []ResolvedSkill {
 	if len(skills) == 0 {
 		return nil
 	}
@@ -140,41 +139,18 @@ func filterVisibleSkills(skills []Skill, build pkgplugins.SystemPromptContext) [
 		enabled[id] = struct{}{}
 	}
 
-	out := make([]Skill, 0, len(skills))
+	out := make([]ResolvedSkill, 0, len(skills))
 	for _, skill := range skills {
-		if skill.Scope != "system" && skill.Scope != "builtin" {
-			out = append(out, skill)
-			continue
+		owner := skill.OwnerPluginID()
+		if owner != "" {
+			if _, ok := registered[owner]; !ok {
+				continue
+			}
+			if _, ok := enabled[owner]; !ok {
+				continue
+			}
 		}
-		owner := ownerPlugin(skill.Metadata)
-		if owner == "" || skill.Name == "stella" {
-			out = append(out, skill)
-			continue
-		}
-		if _, ok := registered[owner]; !ok {
-			out = append(out, skill)
-			continue
-		}
-		if _, ok := enabled[owner]; ok {
-			out = append(out, skill)
-		}
+		out = append(out, skill)
 	}
 	return out
-}
-
-func ownerPlugin(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var meta map[string]any
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		return ""
-	}
-	owner, _ := meta["owner_plugin"].(string)
-	if owner != "" {
-		return owner
-	}
-	nested, _ := meta["metadata"].(map[string]any)
-	owner, _ = nested["owner_plugin"].(string)
-	return owner
 }

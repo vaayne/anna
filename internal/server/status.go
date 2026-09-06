@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/CherryHQ/stella/api/types"
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/version"
+	pluginpkg "github.com/CherryHQ/stella/internal/plugin"
 )
 
 func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
@@ -24,11 +26,16 @@ func (s *Server) GetStatus(w http.ResponseWriter, r *http.Request) {
 		resp.BuildDate = &version.BuildDate
 	}
 	if info := UserFromContext(r.Context()); info != nil && info.IsAdmin {
+		authority, err := info.authority()
+		if err != nil {
+			writeData(w, http.StatusOK, resp)
+			return
+		}
 		uptimeSeconds := int64(time.Since(s.startedAt).Seconds())
 		resp.UptimeSeconds = &uptimeSeconds
 		resp.Runtime = s.statusRuntime()
 		resp.Database = s.statusDatabase(r.Context())
-		resp.Plugins = s.statusPlugins(r.Context())
+		resp.Plugins = s.statusPlugins(r.Context(), authority)
 	}
 	writeData(w, http.StatusOK, resp)
 }
@@ -65,14 +72,34 @@ func (s *Server) statusDatabase(ctx context.Context) *types.StatusDatabase {
 	return &types.StatusDatabase{Status: "ok", LatencyMs: &latency}
 }
 
-func (s *Server) statusPlugins(ctx context.Context) *types.StatusPlugins {
-	plugins, err := s.pluginHost.ListAdminVisiblePlugins(ctx)
+func (s *Server) statusPlugins(ctx context.Context, authority authz.Authority) *types.StatusPlugins {
+	if s == nil || s.pluginSvc == nil || !authority.Valid() || authority.Kind() != authz.ActorUser || !authority.IsAdmin() {
+		return nil
+	}
+	access, err := s.pluginSvc.Begin(authority)
 	if err != nil {
 		return nil
 	}
-	out := types.StatusPlugins{Total: len(plugins)}
-	for _, plugin := range plugins {
-		if plugin.State.Enabled {
+	definitions, err := access.ListDefinitions(ctx)
+	if err != nil {
+		return nil
+	}
+	out := types.StatusPlugins{Total: len(definitions)}
+	for _, definition := range definitions {
+		enabled := definition.DefaultEnabled
+		// Only the instance-wide system override belongs in a deployment-wide
+		// count. User and agent scopes are contextual, so status must not guess
+		// an owner or enumerate private configurations.
+		configs, err := access.ListConfigs(ctx, definition.ID, pluginpkg.ScopeSystem, "")
+		if err != nil {
+			return nil
+		}
+		for _, config := range configs {
+			if config.Enabled != nil {
+				enabled = *config.Enabled
+			}
+		}
+		if enabled {
 			out.Enabled++
 		} else {
 			out.Disabled++

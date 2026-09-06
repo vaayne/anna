@@ -4,10 +4,12 @@ import (
 	"context"
 	"sort"
 
+	"github.com/CherryHQ/stella/internal/plugin"
+
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
 
-func (h *Host) BeforeToolCall(ctx context.Context, build pkgplugins.BeforeToolCallContext) (pkgplugins.BeforeToolCallResult, error) {
+func (h *Host) BeforeToolCall(ctx context.Context, build pkgplugins.BeforeToolCallContext, snapshot plugin.Snapshot) (pkgplugins.BeforeToolCallResult, error) {
 	h.mu.RLock()
 	regs := make([]pkgplugins.BeforeToolCallSpec, 0, len(h.beforeToolRegs))
 	for _, reg := range h.beforeToolRegs {
@@ -24,19 +26,12 @@ func (h *Host) BeforeToolCall(ctx context.Context, build pkgplugins.BeforeToolCa
 			continue
 		}
 
-		state := build.State
-		if reg.Required {
-			state = pkgplugins.PluginState{
-				ID:      reg.PluginID,
-				Enabled: true,
-				Config:  h.defaultConfigFor(reg.PluginID),
-			}
-		} else {
-			var err error
-			state, err = h.DesiredState(ctx, reg.PluginID)
-			if err != nil || !state.Enabled {
-				continue
-			}
+		state, enabled, err := snapshotState(snapshot, reg.PluginID)
+		if err != nil {
+			return pkgplugins.BeforeToolCallResult{}, err
+		}
+		if !enabled {
+			continue
 		}
 
 		result, err := reg.Run(ctx, pkgplugins.BeforeToolCallContext{
@@ -70,7 +65,7 @@ func (h *Host) BeforeToolCall(ctx context.Context, build pkgplugins.BeforeToolCa
 	}, nil
 }
 
-func (h *Host) AfterToolResult(ctx context.Context, build pkgplugins.AfterToolResultContext) (pkgplugins.AfterToolResult, error) {
+func (h *Host) AfterToolResult(ctx context.Context, build pkgplugins.AfterToolResultContext, snapshot plugin.Snapshot) (pkgplugins.AfterToolResult, error) {
 	h.mu.RLock()
 	regs := make([]pkgplugins.AfterToolResultSpec, 0, len(h.afterToolRegs))
 	for _, reg := range h.afterToolRegs {
@@ -88,19 +83,12 @@ func (h *Host) AfterToolResult(ctx context.Context, build pkgplugins.AfterToolRe
 			continue
 		}
 
-		state := build.State
-		if reg.Required {
-			state = pkgplugins.PluginState{
-				ID:      reg.PluginID,
-				Enabled: true,
-				Config:  h.defaultConfigFor(reg.PluginID),
-			}
-		} else {
-			var err error
-			state, err = h.DesiredState(ctx, reg.PluginID)
-			if err != nil || !state.Enabled {
-				continue
-			}
+		state, enabled, err := snapshotState(snapshot, reg.PluginID)
+		if err != nil {
+			return pkgplugins.AfterToolResult{}, err
+		}
+		if !enabled {
+			continue
 		}
 
 		mutation, err := reg.Run(ctx, pkgplugins.AfterToolResultContext{

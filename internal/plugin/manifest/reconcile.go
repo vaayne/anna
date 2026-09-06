@@ -228,7 +228,7 @@ func Reconcile(ctx context.Context, m *Manifest, stellaHome string) ReconcileRes
 			case miseErr != nil:
 				binErr = miseErr
 			default:
-				if v, verr := resolveToolVersion(ctx, miseBin, resolveEnv, resolveDir, binaryLookupName(binary)); verr != nil {
+				if v, verr := resolveToolVersion(ctx, miseBin, resolveEnv, resolveDir, BinaryLookupName(binary)); verr != nil {
 					binErr = verr
 				} else {
 					version = v

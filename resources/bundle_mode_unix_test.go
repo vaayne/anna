@@ -41,7 +41,7 @@ func TestBuiltinBundleDirectoriesIgnoreRestrictiveUmaskAndRepair(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		nested := filepath.Join(bundle, "system", "demo", "scripts")
+		nested := filepath.Join(bundle, "core", "demo", "scripts")
 		if err := os.Chmod(nested, 0o700); err != nil {
 			t.Fatal(err)
 		}

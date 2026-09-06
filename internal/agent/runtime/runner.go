@@ -88,6 +88,7 @@ type Runner interface {
 	Busy() bool
 	LastActivity() time.Time
 	SystemPrompt() string
+	PluginContext() PluginContext
 	Close() error
 }
 

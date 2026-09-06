@@ -1,6 +1,6 @@
 import { createLazyFileRoute } from "@tanstack/react-router";
-import { AdminPluginsPage } from "@/features/plugins/PluginsPage";
+import { UnifiedPluginsPage } from "@/features/plugins/UnifiedPluginsPage";
 
 export const Route = createLazyFileRoute("/_app/admin/integrations/plugins")({
-  component: AdminPluginsPage,
+  component: UnifiedPluginsPage,
 });

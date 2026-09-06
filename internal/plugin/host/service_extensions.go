@@ -96,6 +96,30 @@ func (h *Host) ChannelRuntime() pkgplugins.ChannelPlatform {
 	return h.channelRuntime
 }
 
+// WithListenerCap injects the common scope gate used by channel runtimes.
+// The gate is deliberately a function: the host only needs a boolean decision
+// and must not own policy resolution or credential data.
+func WithListenerCap(cap ListenerCap) Option {
+	return func(h *Host) {
+		h.listenerCap = cap
+	}
+}
+
+// SetListenerCap updates the listener gate before the host is sealed.
+func (h *Host) SetListenerCap(cap ListenerCap) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.requireUnsealedLocked("SetListenerCap")
+	h.listenerCap = cap
+}
+
+// ListenerCap returns the currently injected listener gate.
+func (h *Host) ListenerCap() ListenerCap {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.listenerCap
+}
+
 // ChannelPlatform is a mutable host extension bag for managed channel runtimes.
 type ChannelPlatform struct {
 	mu            sync.RWMutex

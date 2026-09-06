@@ -20,6 +20,105 @@ WHERE tool_name = sqlc.arg(tool_name)
   AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
 LIMIT 1;
 
+-- name: GetToolOverrideByIdentity :one
+SELECT * FROM tool_override
+WHERE tool_name IS NOT DISTINCT FROM sqlc.narg(tool_name)
+  AND plugin_id IS NOT DISTINCT FROM sqlc.narg(plugin_id)
+  AND local_tool_name IS NOT DISTINCT FROM sqlc.narg(local_tool_name)
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
+LIMIT 1;
+
+-- name: UpsertCoreToolOverride :one
+INSERT INTO tool_override (tool_name, plugin_id, local_tool_name, scope, user_id, agent_id, enabled)
+VALUES (sqlc.arg(tool_name), NULL, NULL, sqlc.arg(scope), sqlc.narg(user_id), sqlc.narg(agent_id), sqlc.arg(enabled))
+ON CONFLICT (tool_name, scope, user_id, agent_id)
+  WHERE tool_name IS NOT NULL AND plugin_id IS NULL AND local_tool_name IS NULL
+DO UPDATE SET enabled = excluded.enabled, updated_at = now()
+RETURNING *;
+
+-- name: UpsertPluginToolOverride :one
+INSERT INTO tool_override (tool_name, plugin_id, local_tool_name, scope, user_id, agent_id, enabled)
+VALUES (NULL, sqlc.arg(plugin_id), sqlc.arg(local_tool_name), sqlc.arg(scope), sqlc.narg(user_id), sqlc.narg(agent_id), sqlc.arg(enabled))
+ON CONFLICT (plugin_id, local_tool_name, scope, user_id, agent_id)
+  WHERE tool_name IS NULL
+DO UPDATE SET enabled = excluded.enabled, updated_at = now()
+RETURNING *;
+
+-- name: InsertCoreToolOverrideIfAbsent :one
+INSERT INTO tool_override (tool_name, plugin_id, local_tool_name, scope, user_id, agent_id, enabled)
+VALUES (sqlc.arg(tool_name), NULL, NULL, sqlc.arg(scope), sqlc.narg(user_id), sqlc.narg(agent_id), sqlc.arg(enabled))
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: InsertPluginToolOverrideIfAbsent :one
+INSERT INTO tool_override (tool_name, plugin_id, local_tool_name, scope, user_id, agent_id, enabled)
+VALUES (NULL, sqlc.arg(plugin_id), sqlc.arg(local_tool_name), sqlc.arg(scope), sqlc.narg(user_id), sqlc.narg(agent_id), sqlc.arg(enabled))
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: UpdateCoreToolOverrideIfVersion :one
+UPDATE tool_override
+SET enabled = sqlc.arg(enabled), updated_at = now()
+WHERE tool_name = sqlc.arg(tool_name)
+  AND plugin_id IS NULL AND local_tool_name IS NULL
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
+  AND updated_at = sqlc.arg(expected_updated_at)
+RETURNING *;
+
+-- name: UpdatePluginToolOverrideIfVersion :one
+UPDATE tool_override
+SET enabled = sqlc.arg(enabled), updated_at = now()
+WHERE tool_name IS NULL
+  AND plugin_id = sqlc.arg(plugin_id)
+  AND local_tool_name = sqlc.arg(local_tool_name)
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
+  AND updated_at = sqlc.arg(expected_updated_at)
+RETURNING *;
+
+-- name: DeleteCoreToolOverride :exec
+DELETE FROM tool_override
+WHERE tool_name = sqlc.arg(tool_name)
+  AND plugin_id IS NULL AND local_tool_name IS NULL
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '');
+
+-- name: DeletePluginToolOverride :exec
+DELETE FROM tool_override
+WHERE tool_name IS NULL
+  AND plugin_id = sqlc.arg(plugin_id)
+  AND local_tool_name = sqlc.arg(local_tool_name)
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '');
+
+-- name: DeleteCoreToolOverrideIfVersion :one
+DELETE FROM tool_override
+WHERE tool_name = sqlc.arg(tool_name)
+  AND plugin_id IS NULL AND local_tool_name IS NULL
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
+  AND updated_at = sqlc.arg(expected_updated_at)
+RETURNING *;
+
+-- name: DeletePluginToolOverrideIfVersion :one
+DELETE FROM tool_override
+WHERE tool_name IS NULL
+  AND plugin_id = sqlc.arg(plugin_id)
+  AND local_tool_name = sqlc.arg(local_tool_name)
+  AND scope = sqlc.arg(scope)
+  AND coalesce(user_id::text, '') = coalesce(sqlc.narg(user_id)::text, '')
+  AND coalesce(agent_id, '') = coalesce(sqlc.narg(agent_id), '')
+  AND updated_at = sqlc.arg(expected_updated_at)
+RETURNING *;
+
 -- name: UpsertToolOverride :one
 INSERT INTO tool_override (tool_name, scope, user_id, agent_id, enabled)
 VALUES (sqlc.arg(tool_name), sqlc.arg(scope), sqlc.narg(user_id), sqlc.narg(agent_id), sqlc.arg(enabled))
@@ -30,7 +129,7 @@ RETURNING *;
 -- name: InsertToolOverrideIfAbsent :one
 INSERT INTO tool_override (tool_name, scope, user_id, agent_id, enabled)
 VALUES (sqlc.arg(tool_name), sqlc.arg(scope), sqlc.narg(user_id), sqlc.narg(agent_id), sqlc.arg(enabled))
-ON CONFLICT (tool_name, scope, user_id, agent_id) DO NOTHING
+ON CONFLICT DO NOTHING
 RETURNING *;
 
 -- name: UpdateToolOverrideIfVersion :one

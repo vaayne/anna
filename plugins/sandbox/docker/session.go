@@ -339,30 +339,66 @@ func (f *dockerFactory) CreateSession(ctx context.Context, policy sandboxpkg.Pol
 	}()
 	policy.Filesystem.Mounts = sessionfs.PolicyMounts(filesystemMounts)
 
-	// Per-user mise shims go on PATH ahead of the image's system shims so a user's
-	// own tool versions win (mirrors HostEnvBuildPath on the host backends). Only
-	// the mise tree gets a shims/ entry, so guard against a future non-mise writable
-	// mount contributing a bogus PATH dir.
 	var toolBinPaths []string
+	// Per-user mise shims go first so the agent's own tool versions win. Bundled
+	// and immutable selection aliases follow, with the image system PATH as fallback.
 	for _, tree := range perUserTrees {
 		if path.Base(tree.Container) == ".mise-tools" {
 			toolBinPaths = append(toolBinPaths, path.Join(tree.Container, "shims"))
 		}
 	}
-	toolCache, err := ensureUserToolCache(ctx, client, f.cfg)
-	if err != nil {
-		recordError(span, err)
-		span.End()
-		return nil, err
-	}
-	if toolCache != nil {
-		opts.ExtraMounts = append(opts.ExtraMounts, dockerclient.Mount{
-			HostPath:      toolCache.VolumeName,
-			ContainerPath: containerUserToolsRoot,
-			ReadOnly:      true,
-			Type:          dockerclient.MountTypeVolume,
-		})
-		toolBinPaths = append(toolBinPaths, toolCache.BinPath)
+	// A verified release Docker runtime always gets a core-only selection volume,
+	// even when the snapshot selects no plugin binaries. Lightweight callers
+	// using arbitrary images without a bundle revision retain the client seam.
+	if f.cfg.ExpectedBundleRevision != "" || len(f.cfg.SelectionToolBinaries) > 0 {
+		if err := client.EnsureImageReady(ctx, f.cfg.Image, opts.Name); err != nil {
+			recordError(span, err)
+			span.End()
+			return nil, fmt.Errorf("docker session: selection image: %w", err)
+		}
+		imageInfo, err := client.ImageInfo(ctx, f.cfg.Image)
+		if err != nil {
+			recordError(span, err)
+			span.End()
+			return nil, fmt.Errorf("docker session: resolve selection image: %w", err)
+		}
+		if imageInfo.ID == "" {
+			err := fmt.Errorf("docker session: image inspect returned an empty image ID")
+			recordError(span, err)
+			span.End()
+			return nil, err
+		}
+		// Pin the session to the same immutable image used by the helper cache.
+		if expected := f.cfg.ExpectedBundleRevision; expected != "" && imageInfo.Labels[builtinBundleRevisionLabel] != expected {
+			recordError(span, fmt.Errorf("docker session: builtin bundle revision mismatch"))
+			span.End()
+			return nil, fmt.Errorf("docker session: image bundle revision does not match expected revision")
+		}
+		opts.Image = imageInfo.ID
+		selectionCache, err := ensureSelectionToolCache(ctx, client, f.cfg, imageInfo.ID)
+		if err != nil {
+			recordError(span, err)
+			span.End()
+			return nil, err
+		}
+		// Mount the public root for sidecars and its bin subpath separately.
+		// The latter overlays the image bin with NoCopy, so image-only tools do
+		// not become visible through Docker's volume copy-up behavior.
+		opts.ExtraMounts = append(opts.ExtraMounts,
+			dockerclient.Mount{
+				HostPath: selectionCache.VolumeName, ContainerPath: containerSelectionRoot,
+				ReadOnly: true, Type: dockerclient.MountTypeVolume, NoCopy: true,
+			},
+			dockerclient.Mount{
+				HostPath: selectionCache.VolumeName, ContainerPath: containerSelectionBin,
+				ReadOnly: true, Type: dockerclient.MountTypeVolume, VolumeSubpath: "bin", NoCopy: true,
+			},
+			dockerclient.Mount{
+				HostPath: selectionCache.MaskVolumeName, ContainerPath: stellaHomeMount + "/.mise-tools",
+				ReadOnly: true, Type: dockerclient.MountTypeVolume, NoCopy: true,
+			},
+		)
+		toolBinPaths = append(toolBinPaths, selectionCache.BinPath)
 	}
 
 	slog.Info("docker session: creating sandbox container",

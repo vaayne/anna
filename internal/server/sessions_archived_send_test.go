@@ -89,7 +89,10 @@ func (*excludedToolsRecordingRunner) Alive() bool             { return true }
 func (*excludedToolsRecordingRunner) Busy() bool              { return false }
 func (*excludedToolsRecordingRunner) LastActivity() time.Time { return time.Now() }
 func (*excludedToolsRecordingRunner) SystemPrompt() string    { return "test" }
-func (*excludedToolsRecordingRunner) Close() error            { return nil }
+func (*excludedToolsRecordingRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (*excludedToolsRecordingRunner) Close() error { return nil }
 
 type recordingRuntimeManager struct {
 	rt      *recordingRuntime

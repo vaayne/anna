@@ -25,11 +25,12 @@ func (*ownerFenceRunner) Chat(context.Context, []ai.Message, agentruntime.Messag
 	close(out)
 	return out
 }
-func (*ownerFenceRunner) Alive() bool             { return true }
-func (*ownerFenceRunner) Busy() bool              { return false }
-func (*ownerFenceRunner) LastActivity() time.Time { return time.Now() }
-func (*ownerFenceRunner) SystemPrompt() string    { return "" }
-func (*ownerFenceRunner) Close() error            { return nil }
+func (*ownerFenceRunner) Alive() bool                  { return true }
+func (*ownerFenceRunner) Busy() bool                   { return false }
+func (*ownerFenceRunner) LastActivity() time.Time      { return time.Now() }
+func (*ownerFenceRunner) SystemPrompt() string         { return "" }
+func (*ownerFenceRunner) PluginContext() PluginContext { return PluginContext{} }
+func (*ownerFenceRunner) Close() error                 { return nil }
 
 type signalingFenceAcquirer struct {
 	delegate home.OwnerFenceAcquirer

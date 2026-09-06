@@ -1,0 +1,12 @@
+id: tool/bun
+kind: tool
+name: bun
+display_name: Bun
+description: An incredibly fast JavaScript runtime, bundler, test runner, and package manager.
+enabled: true
+category: system
+binaries:
+  - name: bun
+    tool: bun
+skills:
+  - name: web

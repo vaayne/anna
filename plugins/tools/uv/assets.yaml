@@ -1,0 +1,5 @@
+assets:
+  - name: python-script
+    source: skills/python-script
+    logical_root: core/python-script
+    owner_plugin_id: tool/uv

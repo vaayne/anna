@@ -337,7 +337,7 @@ export function ChannelsPage() {
           name: ch.name || "",
           type: ch.type,
           agent_id: ch.agent_id || "",
-          enabled: ch.enabled,
+          is_active: ch.is_active,
           config: channelConfig(ch),
         },
         throwOnError: true,
@@ -391,7 +391,7 @@ export function ChannelsPage() {
       name: channel.name,
       type: channel.type,
       agent_id: channel.agent_id,
-      enabled: channel.enabled,
+      is_active: channel.is_active,
       config: channelConfig(channel),
     } satisfies Channel;
     queryClient.setQueryData<Channel[]>(channelsQueryOptions.queryKey, (current) =>
@@ -406,7 +406,7 @@ export function ChannelsPage() {
       // SAFETY: draft is a Record<string,unknown> channel draft; these fields carry
       // the string scalar values the create body requires.
       const { data: saved } = await createChannelRequest({
-        // No id: the server mints it (and pins weixin to its singleton id).
+        // No id: the server mints an independent instance id for every platform.
         body: {
           name: channelString(draft.name),
           type: channelString(draft.type),
@@ -575,7 +575,7 @@ export function ChannelsPage() {
                           <>
                             <span
                               className={`size-1.5 shrink-0 rounded-full ${
-                                ch.enabled ? "bg-success" : "bg-muted-foreground"
+                                ch.is_active ? "bg-success" : "bg-muted-foreground"
                               }`}
                             />
                             <span className="font-mono text-xs text-muted-foreground">{ch.id}</span>

@@ -122,12 +122,22 @@ func (s *Service) PublicChannels(ctx context.Context, authority authz.Authority)
 	if err := requireCatalogReader(authority); err != nil {
 		return nil, err
 	}
+	if err := s.requireListenerCap(); err != nil {
+		return nil, err
+	}
 	channels, err := s.store.ListChannels(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]PublicChannel, 0, len(channels))
 	for _, ch := range channels {
+		allowed, err := s.channelListenerAllowed(ctx, ch)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			continue
+		}
 		out = append(out, PublicChannel{
 			ID:      ch.ID,
 			Type:    effectiveChannelType(ch),
@@ -136,6 +146,25 @@ func (s *Service) PublicChannels(ctx context.Context, authority authz.Authority)
 		})
 	}
 	return out, nil
+}
+
+// channelListenerAllowed applies only the published platform ceiling. User
+// and user-agent plugin settings are evaluated later, after a trusted channel
+// identity resolves to an agent; they must never hide a shared listener here.
+func (s *Service) channelListenerAllowed(ctx context.Context, ch config.Channel) (bool, error) {
+	if err := s.requireListenerCap(); err != nil {
+		return false, err
+	}
+	cap := s.plugins.ListenerCap()
+	platform := effectiveChannelType(ch)
+	return cap(ctx, config.PluginID(config.PluginKindChannel, platform), ch.AgentID)
+}
+
+func (s *Service) requireListenerCap() error {
+	if s == nil || s.plugins == nil || s.plugins.ListenerCap() == nil {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 // DisabledChannelTypes returns the set of channel-plugin names an admin has

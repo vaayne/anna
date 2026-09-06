@@ -31,6 +31,7 @@ import (
 	"github.com/CherryHQ/stella/internal/mcp"
 	memprofile "github.com/CherryHQ/stella/internal/memory/profile"
 	"github.com/CherryHQ/stella/internal/oidc"
+	pluginpkg "github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/plugin/host"
 	"github.com/CherryHQ/stella/internal/provisioning"
 	"github.com/CherryHQ/stella/internal/scheduler"
@@ -60,6 +61,7 @@ type Server struct {
 	linkCodes       *auth.LinkCodeStore
 	poolManager     *agent.PoolManager
 	pluginHost      *host.Host
+	pluginSvc       *pluginpkg.Service
 	weixinRegistrar WeixinRegistrar
 	// pinger is the narrow database-liveness port backing the /healthz, /readyz,
 	// and admin status probes. It is the injected pool viewed as DBPinger, so the
@@ -177,9 +179,12 @@ type Deps struct {
 	OIDC      OIDCDeps
 
 	// Agent runtime + plugins.
-	PoolManager  *agent.PoolManager
-	PluginHost   *host.Host
-	BuiltinTools []agent.BuiltinTool
+	PoolManager *agent.PoolManager
+	PluginHost  *host.Host
+	// PluginService is the unified definition/configuration authority. It is
+	// optional during the staged cutover; its API returns 503 when absent.
+	PluginService *pluginpkg.Service
+	BuiltinTools  []agent.BuiltinTool
 	// ToolMeta is the generated declaration registry already assembled by the
 	// composition root. Profile catalog rows use it for family metadata; plugins
 	// never enter it and therefore cannot borrow a generated family by name.
@@ -334,6 +339,7 @@ func New(ctx context.Context, deps Deps) (*Server, error) {
 		poolManager:          deps.PoolManager,
 		pinger:               deps.Pinger,
 		pluginHost:           deps.PluginHost,
+		pluginSvc:            deps.PluginService,
 		weixinRegistrar:      deps.WeixinRegistrar,
 		mux:                  http.NewServeMux(),
 		log:                  log,

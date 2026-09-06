@@ -2,7 +2,10 @@ package host
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/CherryHQ/stella/pkg/hooks"
 
 	"github.com/CherryHQ/stella/internal/platform/config"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
@@ -60,7 +63,10 @@ func TestBuildEnabledToolsBuildsOptionalAndRequiredToolsWithRuntimeContext(t *te
 	})
 
 	build := pkgplugins.ToolBuildContext{Runtime: fakeRuntime}
-	got := host.BuildEnabledTools(context.Background(), build)
+	got, err := host.BuildEnabledTools(context.Background(), build, testHostSnapshot(t, map[string]bool{"tool/a": true, "tool/b": true, "tool/c": false}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("BuildEnabledTools() len = %d, want 2", len(got))
 	}
@@ -70,4 +76,44 @@ func TestBuildEnabledToolsBuildsOptionalAndRequiredToolsWithRuntimeContext(t *te
 	if runtimeSeen != 2 {
 		t.Fatalf("runtime seen = %d, want 2", runtimeSeen)
 	}
+}
+
+type closableHostTool struct {
+	testTool
+	closed int
+}
+
+func (t *closableHostTool) Close() error { t.closed++; return nil }
+
+type closableHostHook struct{ closed int }
+
+func (h *closableHostHook) Name() string  { return "a" }
+func (h *closableHostHook) Priority() int { return 0 }
+func (h *closableHostHook) Close() error  { h.closed++; return nil }
+func TestBuildFailureClosesPriorResources(t *testing.T) {
+	snapshot := testHostSnapshot(t, map[string]bool{"tool/a": true})
+	want := errors.New("build failed")
+	t.Run("tools", func(t *testing.T) {
+		h := New(nil)
+		h.RegisterPluginID("tool/a")
+		first := &closableHostTool{testTool: testTool{name: "a"}}
+		partial := &closableHostTool{testTool: testTool{name: "b"}}
+		h.AddTool(pkgplugins.ToolSpec{PluginID: "tool/a", Name: "a", Build: func(pkgplugins.ToolContext) (tools.Tool, error) { return first, nil }})
+		h.AddTool(pkgplugins.ToolSpec{PluginID: "tool/a", Name: "b", Build: func(pkgplugins.ToolContext) (tools.Tool, error) { return partial, want }})
+		got, err := h.BuildEnabledTools(t.Context(), pkgplugins.ToolBuildContext{}, snapshot)
+		if !errors.Is(err, want) || len(got) != 0 || first.closed != 1 || partial.closed != 1 {
+			t.Fatalf("result=%v error=%v closed=%d/%d", got, err, first.closed, partial.closed)
+		}
+	})
+	t.Run("hooks", func(t *testing.T) {
+		h := New(nil)
+		h.RegisterPluginID("tool/a")
+		first := &closableHostHook{}
+		h.AddHook(pkgplugins.HookSpec{PluginID: "tool/a", Name: "a", Build: func(pkgplugins.HookContext) (hooks.HookPlugin, error) { return first, nil }})
+		h.AddHook(pkgplugins.HookSpec{PluginID: "tool/a", Name: "b", Build: func(pkgplugins.HookContext) (hooks.HookPlugin, error) { return nil, want }})
+		got, err := h.BuildEnabledHooks(t.Context(), "", snapshot)
+		if !errors.Is(err, want) || len(got) != 0 || first.closed != 1 {
+			t.Fatalf("result=%v error=%v closed=%d", got, err, first.closed)
+		}
+	})
 }

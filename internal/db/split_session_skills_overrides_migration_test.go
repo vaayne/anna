@@ -1,9 +1,6 @@
 package db
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 const (
 	sessionSkillsOverridesBeforeMigration = 90000000000026
@@ -19,14 +16,8 @@ const (
 // a name this change did not retire — least of all `skill_load`, which starts
 // with the retired union's own prefix.
 func TestSplitSessionAndSkillsOverridesDeletesOnlyTheRetiredNames(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, sessionSkillsOverridesBeforeMigration); err != nil {
-		t.Fatalf("restore pre-split schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, sessionSkillsOverridesBeforeMigration)
+	ctx := t.Context()
 	seedToolOverride(t, db, "session", false)
 	seedToolOverride(t, db, "skills", false)
 	// Three survivors: a name this change never touched, and the two new names

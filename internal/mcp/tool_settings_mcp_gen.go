@@ -19,28 +19,11 @@ type SettingsMcpActionTool = toolmeta.ActionTool
 // SettingsMcpActionTools lists every generated tool in a stable order.
 func SettingsMcpActionTools() []SettingsMcpActionTool {
 	return []SettingsMcpActionTool{
-		{Name: "settings_mcp_server_create", Family: "settings_mcp", Resource: "server", Action: "create", InputSchemaJSON: `{
+		{Name: "settings_mcp_server_create", Family: "settings_mcp", Resource: "server", Action: "create", Description: "Register a no-auth MCP server in an authorized scope. Credentials must be configured in the Web UI.", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
-    "credential_mode": {
-      "default": "shared",
-      "description": "per_user is only valid with auth_type oauth.",
-      "enum": [
-        "shared",
-        "per_user"
-      ],
-      "type": "string"
-    },
     "name": {
       "type": "string"
-    },
-    "oauth_client_id": {
-      "type": "string",
-      "writeOnly": true
-    },
-    "oauth_client_secret": {
-      "type": "string",
-      "writeOnly": true
     },
     "scope": {
       "enum": [
@@ -50,18 +33,6 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
         "system_agent"
       ],
       "type": "string"
-    },
-    "source": {
-      "type": "string",
-      "writeOnly": true
-    },
-    "source_id": {
-      "type": "string",
-      "writeOnly": true
-    },
-    "source_version": {
-      "type": "string",
-      "writeOnly": true
     },
     "target_agent_id": {
       "description": "Optional Agent whose scoped registration is created.",
@@ -86,7 +57,7 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "settings_mcp_server_delete", Family: "settings_mcp", Resource: "server", Action: "delete", InputSchemaJSON: `{
+		{Name: "settings_mcp_server_delete", Family: "settings_mcp", Resource: "server", Action: "delete", Description: "Delete an MCP registration using the version from settings_mcp_server_get. This refuses a stale version.", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "expected_version": {
@@ -118,7 +89,7 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "settings_mcp_server_get", Family: "settings_mcp", Resource: "server", Action: "get", InputSchemaJSON: `{
+		{Name: "settings_mcp_server_get", Family: "settings_mcp", Resource: "server", Action: "get", Description: "Read one authorized MCP registration and its version. Bearer credentials are never returned.", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -144,7 +115,7 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "settings_mcp_server_list", Family: "settings_mcp", Resource: "server", Action: "list", InputSchemaJSON: `{
+		{Name: "settings_mcp_server_list", Family: "settings_mcp", Resource: "server", Action: "list", Description: "List up to 50 MCP registrations in one authorized scope. Bearer credentials are never returned.", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "limit": {
@@ -170,7 +141,7 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
   },
   "type": "object"
 }`},
-		{Name: "settings_mcp_server_probe", Family: "settings_mcp", Resource: "server", Action: "probe", InputSchemaJSON: `{
+		{Name: "settings_mcp_server_probe", Family: "settings_mcp", Resource: "server", Action: "probe", Description: "Probe one authorized MCP registration: connect, list its tools, and persist the result. A failed probe still returns the server with a redacted error status.", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -196,16 +167,9 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "settings_mcp_server_update", Family: "settings_mcp", Resource: "server", Action: "update", InputSchemaJSON: `{
+		{Name: "settings_mcp_server_update", Family: "settings_mcp", Resource: "server", Action: "update", Description: "Update safe MCP metadata using the version from settings_mcp_server_get. Bearer credentials and their scope cannot change here.", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
-    "credential_mode": {
-      "enum": [
-        "shared",
-        "per_user"
-      ],
-      "type": "string"
-    },
     "enabled": {
       "type": "boolean"
     },
@@ -219,14 +183,6 @@ func SettingsMcpActionTools() []SettingsMcpActionTool {
     },
     "name": {
       "type": "string"
-    },
-    "oauth_client_id": {
-      "type": "string",
-      "writeOnly": true
-    },
-    "oauth_client_secret": {
-      "type": "string",
-      "writeOnly": true
     },
     "scope": {
       "enum": [
@@ -280,17 +236,11 @@ type SettingsMcpHandler interface {
 }
 
 type SettingsMcpCreateInput struct {
-	CredentialMode    string `json:"credential_mode,omitempty"`
-	Name              string `json:"name,omitempty"`
-	OauthClientId     string `json:"oauth_client_id,omitempty"`
-	OauthClientSecret string `json:"oauth_client_secret,omitempty"`
-	Scope             string `json:"scope,omitempty"`
-	Source            string `json:"source,omitempty"`
-	SourceId          string `json:"source_id,omitempty"`
-	SourceVersion     string `json:"source_version,omitempty"`
-	TargetAgentId     string `json:"target_agent_id,omitempty"`
-	Transport         string `json:"transport,omitempty"`
-	Url               string `json:"url,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Scope         string `json:"scope,omitempty"`
+	TargetAgentId string `json:"target_agent_id,omitempty"`
+	Transport     string `json:"transport,omitempty"`
+	Url           string `json:"url,omitempty"`
 }
 
 type SettingsMcpDeleteInput struct {
@@ -319,17 +269,14 @@ type SettingsMcpProbeInput struct {
 }
 
 type SettingsMcpUpdateInput struct {
-	CredentialMode    string `json:"credential_mode,omitempty"`
-	Enabled           *bool  `json:"enabled,omitempty"`
-	ExpectedVersion   string `json:"expected_version,omitempty"`
-	Id                string `json:"id,omitempty"`
-	Name              string `json:"name,omitempty"`
-	OauthClientId     string `json:"oauth_client_id,omitempty"`
-	OauthClientSecret string `json:"oauth_client_secret,omitempty"`
-	Scope             string `json:"scope,omitempty"`
-	TargetAgentId     string `json:"target_agent_id,omitempty"`
-	Transport         string `json:"transport,omitempty"`
-	Url               string `json:"url,omitempty"`
+	Enabled         *bool  `json:"enabled,omitempty"`
+	ExpectedVersion string `json:"expected_version,omitempty"`
+	Id              string `json:"id,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Scope           string `json:"scope,omitempty"`
+	TargetAgentId   string `json:"target_agent_id,omitempty"`
+	Transport       string `json:"transport,omitempty"`
+	Url             string `json:"url,omitempty"`
 }
 
 func SettingsMcpDispatch(ctx context.Context, h SettingsMcpHandler, action string, args map[string]any) (any, error) {

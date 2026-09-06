@@ -75,11 +75,12 @@ func (r *gateRunner) Chat(ctx context.Context, _ []ai.Message, _ agentruntime.Me
 	return out
 }
 
-func (*gateRunner) Alive() bool             { return true }
-func (*gateRunner) Busy() bool              { return false }
-func (*gateRunner) LastActivity() time.Time { return time.Now() }
-func (*gateRunner) SystemPrompt() string    { return "" }
-func (*gateRunner) Close() error            { return nil }
+func (*gateRunner) Alive() bool                  { return true }
+func (*gateRunner) Busy() bool                   { return false }
+func (*gateRunner) LastActivity() time.Time      { return time.Now() }
+func (*gateRunner) SystemPrompt() string         { return "" }
+func (*gateRunner) PluginContext() PluginContext { return PluginContext{} }
+func (*gateRunner) Close() error                 { return nil }
 
 type failingInboxMemory struct {
 	*memorytest.Fake

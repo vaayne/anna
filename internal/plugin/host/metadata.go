@@ -31,7 +31,6 @@ func (h *Host) ValidateRegistrations() error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	envOwners := map[string]string{}
-	skillOwners := map[string]string{}
 	for pluginID, specs := range h.sessionEnvRegs {
 		for _, spec := range specs {
 			if spec.EnvVar == "" {
@@ -47,20 +46,6 @@ func (h *Host) ValidateRegistrations() error {
 				return fmt.Errorf("pluginhost: session env %q registered by both %q and %q", spec.EnvVar, prev, pluginID)
 			}
 			envOwners[spec.EnvVar] = pluginID
-		}
-	}
-	for pluginID, specs := range h.bundledSkillRegs {
-		for _, spec := range specs {
-			if spec.Name == "" {
-				return fmt.Errorf("pluginhost: bundled skill registration for %q missing name", pluginID)
-			}
-			if spec.Sync == nil {
-				return fmt.Errorf("pluginhost: bundled skill %q for %q missing sync function", spec.Name, pluginID)
-			}
-			if prev, ok := skillOwners[spec.Name]; ok && prev != pluginID {
-				return fmt.Errorf("pluginhost: bundled skill %q registered by both %q and %q", spec.Name, prev, pluginID)
-			}
-			skillOwners[spec.Name] = pluginID
 		}
 	}
 	for _, meta := range h.metadataRegs {

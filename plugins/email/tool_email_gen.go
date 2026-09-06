@@ -19,12 +19,12 @@ type ActionTool = toolmeta.ActionTool
 // ActionTools lists every generated tool in a stable order.
 func ActionTools() []ActionTool {
 	return []ActionTool{
-		{Name: "email_account_list", Family: "email", Action: "account_list", InputSchemaJSON: `{
+		{Name: "email__account_list", PluginID: "system/email", Namespace: "email", LocalName: "account_list", Family: "email", Action: "account_list", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {},
   "type": "object"
 }`},
-		{Name: "email_message_list", Family: "email", Action: "message_list", InputSchemaJSON: `{
+		{Name: "email__message_list", PluginID: "system/email", Namespace: "email", LocalName: "message_list", Family: "email", Action: "message_list", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "account": {
@@ -61,7 +61,7 @@ func ActionTools() []ActionTool {
   },
   "type": "object"
 }`},
-		{Name: "email_message_read", Family: "email", Action: "message_read", InputSchemaJSON: `{
+		{Name: "email__message_read", PluginID: "system/email", Namespace: "email", LocalName: "message_read", Family: "email", Action: "message_read", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "account": {
@@ -82,7 +82,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "email_message_send", Family: "email", Action: "message_send", InputSchemaJSON: `{
+		{Name: "email__message_send", PluginID: "system/email", Namespace: "email", LocalName: "message_send", Family: "email", Action: "message_send", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "account": {

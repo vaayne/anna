@@ -3,12 +3,39 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
+
+	"github.com/CherryHQ/stella/internal/authz"
 )
+
+func TestResolveOAuthClientRejectsUninitializedSystemDCRBeforeNetwork(t *testing.T) {
+	authority, err := authz.NewUserAuthority(authz.UserID("ordinary-user"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{}
+	reg := Registration{
+		ID:             "0198f9a4-1b2c-7def-8123-456789abcdef",
+		Scope:          ScopeSystemAgent,
+		CredentialMode: CredentialModePerUser,
+		Transport:      TransportStreamableHTTP,
+	}
+	_, _, _, _, err = svc.resolveOAuthClient(
+		withOAuthAuthority(context.Background(), authority), reg,
+		&oauthex.AuthServerMeta{RegistrationEndpoint: "http://127.0.0.1:1/register"},
+		"https://callback.example.test/oauth",
+	)
+	if !errors.Is(err, ErrOAuthClientInitializationRequired) {
+		t.Fatalf("uninitialized system DCR error = %v, want %v", err, ErrOAuthClientInitializationRequired)
+	}
+}
 
 // preloadBundle writes a bundle whose access token is already expired so the
 // next Token() call must refresh through the fake AS.
@@ -92,18 +119,23 @@ func TestOAuthRefreshInvalidGrantFailsClosed(t *testing.T) {
 	}
 	// The Authorize path is always non-nil, so the transport's single retry can
 	// never loop; the status is durable needs_auth.
-	status := http.StatusUnauthorized
+	responseStatus := http.StatusUnauthorized
 	req, _ := http.NewRequest("GET", reg.URL, nil)
-	resp := &http.Response{StatusCode: status, Header: http.Header{"Www-Authenticate": {`Bearer error="invalid_token"`}}, Body: http.NoBody}
+	resp := &http.Response{StatusCode: responseStatus, Header: http.Header{"Www-Authenticate": {`Bearer error="invalid_token"`}}, Body: http.NoBody}
 	if err := handler.Authorize(context.Background(), req, resp); err == nil || !contains(err.Error(), credentialRejectedHint) {
 		t.Fatalf("Authorize error = %v, want the reconnect hint", err)
 	}
-	fresh := registrationFromRow(mustGetRow(t, svc.pool, reg.ID))
-	if fresh.Status != StatusNeedsAuth {
-		t.Fatalf("status = %q, want needs_auth", fresh.Status)
+	var commonStatus, statusErr string
+	if err := svc.pool.QueryRow(context.Background(), `
+		SELECT status, status_error FROM mcp_connection_state
+		WHERE config_id = $1::uuid AND credential_user_id IS NULL`, reg.ID).Scan(&commonStatus, &statusErr); err != nil {
+		t.Fatalf("read common observation: %v", err)
 	}
-	if !contains(fresh.StatusError, "invalid_token") || contains(fresh.StatusError, "new-access") {
-		t.Fatalf("status_error = %q, want the bounded challenge code only", fresh.StatusError)
+	if commonStatus != StatusNeedsAuth {
+		t.Fatalf("status = %q, want needs_auth", commonStatus)
+	}
+	if !contains(statusErr, "invalid_token") || contains(statusErr, "new-access") {
+		t.Fatalf("status_error = %q, want the bounded challenge code only", statusErr)
 	}
 }
 

@@ -40,7 +40,8 @@ const (
 	// override cleanup, the built-in Stella Settings default, retired
 	// webfetch override cleanup, retired tap-web plugin cleanup, and the dropped
 	// plugin scheduler columns are checked explicitly.
-	currentMigrationVersion = sequentialAnchor + 39
+	currentMigrationVersion = sequentialAnchor + 40
+	latestMigrationVersion  = sequentialAnchor + 42
 
 	previousGAUserID                     = "00000000-0000-0000-0000-000000000001"
 	previousGAGroupID                    = "00000000-0000-0000-0000-000000000002"
@@ -887,8 +888,8 @@ func assertPreviousGAUpgrade(t *testing.T, ctx context.Context, db *pgxpool.Pool
 	if err := db.QueryRow(ctx, `SELECT version_id FROM goose_db_version ORDER BY id DESC LIMIT 1`).Scan(&latest); err != nil {
 		t.Fatalf("read goose migration ledger: %v", err)
 	}
-	if latest != currentMigrationVersion {
-		t.Fatalf("latest goose migration = %d, want %d", latest, currentMigrationVersion)
+	if latest != latestMigrationVersion {
+		t.Fatalf("latest goose migration = %d, want %d", latest, latestMigrationVersion)
 	}
 }
 

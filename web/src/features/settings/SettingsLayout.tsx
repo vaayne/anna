@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
+  Blocks,
   CircleUserRound,
   Info,
   KeyRound,
@@ -8,7 +9,6 @@ import {
   MessageSquare,
   Puzzle,
   Webhook,
-  Wrench,
 } from "lucide-react";
 import { meQueryOptions } from "@/lib/queries/me";
 import type { SettingsNavGroup } from "@/features/settings/SettingsSurfaceLayout";
@@ -24,7 +24,7 @@ export const personalSettingsNav: SettingsNavGroup[] = [
       { label: "settings.nav.connections", href: "/settings/credentials", icon: KeyRound },
       { label: "settings.nav.library", href: "/settings/library", icon: Library },
       { label: "settings.nav.skills", href: "/settings/skills", icon: Puzzle },
-      { label: "mcp.title", href: "/settings/mcp", icon: Wrench },
+      { label: "settings.nav.plugins", href: "/settings/plugins", icon: Blocks },
     ],
   },
   {

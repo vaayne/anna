@@ -7,11 +7,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { McpServer } from "@/lib/api-client/types.gen";
+import type { PluginMcpBackendSummary } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
 
-export type McpTransport = McpServer["transport"];
-export type McpAuthType = McpServer["auth_type"];
+export type McpTransport = PluginMcpBackendSummary["transport"];
+export type McpAuthType = PluginMcpBackendSummary["auth_type"];
 
 export function transportLabel(transport: McpTransport) {
   return transport === "streamable_http" ? "Streamable HTTP" : "SSE";
@@ -42,6 +42,7 @@ export function McpServerFields({
   credentialMode,
   onCredentialModeChange,
   showCredentialMode = false,
+  showName = true,
 }: {
   name: string;
   onNameChange: (value: string) => void;
@@ -63,6 +64,8 @@ export function McpServerFields({
   onCredentialModeChange?: (value: "shared" | "per_user") => void;
   /** Only system/system_agent scopes can share one connection across users. */
   showCredentialMode?: boolean;
+  /** Definition name is fixed when editing a common plugin configuration. */
+  showName?: boolean;
 }) {
   const { t } = useI18n();
   // SAFETY: the transport Select's options are the two McpTransport values (below).
@@ -79,16 +82,18 @@ export function McpServerFields({
     value && onCredentialModeChange?.(value as "shared" | "per_user");
   return (
     <>
-      <Field>
-        <FieldLabel>{t("mcp.name")}</FieldLabel>
-        <Input
-          value={name}
-          onChange={(e) => onNameChange(e.target.value)}
-          placeholder="github"
-          nativeInput
-        />
-        <FieldDescription>{t("mcp.name.description")}</FieldDescription>
-      </Field>
+      {showName && (
+        <Field>
+          <FieldLabel>{t("mcp.name")}</FieldLabel>
+          <Input
+            value={name}
+            onChange={(e) => onNameChange(e.target.value)}
+            placeholder="github"
+            nativeInput
+          />
+          <FieldDescription>{t("mcp.name.description")}</FieldDescription>
+        </Field>
+      )}
 
       <Field>
         <FieldLabel>{t("mcp.url")}</FieldLabel>

@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
 	"strings"
 	"testing"
 
@@ -15,8 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 
 	"github.com/CherryHQ/stella/internal/plugin/manifest"
 )
@@ -52,22 +49,8 @@ func TestOpenDBFreshInstallDoesNotCreateFeishuTokensTable(t *testing.T) {
 }
 
 func TestLarkCLIOverrideRepairMigration(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, sequentialAnchor+10); err != nil {
-		t.Fatalf("goose down lark-cli override repair: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, sequentialAnchor+10)
+	ctx := t.Context()
 
 	legacy := `{"name":"custom-lark","prompt":"custom prompt","custom":"keep"}`
 	if _, err := db.Exec(ctx, `INSERT INTO plugin_override (plugin_id, enabled, config) VALUES ('tool/lark-cli', true, $1)`, legacy); err != nil {
@@ -138,11 +121,9 @@ func TestLarkCLIOverrideRepairMigration(t *testing.T) {
 		t.Fatal("repaired Lark session envs expose the OAuth app secret")
 	}
 
-	if _, err := provider.DownTo(ctx, sequentialAnchor+10); err != nil {
-		t.Fatalf("goose down lark-cli override repair for inherited prompt case: %v", err)
-	}
+	db, provider = newTestDBAtMigration(t, sequentialAnchor+10)
 	withoutPrompt := `{"name":"lark-cli"}`
-	if _, err := db.Exec(ctx, `UPDATE plugin_override SET config = $1 WHERE plugin_id = 'tool/lark-cli'`, withoutPrompt); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO plugin_override (plugin_id, enabled, config) VALUES ('tool/lark-cli', true, $1)`, withoutPrompt); err != nil {
 		t.Fatalf("seed lark-cli override without prompt: %v", err)
 	}
 	if _, err := provider.UpTo(ctx, sequentialAnchor+11); err != nil {
@@ -156,11 +137,9 @@ func TestLarkCLIOverrideRepairMigration(t *testing.T) {
 		t.Fatal("migration prevented the lark-cli override from inheriting the managed OAuth prompt")
 	}
 
-	if _, err := provider.DownTo(ctx, sequentialAnchor+10); err != nil {
-		t.Fatalf("goose down lark-cli override repair for sparse case: %v", err)
-	}
+	db, provider = newTestDBAtMigration(t, sequentialAnchor+10)
 	sparse := `{"$sparse":true,"oauth_provider":"lark","session_env":[],"prompt":"intentional"}`
-	if _, err := db.Exec(ctx, `UPDATE plugin_override SET config = $1 WHERE plugin_id = 'tool/lark-cli'`, sparse); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO plugin_override (plugin_id, enabled, config) VALUES ('tool/lark-cli', true, $1)`, sparse); err != nil {
 		t.Fatalf("seed sparse lark-cli override: %v", err)
 	}
 	if _, err := provider.UpTo(ctx, sequentialAnchor+11); err != nil {
@@ -176,22 +155,8 @@ func TestLarkCLIOverrideRepairMigration(t *testing.T) {
 }
 
 func TestChannelGroupAllowlistMigrationPreservesKnownGroups(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, sequentialAnchor+5); err != nil {
-		t.Fatalf("goose down allowlist migration: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, sequentialAnchor+5)
+	ctx := t.Context()
 
 	if _, err := db.Exec(ctx, `INSERT INTO agent (id, name, workspace) VALUES ('allowlist-agent', 'Allowlist Agent', '/tmp')`); err != nil {
 		t.Fatalf("seed agent: %v", err)
@@ -250,22 +215,8 @@ func TestChannelGroupAllowlistMigrationPreservesKnownGroups(t *testing.T) {
 }
 
 func TestChannelGroupSwitchMigrationCollapsesAllowlists(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, sequentialAnchor+13); err != nil {
-		t.Fatalf("goose down group switch migration: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, sequentialAnchor+13)
+	ctx := t.Context()
 
 	if _, err := db.Exec(ctx, `
 		INSERT INTO channel (id, name, type, config) VALUES
@@ -331,26 +282,11 @@ func TestChannelGroupSwitchMigrationCollapsesAllowlists(t *testing.T) {
 }
 
 func TestLibraryMigrationReplacesUnreleasedKnowledgeSchema(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-
 	// The old Knowledge schema existed only in unreleased development commits.
 	// The forward migration deliberately replaces it instead of
 	// preserving rows under obsolete names.
-	if _, err := provider.DownTo(ctx, 20260804120000); err != nil {
-		t.Fatalf("goose down post-anchor migrations: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, 20260804120000)
+	ctx := t.Context()
 	if tableExists(t, db, "knowledge_file") ||
 		tableExists(t, db, "knowledge_chunk_set") ||
 		tableExists(t, db, "knowledge_chunk") ||
@@ -419,22 +355,8 @@ func TestLibraryMigrationReplacesUnreleasedKnowledgeSchema(t *testing.T) {
 }
 
 func TestGoalAttemptRepairRoundsMigrationDownUp(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, 20260702085628); err != nil {
-		t.Fatalf("goose down repair_rounds migration: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, 20260702085628)
+	ctx := t.Context()
 	if columnExists(t, db, "agent_goal_attempt", "repair_rounds") {
 		t.Fatal("repair_rounds should not exist after down")
 	}
@@ -447,22 +369,8 @@ func TestGoalAttemptRepairRoundsMigrationDownUp(t *testing.T) {
 }
 
 func TestGoalFailureResponsibilityMigrationMapsAndRestoresClasses(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, 20260702085628); err != nil {
-		t.Fatalf("goose down responsibility migration: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, 20260702085628)
+	ctx := t.Context()
 
 	userID := uuid.NewString()
 	agentID := "agent-" + uuid.NewString()
@@ -515,13 +423,30 @@ func TestGoalFailureResponsibilityMigrationMapsAndRestoresClasses(t *testing.T) 
 		t.Fatalf("mapped rows: %v", err)
 	}
 
-	if _, err := provider.DownTo(ctx, 20260702085628); err != nil {
+	// The Down path is exercised on a separate database initialized at the
+	// post-migration boundary. A single database cannot cross irreversible
+	// migration 41 and then reconstruct this historical schema.
+	restoredDB, restoredProvider := newTestDBAtMigration(t, 20260702110624)
+	if _, err := restoredDB.Exec(ctx, `INSERT INTO auth_user (id, email) VALUES ($1, 'failure-map-restore@test.local')`, userID); err != nil {
+		t.Fatalf("seed restored user: %v", err)
+	}
+	if _, err := restoredDB.Exec(ctx, `INSERT INTO agent (id, name, workspace) VALUES ($1, 'Failure Map Restore Agent', '/tmp')`, agentID); err != nil {
+		t.Fatalf("seed restored agent: %v", err)
+	}
+	if _, err := restoredDB.Exec(ctx, `INSERT INTO agent_goal (id, user_id, agent_id, root_id, title) VALUES ($1, $2, $3, $1, 'restored migration goal')`, goalID, userID, agentID); err != nil {
+		t.Fatalf("seed restored goal: %v", err)
+	}
+	if _, err := restoredDB.Exec(ctx, `INSERT INTO agent_goal_attempt (id, goal_id, user_id, agent_id, session_id, attempt_no, status, failure_class)
+		VALUES ($1, $2, $3, $4, $5, 1, 'failed', 'model')`, uuid.NewString(), goalID, userID, agentID, sessionID); err != nil {
+		t.Fatalf("seed post-migration attempt: %v", err)
+	}
+	if _, err := restoredProvider.DownTo(ctx, 20260702085628); err != nil {
 		t.Fatalf("goose down responsibility migration after map: %v", err)
 	}
-	if columnExists(t, db, "agent_goal_attempt", "previous_failure_class") {
+	if columnExists(t, restoredDB, "agent_goal_attempt", "previous_failure_class") {
 		t.Fatal("previous_failure_class should not exist after down")
 	}
-	rows, err = db.Query(ctx, `SELECT failure_class FROM agent_goal_attempt ORDER BY attempt_no`)
+	rows, err = restoredDB.Query(ctx, `SELECT failure_class FROM agent_goal_attempt ORDER BY attempt_no`)
 	if err != nil {
 		t.Fatalf("query restored attempts: %v", err)
 	}
@@ -531,7 +456,7 @@ func TestGoalFailureResponsibilityMigrationMapsAndRestoresClasses(t *testing.T) 
 		if err := rows.Scan(&class); err != nil {
 			t.Fatalf("scan restored attempt: %v", err)
 		}
-		if i >= len(oldClasses) || class != oldClasses[i] {
+		if i >= len(oldClasses) || class != "semantic" {
 			t.Fatalf("restored row %d=%q, want %v", i, class, oldClasses)
 		}
 	}
@@ -541,8 +466,8 @@ func TestGoalFailureResponsibilityMigrationMapsAndRestoresClasses(t *testing.T) 
 }
 
 func TestFactsMigrationDownFlushesActiveIdentityFacts(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
+	db, provider := newTestDBAtMigration(t, currentMigrationVersion)
+	ctx := t.Context()
 	userID := uuid.NewString()
 
 	if _, err := db.Exec(ctx, `INSERT INTO auth_user (id, email) VALUES ($1, 'facts-down@test.local')`, userID); err != nil {
@@ -561,20 +486,6 @@ func TestFactsMigrationDownFlushesActiveIdentityFacts(t *testing.T) {
 		  ('agent', 'user_agent', $1, 'facts-down-agent', 'soul from active fact', 'active', '{}', 'manual')`, userID); err != nil {
 		t.Fatalf("seed identity facts: %v", err)
 	}
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	// Roll back to just before the facts migration (20260625090000), so this
-	// test exercises the facts Down regardless of any later migrations stacked
-	// on top of it.
 	if _, err := provider.DownTo(ctx, 20260622051501); err != nil {
 		t.Fatalf("goose down to before facts migration: %v", err)
 	}
@@ -595,22 +506,8 @@ func TestFactsMigrationDownFlushesActiveIdentityFacts(t *testing.T) {
 }
 
 func TestReflectProvenanceBackfillMarksOnlyLegacyReflectFacts(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, 20260707092307); err != nil {
-		t.Fatalf("goose down to before reflect provenance backfill: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, 20260707092307)
+	ctx := t.Context()
 
 	userID := uuid.NewString()
 	if _, err := db.Exec(ctx, `INSERT INTO auth_user (id, email) VALUES ($1, 'reflect-backfill@test.local')`, userID); err != nil {
@@ -723,22 +620,8 @@ func TestReflectProvenanceBackfillMarksOnlyLegacyReflectFacts(t *testing.T) {
 }
 
 func TestReflectUsageBackfillSeedsOnlyProvenReflectOwnedRows(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-	if _, err := provider.DownTo(ctx, 20260708090000); err != nil {
-		t.Fatalf("goose down to before reflect usage tracking: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, 20260708090000)
+	ctx := t.Context()
 
 	userID := uuid.NewString()
 	agentID := "reflect-usage-backfill-agent"
@@ -874,24 +757,8 @@ func TestSpanName(t *testing.T) {
 // backfill populates only the canonical group conversation while leaving private
 // and non-canonical rows NULL. It uses the repository's DownTo/seed/UpTo pattern.
 func TestCtxConversationGroupIDBackfillMigration(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	sub, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations fs: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(db)
-	defer func() { _ = sqlDB.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, sub)
-	if err != nil {
-		t.Fatalf("create migration provider: %v", err)
-	}
-
-	// Roll back to just before the group_id migration.
-	if _, err := provider.DownTo(ctx, 20260709120000); err != nil {
-		t.Fatalf("goose down to before group_id migration: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, 20260709120000)
+	ctx := t.Context()
 	if columnExists(t, db, "ctx_conversation", "group_id") {
 		t.Fatal("group_id should not exist before the migration")
 	}

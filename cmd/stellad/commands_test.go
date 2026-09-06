@@ -6,7 +6,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +16,6 @@ import (
 	"github.com/CherryHQ/stella/internal/db/dbtest"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/home"
-	pluginmanifest "github.com/CherryHQ/stella/internal/plugin/manifest"
 	"github.com/CherryHQ/stella/internal/skill"
 	"github.com/CherryHQ/stella/pkg/ai"
 	"github.com/CherryHQ/stella/pkg/providers"
@@ -57,132 +55,6 @@ func TestIntentClassifierStreamFuncBuilderUsesProvidedProviderType(t *testing.T)
 	}
 	if stream == nil {
 		t.Fatal("expected non-nil stream func")
-	}
-}
-
-type commandTestStore struct{}
-
-func (commandTestStore) ListProviders(context.Context) ([]config.Provider, error) { return nil, nil }
-func (commandTestStore) GetProvider(context.Context, string) (config.Provider, error) {
-	return config.Provider{}, errors.New("not found")
-}
-func (commandTestStore) CreateProvider(context.Context, config.Provider) error { return nil }
-func (commandTestStore) UpdateProvider(context.Context, config.Provider) error { return nil }
-func (commandTestStore) DeleteProvider(context.Context, string) error          { return nil }
-func (commandTestStore) ListCachedModels(context.Context) ([]config.CachedModel, error) {
-	return nil, nil
-}
-func (commandTestStore) ReplaceCachedModels(context.Context, string, []string) error { return nil }
-func (commandTestStore) Seed(context.Context) error                                  { return nil }
-func (commandTestStore) ListAgents(context.Context) ([]config.Agent, error)          { return nil, nil }
-func (commandTestStore) ListEnabledAgents(context.Context) ([]config.Agent, error)   { return nil, nil }
-func (commandTestStore) GetAgent(context.Context, string) (config.Agent, error) {
-	return config.Agent{}, nil
-}
-func (commandTestStore) CreateAgent(context.Context, config.Agent) error        { return nil }
-func (commandTestStore) UpdateAgent(context.Context, config.Agent) error        { return nil }
-func (commandTestStore) DeleteAgent(context.Context, string) error              { return nil }
-func (commandTestStore) ListChannels(context.Context) ([]config.Channel, error) { return nil, nil }
-func (commandTestStore) ListChannelsByType(context.Context, string) ([]config.Channel, error) {
-	return nil, nil
-}
-
-func (commandTestStore) GetChannel(context.Context, string) (config.Channel, error) {
-	return config.Channel{}, nil
-}
-func (commandTestStore) CreateChannel(context.Context, config.Channel) error { return nil }
-func (commandTestStore) UpdateChannel(context.Context, config.Channel) error { return nil }
-func (commandTestStore) DeleteChannel(context.Context, string) error         { return nil }
-func (commandTestStore) ListPlugins(context.Context) ([]config.Plugin, error) {
-	return nil, nil
-}
-
-func (commandTestStore) ListPluginOverrides(context.Context) ([]config.Plugin, error) {
-	return nil, nil
-}
-
-func (commandTestStore) ListEnabledPlugins(context.Context) ([]config.Plugin, error) { return nil, nil }
-func (commandTestStore) GetPlugin(context.Context, string) (config.Plugin, error) {
-	return config.Plugin{}, nil
-}
-func (commandTestStore) UpsertPlugin(context.Context, config.Plugin) error    { return nil }
-func (commandTestStore) SetPluginEnabled(context.Context, string, bool) error { return nil }
-func (commandTestStore) SetPluginConfig(context.Context, string, map[string]any) error {
-	return nil
-}
-
-func (commandTestStore) SetChannelPluginConfig(context.Context, string, string, string, map[string]any) error {
-	return nil
-}
-func (commandTestStore) DeletePlugin(context.Context, string) error { return nil }
-func (commandTestStore) GetManifestPluginOverride(context.Context, string) (config.ManifestPluginOverride, bool, error) {
-	return config.ManifestPluginOverride{}, false, nil
-}
-
-func (commandTestStore) ListManifestPluginOverrides(context.Context) ([]config.ManifestPluginOverride, error) {
-	return nil, nil
-}
-
-func (commandTestStore) UpsertManifestPluginOverride(context.Context, config.ManifestPluginOverride) error {
-	return nil
-}
-func (commandTestStore) DeleteManifestPluginOverride(context.Context, string) error { return nil }
-func (commandTestStore) GetChatAgent(context.Context, string, string, string) (string, error) {
-	return "", nil
-}
-
-func (commandTestStore) SetChatAgent(context.Context, string, string, string, string) error {
-	return nil
-}
-func (commandTestStore) DeleteChatAgent(context.Context, string, string, string) error { return nil }
-func (commandTestStore) GetSetting(context.Context, string) (string, error)            { return "", nil }
-func (commandTestStore) SetSetting(context.Context, string, string) error              { return nil }
-func (commandTestStore) Snapshot(context.Context, string) (*config.Snapshot, error)    { return nil, nil }
-
-// overrideStore serves one stored customization to the startup resolver.
-type overrideStore struct {
-	commandTestStore
-	rows []config.ManifestPluginOverride
-}
-
-func (s overrideStore) ListManifestPluginOverrides(context.Context) ([]config.ManifestPluginOverride, error) {
-	return s.rows, nil
-}
-
-// Startup is what hands the plugin host its manifest and what the binary
-// reconcile installs from. Applying only the enable flag here — which is what it
-// used to do — made every definition customization and every admin-added plugin
-// evaporate on restart, while the settings page kept showing the merged view.
-func TestStartupResolvesDefinitionOverridesAndAddedPlugins(t *testing.T) {
-	ctx := context.Background()
-	disabled := false
-	store := overrideStore{rows: []config.ManifestPluginOverride{
-		{PluginID: "tool/mise", Config: `{"$sparse":true,"display_name":"mise (ours)"}`},
-		{PluginID: "tool/gh", Enabled: &disabled},
-		{
-			PluginID: "tool/my-cli",
-			Enabled:  &[]bool{true}[0],
-			Config:   `{"kind":"tool","name":"my-cli","display_name":"My CLI","description":""}`,
-		},
-	}}
-
-	manifest, err := loadBuiltinManifestWithOverrides(ctx, store)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	byID := make(map[string]pluginmanifest.ManifestPlugin, len(manifest.Plugins))
-	for _, p := range manifest.Plugins {
-		byID[p.ID] = p
-	}
-
-	if got := byID["tool/mise"]; got.DisplayName != "mise (ours)" || !slices.Equal(got.OverriddenFields, []string{"display_name"}) {
-		t.Errorf("customized builtin = %q (overridden=%v), want the stored edit", got.DisplayName, got.OverriddenFields)
-	}
-	if got, ok := byID["tool/my-cli"]; !ok || got.DisplayName != "My CLI" {
-		t.Errorf("admin-added plugin missing from the startup manifest: %#v", got)
-	}
-	if got := byID["tool/gh"]; got.Enabled {
-		t.Error("the enable override stopped being applied")
 	}
 }
 

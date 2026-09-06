@@ -95,8 +95,9 @@ code: `internal/agent/session/access` has its own `SendInput`, and a bare name
 would not compile.
 
 **Hand-written tools are a closed list**: `bash`, `view_image` (core sandbox),
-`notify` (channel dispatcher), `goal_control` (attempt protocol), `code`
-(meta-tool), and `mcp__*`. Adding to it means
+`notify` (channel dispatcher), `goal_control` (attempt protocol), and `code`
+(meta-tool). Dynamically discovered MCP tools carry trusted plugin metadata;
+no name prefix grants them handwritten-tool status. Adding to the fixed list means
 claiming the tool has neither an HTTP operation nor a schema that could be
 declared. Change the list in `pkg/toolmeta` and say why in the PR.
 
@@ -167,8 +168,14 @@ entry_update takes this"` is union-era text that a split tool inherits and
 
 ## 4. Naming
 
-**Tool names are `<domain>_<resource>_<action>`**, with the resource dropped when
-it repeats the domain: `recally_feed_add`, `scheduler_job_pause`, `goal_create`.
+**Plugin tool names are `{namespace}__{local_name}`**: `recally__feed_add` and
+`scheduler__job_pause`. Go and MCP backends use the same exported identity.
+Namespaces cannot contain `__`; the complete name is at most 64 characters.
+Trusted metadata carries plugin ID and local name; never derive authorization
+from an exported prefix.
+
+**Core names remain `<domain>_<resource>_<action>`**, dropping a repeated resource:
+`goal_create`.
 Verbs are small and boring — `create`, `get`, `list`, `update`, `delete`,
 `search`, `add`, `remove`, `save`, `send`. Resources are singular and match the
 HTTP resource name. No bare nouns, no plurals, no verb-object inversion.
@@ -220,7 +227,7 @@ before the call, and `DecodeInputStrict` rejects anything it does not declare.
 - **Numeric bounds match the handler.** A schema `maximum` the handler then
   clamps teaches the model something false.
 - **Large bodies travel as a sandbox path, not as an inline string.** Follow the
-  `content_path` precedent in `recally_article_save`: 1 MB per file, 4 MB per
+  `content_path` precedent in `recally__article_save`: 1 MB per file, 4 MB per
   call, and the tool reports what it actually stored.
 - **Output has a stated cap** and says so in the result (`truncated`, `note`)
   when it hits it. Timestamps are RFC3339. Secret values are never returned —
@@ -297,7 +304,8 @@ action needs no registration edit.
   subset is cached. A tool set that quietly lost a tool is worse than a request
   that failed, because the model reasons about the gap as if it were the truth.
 - **Core names are reserved.** A builtin or plugin may not take a core tool's
-  name, and `mcp__` is reserved for MCP.
+  name. Plugin namespaces are selected by the common snapshot; there is no
+  backend-specific MCP prefix or implicit capability attached to a name.
 - **The Code Mode hot set is small on purpose.** `HotToolNames` in
   `pkg/agent/code_strategy.go` lists the tools worth putting in front of the
   model every turn instead of behind `tools.search`. It is exported so the prose
@@ -316,9 +324,9 @@ names).
 Tool names are strings in places no compiler checks. When you add, rename or
 remove one, walk this list:
 
-- `resources/skills/system/<domain>/SKILL.md` — examples must use real names and
+- `plugins/<category>/<plugin>/skills/<skill>/SKILL.md` — examples must use real names and
   real fields.
-- `resources/skills/system/stella/SKILL.md` — the tool inventory.
+- `plugins/core/skills/stella/SKILL.md` — the tool inventory.
 - `internal/agent/prompt/template/system_prompt.tmpl`.
 - Scheduler built-in job templates, which name tools in their prompts.
 - `web/content/docs/development/architecture.md` (EN + ZH) tool tables.
@@ -326,48 +334,29 @@ remove one, walk this list:
 - The Web UI's tool metadata, where a name drives an icon or a label.
 - The release note, whenever a name changes or disappears.
 
-**Verified by:** `resources/recally_skill_test.go` and
+**Verified by:** `resources/recally__skill_test.go` and
 `internal/scheduler/builtin_schema_test.go` (skill and template examples are
 checked against the live schema); `mise run generate:check`.
 
 ## 10. Renaming, splitting, deleting
 
-A rename is a delete plus a create. There is no alias period and, while Stella
-is pre-production, no compatibility period either — a clean break:
+A name change must preserve existing permission decisions for the same
+capability. Plugin overrides use plugin ID, local tool name and scope owner;
+core overrides use the core tool name. A runtime configuration UUID is not a
+policy identity.
 
-1. **`tool_override` gets a migration in the same release** that **deletes**
-   every row naming a retired tool. A row keyed by a name nothing answers to
-   hides neither the old capability nor any of the new ones; it waits for a
-   future tool to reuse the name and inherit the setting. Deleting it returns
-   the capability to its default visibility.
-2. **The `down` migration is a no-op**, and says so. It cannot invent the
-   `enabled` flag, scope or owner of a deleted row, and guessing would hand a
-   user back a capability they had switched off, or take one away.
-3. **No legacy redirect.** A selector in a delegate preset's `tools:` list or in
-   `excluded_tools` that names a retired tool selects nothing, and the runner
-   warns that it matched nothing. Family selectors still resolve — `scheduler`
-   selects every `scheduler_job_*` — because that is a feature, not a
-   compatibility shim.
-4. **The release note lists every old name against its new name** and gives a
-   grep for custom skills and presets:
+1. Migrate a renamed capability using an explicit, verified identity mapping.
+   Preserve each enabled decision and scope owner. Ambiguous legacy names or
+   conflicting owners abort the migration; do not restore default visibility.
+2. Remove policies only when their capability is actually removed. A down
+   migration must not invent deleted permissions or credentials.
+3. Do not add runtime aliases or legacy lookup fallbacks for the unified plugin
+   cutover. Custom Skills and presets containing old names need explicit edits.
+4. Document every old/new name and test policy preservation, conflicts and
+   rollback. Family selectors use trusted registry metadata, not prefix guesses.
 
-   ```bash
-   grep -rn 'recally_digest\|scheduler_pause' ~/.stella/skills ~/.stella/delegates
-   ```
-
-A custom skill that calls a removed name by hand still breaks. That is a
-declared breaking change, not something the migration can fix.
-
-**Upgrade trigger:** this is the pre-production rule. The first deployment with
-real `tool_override` rows or user-written presets to preserve goes back to
-expand-then-contract — map old names to new with a **deny-wins** merge
-(`enabled = existing AND incoming`), keep the old rows for one release, delete
-them in the next, and carry the old names in a `toolmeta` legacy map for that
-one deprecation release.
-
-**Verified by:** the migration's own test (the retired rows go, everything else
-stays); `TestMatchNameResolvesFamiliesThroughTheRegistry`
-(`pkg/toolmeta`).
+This cutover uses a maintenance upgrade with old writers stopped. Preserve old
+source rows for inspection without reading them in the new runtime.
 
 ## 11. Testing
 
@@ -378,7 +367,7 @@ Every tool needs, at minimum:
 - **A handler test** for whatever the handler does beyond dispatch — mutually
   exclusive fields, path expansion, caps, projection.
 - **Schema and skill guards.** `internal/scheduler/builtin_schema_test.go` and
-  `resources/recally_skill_test.go` check documented examples against the live
+  `resources/recally__skill_test.go` check documented examples against the live
   schema; extend them rather than writing a parallel one.
 - **`mise run generate:api:check` clean.** It regenerates through the Redocly
   bundler (`vp dlx`), so it needs the node toolchain; it checks untracked files
@@ -404,9 +393,9 @@ Every tool needs, at minimum:
   - **A tool that genuinely cannot be called from a chat session** goes in
     `protocolExceptions` with the specific tests that stand in for it.
 
-  Today the gate has three exceptions (`code`, `goal_control`, the `mcp__`
-  prefix) and seven error-shape-only tools; the test logs a per-tool report that
-  is the current answer, so read it rather than trusting this paragraph.
+  The test logs its current protocol exceptions and error-shape-only tools
+  individually. Dynamic MCP coverage uses trusted plugin identity, never an
+  exported-name prefix. Read that report for the current coverage inventory.
 
 Reach for a system test only when the seam is cross-process — the `goal_control`
 attempt protocol is the example. See [`testing.md`](./testing).

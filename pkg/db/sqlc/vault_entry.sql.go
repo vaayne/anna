@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteMCPConfigCredentials = `-- name: DeleteMCPConfigCredentials :exec
+DELETE FROM vault_entry
+WHERE name IN (
+    'MCP_TOKEN_' || upper(replace($1::uuid::text, '-', '_')),
+    'MCP_OAUTH_' || upper(replace($1::uuid::text, '-', '_')),
+    'MCP_OAUTH_CLIENT_' || upper(replace($1::uuid::text, '-', '_'))
+)
+`
+
+// Names are derived here so the caller cannot broaden the deletion to a prefix.
+func (q *Queries) DeleteMCPConfigCredentials(ctx context.Context, configID string) error {
+	_, err := q.db.Exec(ctx, deleteMCPConfigCredentials, configID)
+	return err
+}
+
 const deleteVaultEntryByScope = `-- name: DeleteVaultEntryByScope :exec
 DELETE FROM vault_entry
 WHERE scope = $1

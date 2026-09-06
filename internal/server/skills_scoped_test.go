@@ -447,7 +447,7 @@ func TestAgentSkills_InstallScopedSkill(t *testing.T) {
 
 	_, creatorSID := newNonAdmin(t, env, "creator-install")
 	agentID := createAgentAsUser(t, env, creatorSID, "install-agent")
-	source, err := filepath.Abs("../../resources/skills/system/stella")
+	source, err := filepath.Abs("../../plugins/core/skills/stella")
 	if err != nil {
 		t.Fatalf("abs path: %v", err)
 	}

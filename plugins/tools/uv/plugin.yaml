@@ -1,0 +1,12 @@
+id: tool/uv
+kind: tool
+name: uv
+display_name: uv
+description: An extremely fast Python package manager and resolver written in Rust.
+enabled: true
+category: system
+binaries:
+  - name: uv
+    tool: uv
+skills:
+  - name: python-script

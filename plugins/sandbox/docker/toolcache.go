@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"reflect"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/containerd/errdefs"
@@ -20,6 +21,8 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/sync/singleflight"
 
+	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
+	"github.com/CherryHQ/stella/plugins/core"
 	"github.com/CherryHQ/stella/plugins/sandbox/docker/dockerclient"
 )
 
@@ -32,9 +35,14 @@ const (
 const (
 	// /opt/stella is world-traversable. /home/stella is 0700, so rootless
 	// container UID 0 with all capabilities dropped cannot reach mounts there.
-	containerUserToolsRoot        = "/opt/stella/user-tools"
-	containerUserToolsBin         = containerUserToolsRoot + "/bin"
-	containerUserToolsReadyMarker = containerUserToolsRoot + "/.stella-tools-ready"
+	// Selection artifacts are mounted over the image's /opt/stella/bin. Keeping
+	// the helper's mount point separate lets it read the image binaries while
+	// constructing a volume that contains only this snapshot's selection.
+	containerSelectionRoot        = "/opt/stella/selection-tools"
+	containerSelectionBin         = "/opt/stella/bin"
+	containerCoreRuntimeRoot      = "/opt/stella/core-runtime"
+	containerBuiltinArtifactRoot  = "/opt/stella/.mise-tools/builtin-artifacts"
+	containerSelectionReadyMarker = containerSelectionRoot + "/.stella-selection-ready"
 )
 
 const (
@@ -42,163 +50,211 @@ const (
 	toolCacheImageLabel     = "stella.image"
 	toolCacheHashLabel      = "stella.hash"
 	toolCacheCreatedAtLabel = "stella.tool_cache.created_at"
+	toolCacheKindLabel      = "stella.tool_cache.kind"
 )
 
 // ToolBinary describes a user-configured CLI that must be installed in a Linux
 // container context before docker sandbox sessions can execute it.
 // Fields mirror manifest.ManifestBinary 1:1; keep them in sync.
 type ToolBinary struct {
-	Name    string
-	Tool    string // mise tool key: uv, bun, github:owner/repo, pipx:pkg, npm:pkg, http:name
-	Version string
-	Options map[string]any // mise tool options, using the same names as mise.toml
+	PluginID string
+	ConfigID string
+	Scope    string
+	Revision int64
+	Name     string
+	Tool     string // mise tool key: uv, bun, github:owner/repo, pipx:pkg, npm:pkg, http:name
+	Version  string
+	Options  map[string]any // mise tool options, using the same names as mise.toml
 }
 
 func (b ToolBinary) miseToolKey() string {
 	return b.Tool
 }
 
-type userToolCache struct {
-	VolumeName string
-	BinPath    string
+func binaryArtifactIdentity(binary ToolBinary) (string, error) {
+	return pkgplugins.BinaryArtifactIdentity(pkgplugins.PluginBinarySpec{
+		Name: binary.Name, Tool: binary.Tool, Version: binary.Version, Options: binary.Options,
+	})
+}
+
+type selectionToolCache struct {
+	VolumeName     string
+	BinPath        string
+	MaskVolumeName string
 }
 
 var (
-	toolCacheMu        sync.Mutex
-	toolCacheReady     = map[string]*userToolCache{}
-	toolCacheGroup     singleflight.Group
-	installToolCacheFn = installUserToolCache
+	toolCacheGroup              singleflight.Group
+	installSelectionToolCacheFn = installSelectionToolCache
 )
 
-func ensureUserToolCache(ctx context.Context, client *dockerclient.Client, cfg Config) (*userToolCache, error) {
-	if len(cfg.UserToolBinaries) == 0 {
-		return nil, nil
+// ensureSelectionToolCache prepares Linux-native artifacts for the immutable
+// runner snapshot. The cache key must use the resolved image ID because a tag
+// can move while a long-running stellad process is alive.
+func ensureSelectionToolCache(ctx context.Context, client *dockerclient.Client, cfg Config, imageID string) (*selectionToolCache, error) {
+	if imageID == "" {
+		return nil, fmt.Errorf("docker selection tool cache: resolved image ID is required")
 	}
-
-	hash := userToolCacheHash(cfg.Image, cfg.UserToolBinaries)
-	volumeName := "stella-tools-" + hash[:16]
-	installerName := "stella-tool-cache-" + hash[:16]
-	cache := &userToolCache{VolumeName: volumeName, BinPath: containerUserToolsBin}
-
-	if ready := cachedToolCache(hash); ready != nil {
-		return ready, nil
-	}
-
-	value, err, _ := toolCacheGroup.Do(hash, func() (any, error) {
-		if ready := cachedToolCache(hash); ready != nil {
-			return ready, nil
-		}
-		ready, err := installToolCacheFn(ctx, client, cfg, hash, installerName, cache)
+	core := core.RuntimeResources()
+	hash := selectionToolCacheHash(imageID, cfg.SelectionToolBinaries, core)
+	volumeName := "stella-selection-" + hash[:16]
+	installerName := "stella-selection-cache-" + hash[:16]
+	cache := &selectionToolCache{VolumeName: volumeName, BinPath: containerSelectionBin, MaskVolumeName: "stella-selection-mask-" + hash[:16]}
+	value, err, _ := toolCacheGroup.Do("selection:"+hash, func() (any, error) {
+		ready, err := installSelectionToolCacheFn(ctx, client, cfg, imageID, hash, installerName, cache)
 		if err != nil {
 			return nil, err
 		}
-		markToolCacheReady(hash, ready)
 		return ready, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return value.(*userToolCache), nil
+	return value.(*selectionToolCache), nil
 }
 
-func installUserToolCache(ctx context.Context, client *dockerclient.Client, cfg Config, hash, installerName string, cache *userToolCache) (*userToolCache, error) {
+func installSelectionToolCache(ctx context.Context, client *dockerclient.Client, cfg Config, imageID, hash, installerName string, cache *selectionToolCache) (*selectionToolCache, error) {
+	core := core.RuntimeResources()
 	if _, err := client.VolumeCreate(ctx, mobyclient.VolumeCreateOptions{
 		Name: cache.VolumeName,
 		Labels: map[string]string{
 			toolCacheLabel:          "true",
-			toolCacheImageLabel:     cfg.Image,
+			toolCacheKindLabel:      "selection",
+			toolCacheImageLabel:     imageID,
 			toolCacheHashLabel:      hash,
 			toolCacheCreatedAtLabel: time.Now().UTC().Format(time.RFC3339),
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("docker user tool cache: create volume %s: %w", cache.VolumeName, err)
+		return nil, fmt.Errorf("docker selection tool cache: create volume %s: %w", cache.VolumeName, err)
 	}
-
+	if _, err := client.VolumeCreate(ctx, mobyclient.VolumeCreateOptions{
+		Name: cache.MaskVolumeName,
+		Labels: map[string]string{
+			toolCacheLabel:          "true",
+			toolCacheKindLabel:      "selection-mask",
+			toolCacheImageLabel:     imageID,
+			toolCacheHashLabel:      hash,
+			toolCacheCreatedAtLabel: time.Now().UTC().Format(time.RFC3339),
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("docker selection tool cache: create mask volume %s: %w", cache.MaskVolumeName, err)
+	}
 	containerID, err := client.CreateAndStart(ctx, dockerclient.CreateOptions{
-		Image:       cfg.Image,
+		Image:       imageID,
 		Runtime:     cfg.Runtime,
 		NetworkMode: dockerclient.NetworkAllowAll,
 		User:        "root",
-		Env: map[string]string{
-			"HOME": "/root",
-		},
-		ExtraMounts: []dockerclient.Mount{
-			{
-				HostPath:      cache.VolumeName,
-				ContainerPath: containerUserToolsRoot,
-				ReadOnly:      false,
-				Type:          dockerclient.MountTypeVolume,
-			},
-		},
+		Env:         map[string]string{"HOME": "/root"},
+		ExtraMounts: []dockerclient.Mount{{
+			HostPath: cache.VolumeName, ContainerPath: containerSelectionRoot,
+			ReadOnly: false, Type: dockerclient.MountTypeVolume,
+		}, {
+			// CreateOptions enforces ReadonlyRootfs. Keep installer config and
+			// mise data in a throw-away tmpfs instead of persisting private state.
+			ContainerPath: "/tmp", ReadOnly: false, Type: dockerclient.MountTypeTmpfs, TmpfsExec: true,
+		}},
 		Labels: map[string]string{
 			"stella.tool_cache_helper": "true",
 			toolCacheLabel:             cache.VolumeName,
+			toolCacheKindLabel:         "selection",
 		},
 		Name: installerName,
 	})
 	if err != nil {
 		if errdefs.IsConflict(err) {
-			// Another app instance is already running the installer for this
-			// tool set. Wait for it to finish instead of racing.
 			return waitForToolCache(ctx, client, installerName, cache, func(ctx context.Context) error {
-				return verifyUserToolCache(ctx, client, cfg, hash, cache)
+				return verifySelectionToolCache(ctx, client, cfg, imageID, hash, cache)
 			})
 		}
-		return nil, fmt.Errorf("docker user tool cache: start helper: %w", err)
+		return nil, fmt.Errorf("docker selection tool cache: start helper: %w", err)
 	}
 	defer func() {
 		if stopErr := client.Stop(context.Background(), containerID); stopErr != nil {
-			slog.Warn("docker user tool cache helper cleanup failed", "container_id", containerID, "error", stopErr)
+			slog.Warn("docker selection tool cache helper cleanup failed", "container_id", containerID, "error", stopErr)
 		}
 	}()
 
 	result, err := client.Exec(ctx, dockerclient.ExecOptions{
 		ContainerID: containerID,
 		Command:     []string{"/bin/sh", "-s"},
-		Cwd:         containerUserToolsRoot,
-		Stdin:       strings.NewReader(userToolInstallScript(hash, cfg.UserToolBinaries)),
+		Cwd:         containerSelectionRoot,
+		Stdin:       strings.NewReader(selectionToolInstallScript(hash, cfg.SelectionToolBinaries, core)),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("docker user tool cache: run installer: %w", err)
+		return nil, fmt.Errorf("docker selection tool cache: run installer: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("docker user tool cache: installer failed with exit %d\nstdout: %s\nstderr: %s", result.ExitCode, result.Stdout, result.Stderr)
+		return nil, fmt.Errorf("docker selection tool cache: installer failed with exit %d", result.ExitCode)
 	}
-
 	return cache, nil
+}
+
+func verifySelectionToolCache(ctx context.Context, client *dockerclient.Client, cfg Config, imageID, hash string, cache *selectionToolCache) error {
+	core := core.RuntimeResources()
+	containerID, err := client.CreateAndStart(ctx, dockerclient.CreateOptions{
+		Image: imageID, Runtime: cfg.Runtime, NetworkMode: dockerclient.NetworkDisabled, User: "root",
+		ExtraMounts: []dockerclient.Mount{{
+			HostPath: cache.VolumeName, ContainerPath: containerSelectionRoot,
+			ReadOnly: true, Type: dockerclient.MountTypeVolume,
+		}},
+		Labels: map[string]string{
+			"stella.tool_cache_verifier": "true",
+			toolCacheLabel:               cache.VolumeName,
+			toolCacheKindLabel:           "selection",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("start selection verifier: %w", err)
+	}
+	defer func() {
+		if stopErr := client.Stop(context.Background(), containerID); stopErr != nil {
+			slog.Warn("docker selection tool cache verifier cleanup failed", "container_id", containerID, "error", stopErr)
+		}
+	}()
+	result, err := client.Exec(ctx, dockerclient.ExecOptions{
+		ContainerID: containerID, Command: []string{"/bin/sh", "-s"}, Cwd: containerSelectionRoot,
+		Stdin: strings.NewReader(selectionToolVerifyScript(hash, cfg.SelectionToolBinaries, core)),
+	})
+	if err != nil {
+		return fmt.Errorf("run selection verifier: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("selection verifier failed with exit %d", result.ExitCode)
+	}
+	return nil
 }
 
 // waitForToolCache waits for a concurrently running installer container to
 // finish and returns the cache if it succeeded. Used when another app instance
 // already holds the installer container name (the distributed mutex).
-func waitForToolCache(ctx context.Context, client *dockerclient.Client, installerName string, cache *userToolCache, verify func(context.Context) error) (*userToolCache, error) {
+func waitForToolCache(ctx context.Context, client *dockerclient.Client, installerName string, cache *selectionToolCache, verify func(context.Context) error) (*selectionToolCache, error) {
 	deadline := time.Now().Add(toolCacheHelperWaitTimeout)
 	for {
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("docker user tool cache: timed out waiting for installer %s", installerName)
+			return nil, fmt.Errorf("docker selection tool cache: timed out waiting for installer %s", installerName)
 		}
 
 		state, err := client.InspectContainerState(ctx, installerName)
 		if err != nil {
-			return nil, fmt.Errorf("docker user tool cache: inspect installer: %w", err)
+			return nil, fmt.Errorf("docker selection tool cache: inspect installer: %w", err)
 		}
 		if state == nil {
 			// The helper disappearing is ambiguous: Docker removes it after both
 			// success and failure, so fail closed unless the volume proves ready.
 			if err := verify(ctx); err != nil {
-				return nil, fmt.Errorf("docker user tool cache: installer %s finished but cache is not ready: %w", installerName, err)
+				return nil, fmt.Errorf("docker selection tool cache: installer %s finished but cache is not ready: %w", installerName, err)
 			}
 			return cache, nil
 		}
 		if !state.Running {
 			if stopErr := client.Stop(context.Background(), installerName); stopErr != nil {
-				slog.Warn("docker user tool cache: cleanup stopped installer", "name", installerName, "error", stopErr)
+				slog.Warn("docker selection tool cache: cleanup stopped installer", "name", installerName, "error", stopErr)
 			}
 			if state.ExitCode != 0 {
-				return nil, fmt.Errorf("docker user tool cache: installer %s exited with %d", installerName, state.ExitCode)
+				return nil, fmt.Errorf("docker selection tool cache: installer %s exited with %d", installerName, state.ExitCode)
 			}
 			if err := verify(ctx); err != nil {
-				return nil, fmt.Errorf("docker user tool cache: installer %s exited successfully but cache is not ready: %w", installerName, err)
+				return nil, fmt.Errorf("docker selection tool cache: installer %s exited successfully but cache is not ready: %w", installerName, err)
 			}
 			return cache, nil
 		}
@@ -211,86 +267,79 @@ func waitForToolCache(ctx context.Context, client *dockerclient.Client, installe
 	}
 }
 
-func cachedToolCache(hash string) *userToolCache {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	return toolCacheReady[hash]
-}
-
-func markToolCacheReady(hash string, cache *userToolCache) {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	toolCacheReady[hash] = cache
-}
-
-func resetToolCacheMemoForTest() {
-	toolCacheMu.Lock()
-	defer toolCacheMu.Unlock()
-	toolCacheReady = map[string]*userToolCache{}
+func resetToolCacheStateForTest() {
 	toolCacheGroup = singleflight.Group{}
-	installToolCacheFn = installUserToolCache
+	installSelectionToolCacheFn = installSelectionToolCache
 }
 
-func verifyUserToolCache(ctx context.Context, client *dockerclient.Client, cfg Config, hash string, cache *userToolCache) error {
-	containerID, err := client.CreateAndStart(ctx, dockerclient.CreateOptions{
-		Image:       cfg.Image,
-		Runtime:     cfg.Runtime,
-		NetworkMode: dockerclient.NetworkDisabled,
-		User:        "root",
-		ExtraMounts: []dockerclient.Mount{
-			{
-				HostPath:      cache.VolumeName,
-				ContainerPath: containerUserToolsRoot,
-				ReadOnly:      true,
-				Type:          dockerclient.MountTypeVolume,
-			},
-		},
-		Labels: map[string]string{
-			"stella.tool_cache_verifier": "true",
-			toolCacheLabel:               cache.VolumeName,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("start verifier: %w", err)
-	}
-	defer func() {
-		if stopErr := client.Stop(context.Background(), containerID); stopErr != nil {
-			slog.Warn("docker user tool cache verifier cleanup failed", "container_id", containerID, "error", stopErr)
-		}
-	}()
-
-	result, err := client.Exec(ctx, dockerclient.ExecOptions{
-		ContainerID: containerID,
-		Command:     []string{"/bin/sh", "-s"},
-		Cwd:         containerUserToolsRoot,
-		Stdin:       strings.NewReader(userToolVerifyScript(hash, cfg.UserToolBinaries)),
-	})
-	if err != nil {
-		return fmt.Errorf("run verifier: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("verifier failed with exit %d\nstdout: %s\nstderr: %s", result.ExitCode, result.Stdout, result.Stderr)
-	}
-	return nil
+func selectionToolCacheHash(imageID string, binaries []ToolBinary, core []core.RuntimeResource) string {
+	return "selection-" + toolCacheHash(imageID, binaries, core)
 }
 
-func userToolCacheHash(image string, binaries []ToolBinary) string {
+func toolCacheHash(image string, binaries []ToolBinary, core []core.RuntimeResource) string {
 	var buf bytes.Buffer
 	buf.WriteString("image=")
 	buf.WriteString(image)
 	buf.WriteByte('\n')
-	for _, b := range binaries {
-		fmt.Fprintf(&buf, "%v\t%v\t%v\t", b.Name, b.Tool, b.Version)
+	for _, b := range canonicalToolBinaries(binaries) {
+		fmt.Fprintf(&buf, "%v\t%v\t%v\t%v\t%v\t%v\t", b.PluginID, b.ConfigID, b.Scope, b.Revision, b.Name, b.Tool)
+		buf.WriteString(b.Version)
+		buf.WriteByte('\t')
 		options, _ := toml.Marshal(b.Options)
 		buf.Write(options)
 		buf.WriteByte('\n')
+	}
+	for _, b := range canonicalCoreRuntimeBinaries(core) {
+		fmt.Fprintf(&buf, "core\t%v\t%v\t%v\t%t\t%v\n", b.Name, b.MiseTool, b.Version, b.Embedded, b.SkillRef)
 	}
 	sum := sha256.Sum256(buf.Bytes())
 	return hex.EncodeToString(sum[:])
 }
 
-func userToolsMiseTOML(binaries []ToolBinary) (string, error) {
+func canonicalToolBinaries(binaries []ToolBinary) []ToolBinary {
+	canonical := slices.Clone(binaries)
+	slices.SortFunc(canonical, func(left, right ToolBinary) int {
+		for _, pair := range [][2]string{
+			{left.PluginID, right.PluginID},
+			{left.ConfigID, right.ConfigID},
+			{left.Scope, right.Scope},
+			{fmt.Sprint(left.Revision), fmt.Sprint(right.Revision)},
+			{left.Name, right.Name},
+			{left.Tool, right.Tool},
+			{left.Version, right.Version},
+		} {
+			if pair[0] < pair[1] {
+				return -1
+			}
+			if pair[0] > pair[1] {
+				return 1
+			}
+		}
+		return 0
+	})
+	return canonical
+}
+
+func canonicalCoreRuntimeBinaries(binaries []core.RuntimeResource) []core.RuntimeResource {
+	canonical := slices.Clone(binaries)
+	slices.SortFunc(canonical, func(left, right core.RuntimeResource) int {
+		if left.Name < right.Name {
+			return -1
+		}
+		if left.Name > right.Name {
+			return 1
+		}
+		return strings.Compare(left.Version, right.Version)
+	})
+	return canonical
+}
+
+func selectionMiseTOML(binaries []ToolBinary) (string, error) {
 	tools := make(map[string]any, len(binaries))
+	seen := make(map[string]struct {
+		version string
+		options map[string]any
+	}, len(binaries))
 	for _, b := range binaries {
 		key := b.miseToolKey()
 		if key == "" {
@@ -305,6 +354,13 @@ func userToolsMiseTOML(binaries []ToolBinary) (string, error) {
 		if options == nil {
 			options = make(map[string]any)
 		}
+		if previous, ok := seen[key]; ok && (previous.version != ver || !reflect.DeepEqual(previous.options, options)) {
+			return "", fmt.Errorf("selected binaries disagree on mise tool %q", key)
+		}
+		seen[key] = struct {
+			version string
+			options map[string]any
+		}{version: ver, options: options}
 
 		var toolValue any = ver
 		if len(options) > 0 {
@@ -322,73 +378,172 @@ func userToolsMiseTOML(binaries []ToolBinary) (string, error) {
 	return string(data), nil
 }
 
-func userToolInstallScript(hash string, binaries []ToolBinary) string {
-	miseTOML, err := userToolsMiseTOML(binaries)
-	if err != nil {
-		// userToolCacheHash currently validates nothing, and TOML marshal for this
-		// shape should not fail. Surface the error in-shell if that ever changes.
-		return "echo " + shellQuote(err.Error()) + " >&2\nexit 1\n"
+// selectionToolInstallScript runs only in the Linux helper container. It uses
+// a temporary mise config and data directory, then removes both before marking
+// the public volume ready. Published tools are copied as complete install
+// directories so launchers can resolve adjacent libraries and other sidecars
+// without consulting mise at runner time.
+func selectionToolInstallScript(hash string, binaries []ToolBinary, core []core.RuntimeResource) string {
+	coreNames := make(map[string]struct{}, len(core))
+	for _, binary := range core {
+		coreNames[binary.Name] = struct{}{}
 	}
-
+	artifactIdentities := make([]string, len(binaries))
+	for i, binary := range binaries {
+		identity, err := binaryArtifactIdentity(binary)
+		if err != nil {
+			return "echo " + shellQuote("binary artifact identity: "+err.Error()) + " >&2\nexit 1\n"
+		}
+		artifactIdentities[i] = identity
+	}
+	miseTOMLs := make([]string, len(binaries))
+	if len(binaries) > 0 {
+		if _, err := selectionMiseTOML(binaries); err != nil {
+			return "echo " + shellQuote(err.Error()) + " >&2\nexit 1\n"
+		}
+		var err error
+		for i, binary := range binaries {
+			miseTOMLs[i], err = selectionMiseTOML([]ToolBinary{binary})
+			if err != nil {
+				return "echo " + shellQuote(err.Error()) + " >&2\nexit 1\n"
+			}
+		}
+	}
 	var script strings.Builder
 	script.WriteString("set -eu\n")
-	script.WriteString("ROOT=" + shellQuote(containerUserToolsRoot) + "\n")
+	script.WriteString("ROOT=" + shellQuote(containerSelectionRoot) + "\n")
+	script.WriteString("PRIVATE=/tmp/stella-selection-private\n")
 	script.WriteString("HASH=" + shellQuote(hash) + "\n")
-	script.WriteString("if [ -f \"$ROOT/.stella-tools-ready\" ] && [ \"$(cat \"$ROOT/.stella-tools-ready\")\" = \"$HASH\" ]; then exit 0; fi\n")
-	script.WriteString("rm -rf \"$ROOT/bin\" \"$ROOT/mise-data\" \"$ROOT/mise.toml\" \"$ROOT/.stella-tools-ready\"\n")
-	script.WriteString("mkdir -p \"$ROOT/bin\" \"$ROOT/mise-data\"\n")
-	script.WriteString("cat > \"$ROOT/mise.toml\" <<'STELLA_MISE_TOML'\n")
-	script.WriteString(miseTOML)
-	if !strings.HasSuffix(miseTOML, "\n") {
-		script.WriteByte('\n')
+	script.WriteString("trap 'rm -rf \"$PRIVATE\"' EXIT HUP INT TERM\n")
+	script.WriteString("if [ -f \"$ROOT/.stella-selection-ready\" ] && [ \"$(cat \"$ROOT/.stella-selection-ready\")\" = \"$HASH\" ]; then exit 0; fi\n")
+	script.WriteString("rm -rf \"$ROOT/bin\" \"$ROOT/core\" \"$ROOT/artifacts\" \"$ROOT/.stella-selection-ready\" \"$PRIVATE\"\n")
+	script.WriteString("mkdir -p \"$ROOT/bin\" \"$ROOT/core\" \"$ROOT/artifacts\"\n")
+	// Copy the complete core plan once. Keeping its relative symlinks and
+	// install sidecars intact avoids copying the same mise tree once per alias.
+	script.WriteString("cp -R " + containerCoreRuntimeRoot + "/. \"$ROOT/core/\"\n")
+	script.WriteString("if [ -f \"$ROOT/core/.stella-shell-env\" ]; then cp \"$ROOT/core/.stella-shell-env\" \"$ROOT/bin/.stella-shell-env\"; fi\n")
+	if len(binaries) > 0 {
+		// Image-built artifacts are immutable release output. Probe each exact
+		// content identity before invoking mise so an offline image hit never
+		// falls back to a network install.
+		for i, b := range binaries {
+			if !safeSelectionName(b.Name) {
+				continue
+			}
+			name := shellQuoteForDoubleQuotedPath(b.Name)
+			identity := shellQuoteForDoubleQuotedPath(artifactIdentities[i])
+			script.WriteString("if [ -x \"" + containerBuiltinArtifactRoot + "/" + identity + "/" + name + "\" ]; then\n")
+			script.WriteString("  mkdir -p \"$ROOT/artifacts/" + identity + "\"\n")
+			script.WriteString("  cp -R \"" + containerBuiltinArtifactRoot + "/" + identity + "/.\" \"$ROOT/artifacts/" + identity + "/\"\n")
+			script.WriteString("  test -x \"$ROOT/artifacts/" + identity + "/" + name + "\"\n")
+			script.WriteString("  ln -s \"/opt/stella/selection-tools/artifacts/" + identity + "/" + name + "\" \"$ROOT/bin/" + name + "\"\n")
+			script.WriteString("fi\n")
+		}
 	}
-	script.WriteString("STELLA_MISE_TOML\n")
-	script.WriteString("cd \"$ROOT\"\n")
-	script.WriteString("MISE_DATA_DIR=\"$ROOT/mise-data\" MISE_TRUSTED_CONFIG_PATHS=\"$ROOT\" mise trust -y \"$ROOT/mise.toml\" >/dev/null 2>&1 || true\n")
-	script.WriteString("MISE_DATA_DIR=\"$ROOT/mise-data\" MISE_TRUSTED_CONFIG_PATHS=\"$ROOT\" mise install\n")
-	for _, b := range binaries {
+	for i, b := range binaries {
+		if _, ok := coreNames[b.Name]; ok {
+			script.WriteString("echo " + shellQuote("selection binary conflicts with mandatory core runtime "+b.Name) + " >&2\nexit 1\n")
+			continue
+		}
+		if !safeSelectionName(b.Name) {
+			script.WriteString("echo " + shellQuote("invalid selection binary name "+b.Name) + " >&2\nexit 1\n")
+			continue
+		}
 		lookup := b.Name
 		if renameExe, ok := stringOption(b.Options, "rename_exe"); ok {
 			lookup = renameExe
 		} else if bin, ok := stringOption(b.Options, "bin"); ok {
 			lookup = bin
 		}
-		script.WriteString("install_dir=$(MISE_DATA_DIR=\"$ROOT/mise-data\" MISE_TRUSTED_CONFIG_PATHS=\"$ROOT\" mise where " + shellQuote(b.miseToolKey()) + ")\n")
-		script.WriteString("src=\"\"\n")
-		script.WriteString("if [ -f \"$install_dir/bin/" + shellQuoteForDoubleQuotedPath(lookup) + "\" ]; then src=\"$install_dir/bin/" + shellQuoteForDoubleQuotedPath(lookup) + "\"; fi\n")
-		script.WriteString("if [ -z \"$src\" ] && [ -f \"$install_dir/" + shellQuoteForDoubleQuotedPath(lookup) + "\" ]; then src=\"$install_dir/" + shellQuoteForDoubleQuotedPath(lookup) + "\"; fi\n")
-		script.WriteString("if [ -z \"$src\" ]; then echo " + shellQuote("binary "+lookup+" not found for "+b.Tool) + " >&2; exit 1; fi\n")
-		script.WriteString("cp \"$src\" \"$ROOT/bin/" + shellQuoteForDoubleQuotedPath(b.Name) + "\"\n")
-		script.WriteString("chmod 0755 \"$ROOT/bin/" + shellQuoteForDoubleQuotedPath(b.Name) + "\"\n")
+		if !safeSelectionName(lookup) {
+			script.WriteString("echo " + shellQuote("invalid selection executable name "+lookup) + " >&2\nexit 1\n")
+			continue
+		}
+		name := shellQuoteForDoubleQuotedPath(b.Name)
+		lookupPath := shellQuoteForDoubleQuotedPath(lookup)
+		artifact := shellQuoteForDoubleQuotedPath(artifactIdentities[i])
+		miseEnv := "MISE_DATA_DIR=\"$PRIVATE/mise-data\" MISE_CACHE_DIR=\"$PRIVATE/mise-cache\" MISE_STATE_DIR=\"$PRIVATE/mise-state\" MISE_CONFIG_DIR=\"$PRIVATE/mise-config\" MISE_SYSTEM_CONFIG_FILE=\"$PRIVATE/mise.toml\" MISE_GLOBAL_CONFIG_FILE=\"$PRIVATE/mise.toml\" MISE_TRUSTED_CONFIG_PATHS=\"$PRIVATE\" XDG_CACHE_HOME=\"$PRIVATE/xdg-cache\" XDG_CONFIG_HOME=\"$PRIVATE/xdg-config\" XDG_DATA_HOME=\"$PRIVATE/xdg-data\" XDG_STATE_HOME=\"$PRIVATE/xdg-state\" "
+		script.WriteString("if [ ! -x \"$ROOT/bin/" + name + "\" ]; then\n")
+		script.WriteString("  mkdir -p \"$PRIVATE/mise-data\" \"$PRIVATE/mise-cache\" \"$PRIVATE/mise-state\" \"$PRIVATE/mise-config\" \"$PRIVATE/xdg-cache\" \"$PRIVATE/xdg-config\" \"$PRIVATE/xdg-data\" \"$PRIVATE/xdg-state\"\n")
+		script.WriteString("  cat > \"$PRIVATE/mise.toml\" <<'STELLA_SELECTION_MISE_TOML_" + fmt.Sprint(i) + "'\n")
+		script.WriteString(miseTOMLs[i])
+		if !strings.HasSuffix(miseTOMLs[i], "\n") {
+			script.WriteByte('\n')
+		}
+		script.WriteString("STELLA_SELECTION_MISE_TOML_" + fmt.Sprint(i) + "\n")
+		script.WriteString("  cd \"$PRIVATE\"\n")
+		script.WriteString("  " + miseEnv + containerCoreRuntimeRoot + "/mise trust -y \"$PRIVATE/mise.toml\" >/dev/null 2>&1 || true\n")
+		script.WriteString("  " + miseEnv + containerCoreRuntimeRoot + "/mise install\n")
+		script.WriteString("  install_dir=$(" + miseEnv + containerCoreRuntimeRoot + "/mise where " + shellQuote(b.miseToolKey()) + ")\n")
+		script.WriteString("  test -d \"$install_dir\"\n")
+		script.WriteString("  rm -rf \"$ROOT/artifacts/" + artifact + "\"\n  mkdir -p \"$ROOT/artifacts/" + artifact + "\"\n  cp -R \"$install_dir/.\" \"$ROOT/artifacts/" + artifact + "/\"\n")
+		script.WriteString("  src=\"\"\nsrc_rel=\"\"\nif [ -f \"$ROOT/artifacts/" + artifact + "/bin/" + lookupPath + "\" ]; then src=\"$ROOT/artifacts/" + artifact + "/bin/" + lookupPath + "\"; src_rel=\"/opt/stella/selection-tools/artifacts/" + artifact + "/bin/" + lookupPath + "\"; fi\n")
+		script.WriteString("  if [ -z \"$src\" ] && [ -f \"$ROOT/artifacts/" + artifact + "/" + lookupPath + "\" ]; then src=\"$ROOT/artifacts/" + artifact + "/" + lookupPath + "\"; src_rel=\"/opt/stella/selection-tools/artifacts/" + artifact + "/" + lookupPath + "\"; fi\n")
+		script.WriteString("  test -n \"$src\" && test -x \"$src\"\n  ln -s \"$src_rel\" \"$ROOT/bin/" + name + "\"\nfi\n")
 	}
-	script.WriteString("printf '%s' \"$HASH\" > \"$ROOT/.stella-tools-ready\"\n")
+	for _, coreBinary := range canonicalCoreRuntimeBinaries(core) {
+		name := coreBinary.Name
+		if !safeSelectionName(name) {
+			script.WriteString("echo " + shellQuote("invalid core runtime binary name "+name) + " >&2\nexit 1\n")
+			continue
+		}
+		quoted := shellQuoteForDoubleQuotedPath(name)
+		script.WriteString("test -x \"$ROOT/core/" + quoted + "\"\n")
+		script.WriteString("ln -s \"/opt/stella/selection-tools/core/" + quoted + "\" \"$ROOT/bin/" + quoted + "\"\n")
+	}
+	// The trap removes the private installer layer even when any command above fails.
+	script.WriteString("printf '%s' \"$HASH\" > \"$ROOT/.stella-selection-ready\"\nchmod 0444 \"$ROOT/.stella-selection-ready\"\n")
 	return script.String()
 }
 
-func userToolVerifyScript(hash string, binaries []ToolBinary) string {
+func selectionToolVerifyScript(hash string, binaries []ToolBinary, core []core.RuntimeResource) string {
 	var script strings.Builder
-	script.WriteString("set -eu\n")
-	script.WriteString("ROOT=" + shellQuote(containerUserToolsRoot) + "\n")
-	script.WriteString("HASH=" + shellQuote(hash) + "\n")
-	script.WriteString("test -f " + shellQuote(containerUserToolsReadyMarker) + "\n")
-	script.WriteString("test \"$(cat " + shellQuote(containerUserToolsReadyMarker) + ")\" = \"$HASH\"\n")
-	script.WriteString("test -d \"$ROOT/bin\"\n")
+	script.WriteString("set -eu\nROOT=" + shellQuote(containerSelectionRoot) + "\nHASH=" + shellQuote(hash) + "\ntest -f \"$ROOT/.stella-selection-ready\"\ntest \"$(cat \"$ROOT/.stella-selection-ready\")\" = \"$HASH\"\n")
+	if selectionRequestsMise(binaries, core) {
+		script.WriteString("test -x \"$ROOT/bin/mise\"\n")
+	}
 	for _, b := range binaries {
-		script.WriteString("test -x \"$ROOT/bin/" + shellQuoteForDoubleQuotedPath(b.Name) + "\"\n")
+		if safeSelectionName(b.Name) {
+			script.WriteString("test -x \"$ROOT/bin/" + shellQuoteForDoubleQuotedPath(b.Name) + "\"\n")
+		}
+	}
+	for _, coreBinary := range canonicalCoreRuntimeBinaries(core) {
+		if safeSelectionName(coreBinary.Name) {
+			script.WriteString("test -x \"$ROOT/core/" + shellQuoteForDoubleQuotedPath(coreBinary.Name) + "\"\n")
+			script.WriteString("test -x \"$ROOT/bin/" + shellQuoteForDoubleQuotedPath(coreBinary.Name) + "\"\n")
+		}
 	}
 	return script.String()
+}
+
+func safeSelectionName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\\`)
+}
+
+func selectionRequestsMise(binaries []ToolBinary, core []core.RuntimeResource) bool {
+	for _, b := range binaries {
+		if b.Name == "mise" || b.Name == "mise.exe" || b.Tool == "mise" {
+			return true
+		}
+	}
+	for _, b := range core {
+		if b.Name == "mise" || b.Name == "mise.exe" {
+			return true
+		}
+	}
+	return false
 }
 
 func cleanupToolCacheVolumes(ctx context.Context, client *dockerclient.Client, now time.Time) {
 	filters := mobyclient.Filters{}.Add("label", toolCacheLabel+"=true")
 	volumes, err := client.VolumeList(ctx, mobyclient.VolumeListOptions{Filters: filters})
 	if err != nil {
-		slog.Warn("docker user tool cache gc: list volumes", "error", err)
+		slog.Warn("docker selection tool cache gc: list volumes", "error", err)
 		return
 	}
 	containers, err := client.ContainerList(ctx, mobyclient.ContainerListOptions{All: true})
 	if err != nil {
-		slog.Warn("docker user tool cache gc: list containers", "error", err)
+		slog.Warn("docker selection tool cache gc: list containers", "error", err)
 		return
 	}
 	for _, name := range selectStaleToolCacheVolumes(now, volumes.Items, containers.Items) {
@@ -400,10 +555,10 @@ func cleanupToolCacheVolumes(ctx context.Context, client *dockerclient.Client, n
 			if errdefs.IsNotFound(err) {
 				continue
 			}
-			slog.Warn("docker user tool cache gc: remove volume", "volume", name, "error", err)
+			slog.Warn("docker selection tool cache gc: remove volume", "volume", name, "error", err)
 			continue
 		}
-		slog.Info("docker user tool cache gc: removed volume", "volume", name)
+		slog.Info("docker selection tool cache gc: removed volume", "volume", name)
 	}
 }
 

@@ -1,0 +1,13 @@
+id: tool/gh
+kind: tool
+name: gh
+display_name: GitHub CLI
+description: GitHub CLI integration with OAuth-backed session auth.
+enabled: true
+binaries:
+  - name: gh
+    tool: github:cli/cli
+oauth_provider: github
+session_env:
+  - env_var: GH_TOKEN
+    source: oauth.access_token

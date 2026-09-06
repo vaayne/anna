@@ -10,8 +10,10 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	skillstool "github.com/CherryHQ/stella/internal/skill"
 	"github.com/CherryHQ/stella/pkg/plugins"
 	"github.com/CherryHQ/stella/pkg/providers"
@@ -182,6 +184,7 @@ func TestNewRunnerFuncUsesPrincipalWorkspace(t *testing.T) {
 
 	snap := &config.Snapshot{AgentID: "a1", Provider: "anthropic", Model: "test-model", APIKey: "test-key"}
 	snap.Workspace = t.TempDir()
+	corePlan := fixtureRunnerCoreRuntimePlan(t, stellaHome)
 	for _, tt := range []struct {
 		name     string
 		params   RunnerParams
@@ -200,9 +203,16 @@ func TestNewRunnerFuncUsesPrincipalWorkspace(t *testing.T) {
 			}
 			var promptBuild plugins.SystemPromptContext
 			build := newRunnerFunc(withTestSkillDependencies(runnerBuilderConfig{
-				Snap: snap,
-				Home: testWorkspaceViewer{root: stellaHome},
-				PromptSectionsBuilder: func(_ context.Context, build plugins.SystemPromptContext) ([]plugins.SystemPromptSection, error) {
+				Snap:            snap,
+				Home:            testWorkspaceViewer{root: stellaHome},
+				CoreRuntimePlan: corePlan,
+				PluginContextBuilder: func(context.Context, authz.Authority, string) (PluginContext, error) {
+					return PluginContext{}, nil
+				},
+				PromptSectionsBuilder: func(_ context.Context, build plugins.SystemPromptContext, _ plugin.Snapshot) ([]plugins.SystemPromptSection, error) {
+					if tt.name == "user-less" {
+						t.Fatal("user-less runner must skip plugin prompt sections")
+					}
 					promptBuild = build
 					return nil, nil
 				},

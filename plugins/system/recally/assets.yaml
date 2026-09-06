@@ -1,0 +1,5 @@
+assets:
+  - name: recally
+    source: skills/recally
+    logical_root: plugins/system/recally/recally
+    owner_plugin_id: system/recally

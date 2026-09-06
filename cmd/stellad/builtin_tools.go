@@ -6,6 +6,7 @@ import (
 	"github.com/CherryHQ/stella/internal/agent"
 	sessionaccess "github.com/CherryHQ/stella/internal/agent/session/access"
 	"github.com/CherryHQ/stella/internal/agent/settingspolicy"
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/connections"
 	"github.com/CherryHQ/stella/internal/controlplane"
 	agentaccess "github.com/CherryHQ/stella/internal/core/access"
@@ -15,6 +16,7 @@ import (
 	"github.com/CherryHQ/stella/internal/mcp"
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/notify"
+	pluginpkg "github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/scheduler"
 	sharepkg "github.com/CherryHQ/stella/internal/share"
 	"github.com/CherryHQ/stella/internal/skill"
@@ -53,6 +55,7 @@ type builtinToolDeps struct {
 	SettingsAdmin   settingspolicy.AdminLookup
 	SettingsAgents  settingspolicy.AgentLookup
 	ControlPlane    func() *controlplane.Service
+	PluginService   func() *pluginpkg.Service
 	MCPAccess       func() *mcp.Access
 	MCPCatalog      agent.MCPCatalogFunc
 }
@@ -300,7 +303,7 @@ func builtinToolGroups() []builtinToolGroup {
 			metadata: controlplane.SettingsPluginActionTools(),
 			runtime: func(d builtinToolDeps) []agent.BuiltinTool {
 				return splitBuiltins(controlplane.SettingsPluginActionTools(), func(spec toolmeta.ActionTool) pkgtools.Tool {
-					return settingspolicy.Wrap(controlplane.NewPluginManagementTool(spec, d.ControlPlane), d.SettingsAgents, d.SettingsAdmin)
+					return settingspolicy.Wrap(controlplane.NewPluginManagementTool(spec, d.PluginService), d.SettingsAgents, d.SettingsAdmin)
 				}, settingsToolAvailable(d, true))
 			},
 		},
@@ -370,24 +373,37 @@ func splitFamilyNames(families ...[]toolmeta.ActionTool) []string {
 }
 
 // mcpCatalogFunc adapts the MCP service to the agent package's catalog func:
-// the persisted catalogs of the registrations effective for one (user, agent),
-// keyed by namespaced tool name. tool_override rows are keyed by tool name, so
-// this is the same set the runner's FilterToolEnabled gates.
+// the persisted catalogs of registrations effective for one trusted authority
+// and agent. Each entry carries its durable policy identity alongside the
+// exported display name.
 func mcpCatalogFunc(svc *mcp.Service) agent.MCPCatalogFunc {
 	if svc == nil {
 		return nil
 	}
-	return func(ctx context.Context, userID, agentID string) map[string]string {
-		regs, err := svc.ResolveForContextWithShadowed(ctx, userID, agentID)
+	return func(ctx context.Context, authority authz.Authority, agentID string) ([]agent.MCPCatalogEntry, error) {
+		snapshot, err := svc.SnapshotForAuthority(ctx, authority, agentID)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		catalog := make(map[string]string)
+		regs, err := svc.RegistrationsForSnapshot(ctx, snapshot)
+		if err != nil {
+			return nil, err
+		}
+		catalog := make([]agent.MCPCatalogEntry, 0)
 		for _, reg := range regs {
 			for _, tool := range reg.Tools {
-				catalog[mcp.NamespacedToolName(reg.Name, tool.Name)] = "mcp:" + reg.Name
+				local := mcp.SanitizeIdent(tool.Name, "tool")
+				name, err := pluginpkg.ExportedToolName(reg.Namespace, local)
+				if err != nil {
+					return nil, err
+				}
+				identity := agent.ToolIdentity{PluginID: reg.PluginID, LocalToolName: local}
+				if err := identity.Validate(); err != nil {
+					return nil, err
+				}
+				catalog = append(catalog, agent.MCPCatalogEntry{Name: name, Identity: identity, Family: "mcp:" + reg.Name})
 			}
 		}
-		return catalog
+		return catalog, nil
 	}
 }

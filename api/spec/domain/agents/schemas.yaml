@@ -393,26 +393,41 @@ components:
 
     AgentMCPServer:
       type: object
-      allOf:
-        - $ref: "#/components/schemas/MCPServer"
-        - type: object
-          required: [readable]
-          properties:
-            shadowed_scopes:
-              type: array
-              description: >-
-                Scopes of same-named registrations that lost the precedence
-                resolution to this one. Overrides are keyed by tool name, so a
-                shadowed registration's overrides simply lose with it.
-              items:
-                type: string
-                enum: [user, user_agent, system, system_agent]
-            readable:
-              type: boolean
-              description: >-
-                Whether the caller could read this registration through the
-                scoped MCP API; a user sees another user's row only as an
-                unreadable system-owned shadow it cannot manage.
+      required: [
+        plugin_id,
+        config_id,
+        namespace,
+        scope,
+        enabled,
+        credential_mode,
+        needs_auth,
+        status,
+        tools,
+        readable,
+      ]
+      additionalProperties: false
+      description: >-
+        Safe effective MCP projection for an agent. It intentionally omits the
+        endpoint, payload, metadata, credential references, and OAuth details.
+      properties:
+        plugin_id: { type: string }
+        config_id: { type: string }
+        namespace: { type: string }
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+        enabled: { type: boolean }
+        credential_mode:
+          type: string
+          enum: [shared, per_user]
+        needs_auth: { type: boolean }
+        status:
+          type: string
+          enum: [unknown, ok, error, needs_auth]
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/MCPTool" }
+        readable: { type: boolean }
 
     AgentMCPServerList:
       type: object

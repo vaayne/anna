@@ -48,6 +48,7 @@ type groupPublishDriver struct {
 	db         *pgxpool.Pool
 	q          *sqlc.Queries
 	publishers *PublisherRegistry
+	coord      *Coordinator
 	events     *GroupEventHub
 	log        *slog.Logger
 	// wake re-polls the dispatcher after a successor outbox is committed.
@@ -57,8 +58,8 @@ type groupPublishDriver struct {
 	abort func(sessionKey string) bool
 }
 
-func newGroupPublishDriver(db *pgxpool.Pool, q *sqlc.Queries, publishers *PublisherRegistry, log *slog.Logger, wake func(), abort func(string) bool) *groupPublishDriver {
-	return &groupPublishDriver{db: db, q: q, publishers: publishers, log: log, wake: wake, abort: abort}
+func newGroupPublishDriver(db *pgxpool.Pool, q *sqlc.Queries, publishers *PublisherRegistry, coord *Coordinator, log *slog.Logger, wake func(), abort func(string) bool) *groupPublishDriver {
+	return &groupPublishDriver{db: db, q: q, publishers: publishers, coord: coord, log: log, wake: wake, abort: abort}
 }
 
 // publishJob is one egress attempt: the accepted reply, the trigger it answers,
@@ -91,6 +92,19 @@ func (p *groupPublishDriver) run(ctx context.Context, job publishJob) (sqlc.CtxG
 	}
 	if job.publisher == nil {
 		return row, errors.New("publish: publisher unavailable")
+	}
+	// A response carrying acceptedMessageID completed its admission before the
+	// publish call. Let that admitted turn finish under its captured decision;
+	// recovery of an older accepted row is a new admission and must recheck the
+	// exact channel boundary before retrying external egress.
+	if p.coord != nil && job.acceptedMessageID == "" {
+		allowed, err := p.coord.channelListenerAllowed(ctx, job.state.Platform, row.ReplyChannelID)
+		if err != nil {
+			return row, fmt.Errorf("publish channel admission: %w", err)
+		}
+		if !allowed {
+			return row, errChannelPluginDisabled
+		}
 	}
 	sessionKey := agent.BuildGroupSessionKey(row.AgentID, row.GroupID)
 	if row.ResultMessageID != "" {

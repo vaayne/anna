@@ -1,0 +1,8 @@
+id: skill/html-artifact
+kind: skill
+name: html-artifact
+display_name: HTML Artifact
+description: Create polished standalone HTML artifacts.
+enabled: true
+skills:
+  - name: html-artifact

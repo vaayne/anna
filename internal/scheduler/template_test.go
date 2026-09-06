@@ -333,6 +333,7 @@ func TestDispatchJob_MissingTemplate_ErrorRun(t *testing.T) {
 		JobKey:    "removed-template",
 		Name:      "something",
 		UserID:    "user-1",
+		AgentID:   "agent-a",
 		Message:   "",
 	}
 	err := svc.dispatchJob(context.Background(), orphan)
@@ -370,7 +371,7 @@ func TestExecuteSingleRun_SkipsWhenAlreadyRunning(t *testing.T) {
 		return nil
 	})
 
-	job, err := svc.AddJobWithOwner("reenter-test", "block", Schedule{Every: "24h"}, SessionReuse, "", "user-1")
+	job, err := svc.AddJobWithOwner("reenter-test", "block", Schedule{Every: "24h"}, SessionReuse, "agent-a", "user-1")
 	if err != nil {
 		t.Fatalf("AddJobWithOwner: %v", err)
 	}
@@ -471,7 +472,7 @@ func TestUpdateUserJob_DisabledJobDoesNotFire(t *testing.T) {
 		return nil
 	})
 
-	job, err := svc.AddJobWithOwner("disable-test", "ping", Schedule{Every: "100ms"}, SessionReuse, "", "user-1")
+	job, err := svc.AddJobWithOwner("disable-test", "ping", Schedule{Every: "100ms"}, SessionReuse, "agent-a", "user-1")
 	if err != nil {
 		t.Fatalf("AddJobWithOwner: %v", err)
 	}
@@ -593,6 +594,7 @@ func TestDispatchJob_InjectsTemplateMessage(t *testing.T) {
 		JobKey:    "inject-tmpl",
 		Name:      "Inject Tmpl",
 		UserID:    "user-1",
+		AgentID:   "agent-a",
 		Message:   "", // intentionally empty — resolved at fire time
 	}
 

@@ -23,6 +23,11 @@ type ManifestPlugin struct {
 	// Grep/Glob tools). It is shipped server policy, not editable definition.
 	Essential bool `json:"essential,omitempty" yaml:"essential,omitempty"`
 
+	// BundledBinaries are immutable release executables projected from the
+	// authored manifest. They are deliberately outside the editable definition
+	// and therefore cannot be enabled by a mutable plugin payload.
+	BundledBinaries []string `json:"bundled_binaries,omitempty" yaml:"bundled_binaries,omitempty"`
+
 	ManifestPluginDefinition `yaml:",inline"`
 
 	// Builtin marks a plugin that ships with the server. It is computed when the
@@ -55,7 +60,8 @@ type ManifestBinary struct {
 }
 
 type ManifestSkill struct {
-	Repo string `json:"repo" yaml:"repo"`
+	// Name is the local, release-owned skill identity. A manifest cannot point
+	// at a repository or another source; the asset descriptor owns its bytes.
 	Name string `json:"name" yaml:"name"`
 }
 
@@ -91,10 +97,11 @@ type Manifest struct {
 }
 
 type rawManifestPlugin struct {
-	ID                       string `yaml:"id"`
-	Kind                     string `yaml:"kind"`
-	Enabled                  *bool  `yaml:"enabled"`
-	Essential                bool   `yaml:"essential,omitempty"`
+	ID                       string   `yaml:"id"`
+	Kind                     string   `yaml:"kind"`
+	Enabled                  *bool    `yaml:"enabled"`
+	Essential                bool     `yaml:"essential,omitempty"`
+	BundledBinaries          []string `yaml:"bundled_binaries,omitempty"`
 	ManifestPluginDefinition `yaml:",inline"`
 }
 

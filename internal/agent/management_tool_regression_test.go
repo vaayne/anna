@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/pkg/toolmeta"
 )
 
@@ -52,23 +54,49 @@ func TestAgentToolOverridesExcludeSettingsPolicyActions(t *testing.T) {
 	registry := toolmeta.NewRegistry(
 		toolmeta.ActionTool{Name: "settings_agent_list", Family: "agent", Action: "list"},
 		toolmeta.ActionTool{Name: "vault_secret_list", Family: "vault", Action: "list"},
+		toolmeta.ActionTool{Name: "email__send", PluginID: "system/email", Namespace: "email", LocalName: "send", Family: "email", Action: "send"},
 	)
-	h := agentOverrideHandler{registry: registry, mcpCatalog: func(context.Context, string, string) map[string]string {
-		return map[string]string{"mcp__gh__create_issue": "mcp:gh"}
+	h := agentOverrideHandler{registry: registry, mcpCatalog: func(context.Context, authz.Authority, string) ([]MCPCatalogEntry, error) {
+		return []MCPCatalogEntry{{Name: "gh__create_issue", Identity: ToolIdentity{PluginID: "custom/gh", LocalToolName: "create_issue"}, Family: "mcp:gh"}}, nil
 	}}
 	ctx := context.Background()
-	if h.managedTool(ctx, "", "settings_agent_list") {
+	if _, ok, err := h.managedTool(ctx, "", "settings_agent_list"); err != nil || ok {
 		t.Fatal("Settings action must not be listed, updated, or deleted as an override")
 	}
-	if !h.managedTool(ctx, "", "vault_secret_list") {
+	if _, ok, err := h.managedTool(ctx, "", "vault_secret_list"); err != nil || !ok {
 		t.Fatal("ordinary generated action must remain override-managed")
 	}
-	// An mcp__ name is only managed while the resolved catalog contains it;
-	// the prefix alone never admits a stale row.
-	if !h.managedTool(ctx, "", "mcp__gh__create_issue") {
-		t.Fatal("MCP tool in the resolved catalog must be override-managed")
+	identity, ok := h.registryToolIdentity("email__send")
+	if !ok || identity != (ToolIdentity{PluginID: "system/email", LocalToolName: "send"}) {
+		t.Fatalf("plugin registry identity = %+v, %v", identity, ok)
 	}
-	if h.managedTool(ctx, "", "mcp__gone__tool") {
-		t.Fatal("MCP tool absent from the catalog must not be managed")
+	// A legacy MCP name has no trusted plugin/local identity. The catalog keeps
+	// it visible for inventory, but the settings handler must not persist a
+	// name-only override.
+	if _, ok, err := h.managedTool(ctx, "", "gh__create_issue"); err != nil || !ok {
+		t.Fatal("trusted MCP tool must be override-managed")
+	}
+}
+
+func TestAgentToolOverrideCatalogErrorPropagates(t *testing.T) {
+	want := errors.New("snapshot unavailable")
+	h := agentOverrideHandler{mcpCatalog: func(context.Context, authz.Authority, string) ([]MCPCatalogEntry, error) {
+		return nil, want
+	}}
+	if _, ok, err := h.managedTool(context.Background(), "agent-1", "gh__list"); !errors.Is(err, want) || ok {
+		t.Fatalf("managedTool = %v, %v; want propagated catalog error and false", err, ok)
+	}
+}
+
+func TestAgentToolOverrideRejectsMalformedRegistryIdentity(t *testing.T) {
+	registry := toolmeta.NewRegistry(
+		toolmeta.ActionTool{Name: "email__send", PluginID: "system/email", Namespace: "email"},
+		toolmeta.ActionTool{Name: "fake__tool", Namespace: "fake", LocalName: "tool"},
+	)
+	h := agentOverrideHandler{registry: registry}
+	for _, name := range []string{"email__send", "fake__tool"} {
+		if identity, ok := h.registryToolIdentity(name); ok {
+			t.Fatalf("malformed registry identity %q = %+v, want rejection", name, identity)
+		}
 	}
 }

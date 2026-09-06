@@ -29,11 +29,12 @@ func (r *recordingChatRunner) Chat(_ context.Context, history []ai.Message, mess
 	return ch
 }
 
-func (r *recordingChatRunner) Alive() bool             { return true }
-func (r *recordingChatRunner) Busy() bool              { return false }
-func (r *recordingChatRunner) LastActivity() time.Time { return time.Now() }
-func (r *recordingChatRunner) SystemPrompt() string    { return r.system }
-func (r *recordingChatRunner) Close() error            { return nil }
+func (r *recordingChatRunner) Alive() bool                  { return true }
+func (r *recordingChatRunner) Busy() bool                   { return false }
+func (r *recordingChatRunner) LastActivity() time.Time      { return time.Now() }
+func (r *recordingChatRunner) SystemPrompt() string         { return r.system }
+func (r *recordingChatRunner) PluginContext() PluginContext { return PluginContext{} }
+func (r *recordingChatRunner) Close() error                 { return nil }
 
 func TestRuntimeChatInjectsCurrentSpeakerIntoGroupTurnMessage(t *testing.T) {
 	mem := &recordingMemory{}
@@ -45,7 +46,7 @@ func TestRuntimeChatInjectsCurrentSpeakerIntoGroupTurnMessage(t *testing.T) {
 		NewRunner: func(context.Context, RunnerParams) (Runner, error) {
 			return runner, nil
 		},
-		BeforeRun: func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, _ session.Info, _, _, system string, _ []ai.Message, _ PluginContext) (string, error) {
 			beforeRunSystems = append(beforeRunSystems, system)
 			return system, nil
 		},

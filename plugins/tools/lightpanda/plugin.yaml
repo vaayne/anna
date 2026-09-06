@@ -1,0 +1,11 @@
+id: tool/lightpanda
+kind: tool
+name: lightpanda
+display_name: Lightpanda
+description: "Headless browser CLI behind the web skill: JavaScript-rendered pages and site scripts."
+enabled: true
+prompt: "Lightpanda is a headless browser CLI on PATH. Reach it through the `web` skill: `web.ts fetch --render` for a JavaScript-only page and `web.ts site run` for a site's records. It has no login session and no Chrome-level anti-bot fingerprint; report a site that blocks it after one failure instead of retrying with another browser."
+binaries:
+  - name: lightpanda
+    tool: github:lightpanda-io/browser
+    version: nightly

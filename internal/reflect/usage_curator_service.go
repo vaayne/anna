@@ -2,10 +2,12 @@ package reflect
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
+	agentaccess "github.com/CherryHQ/stella/internal/core/access"
 	"github.com/CherryHQ/stella/internal/memory"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
@@ -39,6 +41,10 @@ func (s *Service) maybeRunUsageCurator(ctx context.Context) {
 		if !due {
 			continue
 		}
+		if err := s.authorizeUsageCuratorPair(ctx, pair); err != nil {
+			s.log.Error("reflect usage curator: pair capability denied; skipping", "user_id", pair.UserID, "agent_id", pair.AgentID, "error", err)
+			continue
+		}
 
 		pairSettings := settings
 		pairSettings.Now = func() time.Time { return now }
@@ -68,6 +74,23 @@ func (s *Service) maybeRunUsageCurator(ctx context.Context) {
 		}
 		s.log.Info("reflect usage curator: pair run complete", "report", report)
 	}
+}
+
+func (s *Service) authorizeUsageCuratorPair(ctx context.Context, pair usageCuratorPair) error {
+	if s.capabilityGate == nil {
+		return fmt.Errorf("reflect usage curator: background capability gate is not configured")
+	}
+	if pair.UserID == "" || pair.AgentID == "" {
+		return fmt.Errorf("reflect usage curator: pair has no trusted user/agent owner")
+	}
+	authority, err := agentaccess.WorkerAgentAuthority(pair.UserID, pair.AgentID)
+	if err != nil {
+		return fmt.Errorf("reflect usage curator: pair authority: %w", err)
+	}
+	if err := s.capabilityGate(ctx, authority, pair.AgentID, PluginID); err != nil {
+		return fmt.Errorf("reflect usage curator: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) runUsageCuratorOnce(ctx context.Context, pair usageCuratorPair, settings usageCuratorSettings) (usageCuratorReport, error) {

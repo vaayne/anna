@@ -1,9 +1,24 @@
 package resources
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+func TestValidateBuiltinSkillOwnersUsesRuntimeCatalog(t *testing.T) {
+	r := &Registry{skills: map[string]BuiltinSkillDescriptor{
+		"core":    {Name: "core", Root: "core/core"},
+		"owned":   {Name: "owned", Root: "plugins/tool/demo/owned", OwnerPluginID: "tool/demo"},
+		"foreign": {Name: "foreign", Root: "plugins/tool/other/foreign", OwnerPluginID: "tool/other"},
+	}}
+	if err := r.ValidateBuiltinSkillOwners(map[string]struct{}{"tool/demo": {}}); err == nil || !strings.Contains(err.Error(), "unknown plugin owner") {
+		t.Fatalf("ValidateBuiltinSkillOwners() error = %v, want unknown owner", err)
+	}
+	if err := r.ValidateBuiltinSkillOwners(map[string]struct{}{"tool/demo": {}, "tool/other": {}}); err != nil {
+		t.Fatalf("ValidateBuiltinSkillOwners() error = %v", err)
+	}
+}
 
 func TestDefaultLoadsBuiltinResources(t *testing.T) {
 	r, err := Default()
@@ -35,6 +50,24 @@ func TestDefaultLoadsBuiltinResources(t *testing.T) {
 	if _, ok := r.Get(KindTemplate, "stella"); !ok {
 		t.Error("expected builtin template 'stella'")
 	}
+	if err := r.ValidateBuiltinSkillOwners(map[string]struct{}{
+		"system/email":        {},
+		"system/recally":      {},
+		"system/scheduler":    {},
+		"tool/bun":            {},
+		"tool/lark-cli":       {},
+		"skill/html-artifact": {},
+		"skill/skill-creator": {},
+		"tool/uv":             {},
+		"tool/xberg":          {},
+	}); err != nil {
+		t.Fatalf("ValidateBuiltinSkillOwners(): %v", err)
+	}
+	for _, skill := range r.BuiltinSkills() {
+		if skill.Name == "stella" && skill.OwnerPluginID != "" {
+			t.Fatalf("core skill stella owner = %q, want empty", skill.OwnerPluginID)
+		}
+	}
 	for _, id := range []string{"coder"} {
 		if _, ok := r.Get(KindDelegate, id); !ok {
 			t.Errorf("expected builtin delegate %q", id)
@@ -44,12 +77,12 @@ func TestDefaultLoadsBuiltinResources(t *testing.T) {
 
 func TestLoadWithFixture(t *testing.T) {
 	fs := fstest.MapFS{
-		"skills/demo/SKILL.md":          &fstest.MapFile{Data: []byte("---\nname: demo\ndescription: Demo skill\ntags: [x, y]\n---\nbody\n")},
-		"skills/system/nested/SKILL.md": &fstest.MapFile{Data: []byte("---\nname: nested\ndescription: Nested skill\n---\nbody\n")},
-		"skills/system/nested/ref.md":   &fstest.MapFile{Data: []byte("ref\n")},
-		"souls/terse.md":                &fstest.MapFile{Data: []byte("---\nid: terse\nname: Terse\n---\nshort\n")},
-		"delegates/runner.md":           &fstest.MapFile{Data: []byte("---\nname: runner\ntools: [bash]\nmax_turns: 5\n---\ngo\n")},
-		"templates/blank.md":            &fstest.MapFile{Data: []byte("---\nid: blank\nname: Blank\nsoul_id: terse\n---\n")},
+		"skills/demo/SKILL.md":        &fstest.MapFile{Data: []byte("---\nname: demo\ndescription: Demo skill\ntags: [x, y]\n---\nbody\n")},
+		"skills/core/nested/SKILL.md": &fstest.MapFile{Data: []byte("---\nname: nested\ndescription: Nested skill\n---\nbody\n")},
+		"skills/core/nested/ref.md":   &fstest.MapFile{Data: []byte("ref\n")},
+		"souls/terse.md":              &fstest.MapFile{Data: []byte("---\nid: terse\nname: Terse\n---\nshort\n")},
+		"delegates/runner.md":         &fstest.MapFile{Data: []byte("---\nname: runner\ntools: [bash]\nmax_turns: 5\n---\ngo\n")},
+		"templates/blank.md":          &fstest.MapFile{Data: []byte("---\nid: blank\nname: Blank\nsoul_id: terse\n---\n")},
 	}
 
 	r, err := Load(fs)

@@ -34,7 +34,10 @@ func (r *ctxCapturingRunner) Alive() bool             { return true }
 func (r *ctxCapturingRunner) Busy() bool              { return false }
 func (r *ctxCapturingRunner) LastActivity() time.Time { return time.Now() }
 func (r *ctxCapturingRunner) SystemPrompt() string    { return "" }
-func (r *ctxCapturingRunner) Close() error            { return nil }
+func (r *ctxCapturingRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (r *ctxCapturingRunner) Close() error { return nil }
 
 func newBoundaryTestService(t *testing.T, mem memory.Provider, runner agentruntime.Runner) *agent.Service {
 	t.Helper()
@@ -132,7 +135,10 @@ func (r *largeOutputRunner) Alive() bool             { return true }
 func (r *largeOutputRunner) Busy() bool              { return false }
 func (r *largeOutputRunner) LastActivity() time.Time { return time.Now() }
 func (r *largeOutputRunner) SystemPrompt() string    { return "" }
-func (r *largeOutputRunner) Close() error            { return nil }
+func (r *largeOutputRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (r *largeOutputRunner) Close() error { return nil }
 
 func TestServiceDelegateBoundsLargeOutputAndPreservesTerminalError(t *testing.T) {
 	wantErr := errors.New("terminal delegate error")
@@ -168,7 +174,10 @@ func (r *cancelBlockingRunner) Alive() bool             { return true }
 func (r *cancelBlockingRunner) Busy() bool              { return false }
 func (r *cancelBlockingRunner) LastActivity() time.Time { return time.Now() }
 func (r *cancelBlockingRunner) SystemPrompt() string    { return "" }
-func (r *cancelBlockingRunner) Close() error            { return nil }
+func (r *cancelBlockingRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (r *cancelBlockingRunner) Close() error { return nil }
 
 func TestServiceDelegatePreservesPostAdmissionCancellation(t *testing.T) {
 	runner := &cancelBlockingRunner{started: make(chan struct{})}
@@ -237,7 +246,10 @@ func (r *bufferedCancellationRunner) Alive() bool             { return true }
 func (r *bufferedCancellationRunner) Busy() bool              { return false }
 func (r *bufferedCancellationRunner) LastActivity() time.Time { return time.Now() }
 func (r *bufferedCancellationRunner) SystemPrompt() string    { return "" }
-func (r *bufferedCancellationRunner) Close() error            { return nil }
+func (r *bufferedCancellationRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (r *bufferedCancellationRunner) Close() error { return nil }
 
 func TestServiceConversationKeepsCancellationWhenOutputBufferIsFull(t *testing.T) {
 	runner := newBufferedCancellationRunner()
@@ -314,7 +326,10 @@ func (cancellationAwareRunner) Alive() bool             { return true }
 func (cancellationAwareRunner) Busy() bool              { return false }
 func (cancellationAwareRunner) LastActivity() time.Time { return time.Now() }
 func (cancellationAwareRunner) SystemPrompt() string    { return "" }
-func (cancellationAwareRunner) Close() error            { return nil }
+func (cancellationAwareRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (cancellationAwareRunner) Close() error { return nil }
 
 func TestServiceConversationCancellationStopsNestedCompactionAndReleasesTarget(t *testing.T) {
 	mem := &blockingCompactionMemory{Fake: memorytest.New(), needed: true, started: make(chan struct{})}

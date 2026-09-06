@@ -10,6 +10,8 @@ import (
 
 	"github.com/CherryHQ/stella/internal/auth"
 	"github.com/CherryHQ/stella/internal/platform/config"
+	pluginpkg "github.com/CherryHQ/stella/internal/plugin"
+	"github.com/CherryHQ/stella/internal/server"
 )
 
 // These integration tests drive the real server mux (middleware Resolve+Enforce
@@ -48,6 +50,8 @@ func mintPAT(t *testing.T, env *testEnv, bearer, name string) (plaintext, id str
 // authority while the handler/domain boundary keeps non-admin users constrained.
 func TestPATAuthority(t *testing.T) {
 	env := setupAdmin(t)
+	plugins := pluginpkg.NewService(env.db, env.deps.AgentAccess, pluginpkg.NewCatalog(), pluginpkg.BackendPolicy{}, func(_ context.Context, fn func() error) error { return fn() })
+	env.rebuild(t, func(d *server.Deps) { d.PluginService = plugins })
 	adminPAT, _ := mintPAT(t, env, env.bearerToken, "admin_control_plane")
 
 	cases := []struct {

@@ -14,13 +14,8 @@ const (
 // Pre-migration dispatch rows carry arbiter routing decisions. The migration
 // must hand them to triage as wake rows without stranding a live lease.
 func TestOptimisticMigrationAdoptsExistingDispatchAndResumesLeases(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-	if _, err := provider.DownTo(ctx, groupOptimisticBeforeMigration); err != nil {
-		t.Fatalf("restore pre-optimistic schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, groupOptimisticBeforeMigration)
+	ctx := t.Context()
 
 	const groupID = "11111111-1111-1111-1111-111111111111"
 	if _, err := db.Exec(ctx, `INSERT INTO agent (id, name, workspace, sandbox) VALUES ('agent-1', 'Agent One', '/tmp', '{}')`); err != nil {

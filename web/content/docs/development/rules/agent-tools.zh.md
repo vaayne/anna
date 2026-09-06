@@ -52,7 +52,7 @@ tools:
 
 声明式工具生成的类型是 `<Family><Action>Input`（`SessionSendInput`），不是 `<Action>Input`：它们落在已有手写代码的包里，`internal/agent/session/access` 自己就有一个 `SendInput`，裸名字根本编译不过。
 
-**手写工具是一份封闭清单**：`bash`、`view_image`（核心沙箱）、`notify`（渠道分发）、`goal_control`（attempt 协议）、`code`（元工具）和 `mcp__*`。往里加一项，等于宣称这个工具既没有 HTTP 操作、也没有能被声明的 schema。改 `pkg/toolmeta` 里的清单，并在 PR 里说明理由。
+**手写工具是一份封闭清单**：`bash`、`view_image`（核心沙箱）、`notify`（渠道分发）、`goal_control`（attempt 协议）、`code`（元工具）。动态发现的 MCP 工具携带可信插件元数据，工具名前缀不授予手写工具资格。往固定清单里加一项，等于宣称这个工具既没有 HTTP 操作、也没有能被声明的 schema。改 `pkg/toolmeta` 里的清单，并在 PR 里说明理由。
 
 上面那份清单现在就是全部。`memory` 是最后一个待拆的 union，装着它的 `pendingSplit` 已随拆分一起删除，而不是留成空表——空着的第二套机制只会招来第三条例外。没有 HTTP 操作的工具应该进 `api/spec/agent-tools/`，而不是进第二份例外清单。
 
@@ -99,7 +99,9 @@ x-agent-tool:
 
 ## 4. 命名
 
-**工具名是 `<domain>_<resource>_<action>`**，resource 与 domain 同名时省略：`recally_feed_add`、`scheduler_job_pause`、`goal_create`。动词用小而无聊的那一组：`create`、`get`、`list`、`update`、`delete`、`search`、`add`、`remove`、`save`、`send`。资源用单数，并与 HTTP 资源名对齐。禁止裸名词、复数和动宾倒置。
+**插件工具名使用 `{namespace}__{local_name}`**，例如 `recally__feed_add`、`scheduler__job_pause`。Go 与 MCP 使用相同规则。Namespace 不允许包含 `__`，完整名称最多 64 字符。授权使用可信元数据中的 plugin ID 与 local name，不能解析导出名称的前缀来授予权限。
+
+**Core 工具保留 `<domain>_<resource>_<action>`**，resource 与 domain 同名时省略，例如 `goal_create`。动词用小而无聊的那一组：`create`、`get`、`list`、`update`、`delete`、`search`、`add`、`remove`、`save`、`send`。资源用单数，并与 HTTP 资源名对齐。禁止裸名词、复数和动宾倒置。
 
 唯一的例外：当创建的是本 domain 自己的资源、而 object 只是它的来源或载荷时，`<domain>_<action>_<object>` 读起来更准确——`share_create_artifact` 创建的是 **share**，不是 artifact。这种情况用 `name_override`，也只有这种情况。
 
@@ -124,7 +126,7 @@ split 工具的 schema 是契约不是提示：provider 在调用前按它校验
 - **顶层保持朴素 object。** 顶层不得出现 `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not`，OpenAI 兼容 provider 会拒绝。
 - **每个属性有一句描述。** 取值受限用 `restrict`，不要写在描述里。
 - **数值上限等于 handler 上限。** schema 写 500、handler 截到 100，是在教模型一件假事。
-- **大正文走沙箱路径，不走内联字符串。** 照 `recally_article_save` 的 `content_path` 先例：单文件 1 MB、单次调用 4 MB，并且工具要报告它实际存下了什么。
+- **大正文走沙箱路径，不走内联字符串。** 照 `recally__article_save` 的 `content_path` 先例：单文件 1 MB、单次调用 4 MB，并且工具要报告它实际存下了什么。
 - **输出有明确上限**，触顶时在结果里说明（`truncated`、`note`）。时间用 RFC3339。永远不返回密钥值，vault 工具只回元信息。
 
 **验收：** `TestBatchAnnotationWrapsRequestBody`、`TestActionSchemaKeepsDeclaredAdditionalProperties`、`TestToolSchemaIsPlainObjectWithActionEnum`；`TestValidateRejectsBadDeclarations`。
@@ -162,7 +164,7 @@ operation 背书的工具把模型可见文案放在 handler 旁边的手写适�
 工具在 `cmd/stellad/commands.go` 注册。split 家族按生成的 `ActionTools()` 逐条注册 `agent.BuiltinTool`，所以新增一个 action 不需要改注册代码。
 
 - **`Available` 决定可见性，它出错是致命的，不是静默的。** 基线是 `agent.BuiltinToolAvailable`（有 user 且有 agent）。检查本身出错时错误必须向上传播：registry 与 runner 构建中止，`GET /api/agents/{id}/tools` 返回 5xx，并且不缓存任何残缺子集。悄悄少了一个工具的工具集比一次失败的请求更糟——模型会把这个缺口当成事实来推理。
-- **核心名字是保留字。** builtin 和插件不得占用核心工具名，`mcp__` 前缀保留给 MCP。
+- **核心名字是保留字。** builtin 和插件不得占用核心工具名。插件命名空间由公共快照选定，没有独立 MCP 前缀，也不能根据名称隐式授予能力。
 - **Code Mode hot 集刻意保持小。** `pkg/agent/code_strategy.go` 的 `HotToolNames` 列出值得每轮直接摆在模型面前、而不是藏在 `tools.search` 后面的工具。它被导出，是为了让 prose guard 拿它和引用这个集合的四份文档逐一对齐；加一个名字意味着同时改这份列表、system prompt 和这四份文档的中英两版。不一致时 `TestHotSetProseMatchesTheDeclaredHotTools`（`cmd/stellad`）会失败。
 
 **验收：** PR-1（[#1175](https://github.com/CherryHQ/stella/pull/1175)）新增的 runtime registry 与 catalog availability 测试；`cmd/stellad` 与 `internal/agent` 的注册测试；`pkg/tools` registry 测试（重名）。
@@ -171,8 +173,8 @@ operation 背书的工具把模型可见文案放在 handler 旁边的手写适�
 
 工具名是编译器管不到的字符串。新增、改名或删除时，逐条走一遍：
 
-- `resources/skills/system/<domain>/SKILL.md`——示例必须用真实名字和真实字段。
-- `resources/skills/system/stella/SKILL.md`——工具清单。
+- `plugins/<category>/<plugin>/skills/<skill>/SKILL.md`——示例必须用真实名字和真实字段。
+- `plugins/core/skills/stella/SKILL.md`——工具清单。
 - `internal/agent/prompt/template/system_prompt.tmpl`。
 - scheduler 内置任务模板，它们的 prompt 里写了工具名。
 - `web/content/docs/development/architecture.md`（EN + ZH）的工具表。
@@ -180,26 +182,22 @@ operation 背书的工具把模型可见文案放在 handler 旁边的手写适�
 - Web UI 的工具元数据，名字在那里决定图标或标签。
 - release note——只要名字变了或消失了就必须写。
 
-**验收：** `resources/recally_skill_test.go` 与 `internal/scheduler/builtin_schema_test.go`（skill 与模板示例对照实际 schema 检查）；`mise run generate:check`。
+**验收：** `resources/recally__skill_test.go` 与 `internal/scheduler/builtin_schema_test.go`（skill 与模板示例对照实际 schema 检查）；`mise run generate:check`。
 
 ## 10. 改名、拆分、删除
 
-改名等于删除加新建。没有别名期；在 Stella 进入生产之前也没有兼容期——直接断裂：
+同一能力改名时，必须保留已有权限决策。插件 override 使用 plugin ID、local tool name
+和 scope owner；Core override 使用 core tool name。运行时配置 UUID 不作为策略身份。
 
-1. **`tool_override` 在同一个 release 里带迁移**，把所有指向退休工具的行**删掉**。行是按名字索引的，指向一个已不存在的名字时它既不隐藏旧能力也不隐藏任何新能力，只会留在那里等某个新工具复用这个名字、悄悄继承这条设置。删掉它，能力回到默认可见性。
-2. **`down` 迁移写成 no-op**，并在注释里说明原因。被删的行的 `enabled`、scope、owner 都无法凭空恢复，猜一个会把用户关掉的能力还回去，或者反过来夺走一个能力。
-3. **不做 legacy 重定向。** delegate preset 的 `tools:` 或 `excluded_tools` 里写着退休工具名的条目选不中任何东西，runner 会告警「该 selector 没有命中任何工具」。家族选择器仍然生效——`scheduler` 选中全部 `scheduler_job_*`——因为那是功能，不是兼容垫片。
-4. **release note 列出旧名→新名全表**，并给一条扫描自定义 skill 与 preset 的 grep：
+1. 改名必须有明确且已验证的身份映射，保留每条 enabled 与 scope owner。旧名称歧义或
+   owner 冲突时中止迁移，不能通过恢复默认可见性解决。
+2. 仅当能力确实删除时移除其策略。Down 迁移不能猜测已删除的权限或凭据。
+3. 统一插件切换不增加运行时别名或旧数据查询回退。自定义 Skill 与 preset 中的旧名称
+   需要显式修改。
+4. 列出完整旧名与新名，验证策略保留、冲突和回滚。Family selector 使用可信 registry
+   元数据，不猜测名称前缀。
 
-   ```bash
-   grep -rn 'recally_digest\|scheduler_pause' ~/.stella/skills ~/.stella/delegates
-   ```
-
-自定义 Skill 里手写调用旧名仍然会坏。这是明确声明的破坏性变更，迁移修不了。
-
-**升级触发条件：** 上面这套是 pre-production 规则。一旦出现有真实存量 `tool_override` 行或用户手写 preset 需要保住的部署，就回到 expand-then-contract：旧名映射到新名并按 **deny-wins** 合并（`enabled = existing AND incoming`），旧行保留一个 release、下一个 release 删除，并在 `toolmeta` 的 legacy 表里带上旧名，同样只保留一个 deprecation release。
-
-**验收：** 迁移自身的测试（退休行消失、其余保留）；`TestMatchNameResolvesFamiliesThroughTheRegistry`（`pkg/toolmeta`）。
+本次切换采用停止旧写入进程的维护升级。旧来源行保留供检查，新运行态不读取它们。
 
 ## 11. 测试要求
 
@@ -207,7 +205,7 @@ operation 背书的工具把模型可见文案放在 handler 旁边的手写适�
 
 - **一条授权用例**，在 `internal/authz/tool_authz_test.go`：一次必须被拒的调用，并证明拒绝不泄漏"存在与否"。
 - **一条 handler 测试**，覆盖 dispatch 之外的逻辑——互斥字段、路径展开、上限、投影。
-- **schema 与 skill 守卫。** `internal/scheduler/builtin_schema_test.go` 和 `resources/recally_skill_test.go` 会拿文档示例对照实际 schema；扩展它们，不要另起一套。
+- **schema 与 skill 守卫。** `internal/scheduler/builtin_schema_test.go` 和 `resources/recally__skill_test.go` 会拿文档示例对照实际 schema；扩展它们，不要另起一套。
 - **`mise run generate:api:check` 干净。** 它经 Redocly bundler（`vp dlx`）重新生成，因此需要 node 工具链；它同时检查 untracked 文件——新 family 的第一个 `tool_gen.go` 是新增而不是修改。
 - **catalog 断言**：工具出现在 `GET /api/agents/{id}/tools`，schema 精确且没有 `action` 属性。
 - **一条 smoke 用例**，在 `TestToolSmoke`（`cmd/stellad/tool_smoke_test.go`）：它对着真实数据库与生产 registry，经 Code Mode 把每个面向模型的工具真实调用一遍。覆盖集合以严格集合等式闭合，所以新工具在补上用例之前会让构建失败；没有 pending 清单，也没有 skip。
@@ -215,7 +213,7 @@ operation 背书的工具把模型可见文案放在 handler 旁边的手写适�
   - **成功路径依赖外部依赖、无法在此产生的工具**可以改为断言它的规范错误（`assertsErrorShapeOnly`）。用例仍须真正走到工具自身的逻辑（停在 schema 拒绝上就算失败），并且注释必须指名覆盖成功路径的**具体测试函数名**，或者明写"没有任何测试覆盖"。"由 X 包覆盖"不算，要写出测试名。
   - **真正无法从聊天会话调用的工具**写进 `protocolExceptions`，并写明替代它的具体测试。
 
-  当前门禁有三条例外（`code`、`goal_control`、`mcp__` 前缀）和七个 error-shape-only 工具；测试会打印逐 tool 的报告，那份报告才是当前答案，读它而不是信这一段。
+  测试会逐项打印当前协议例外与 error-shape-only 工具。动态 MCP 覆盖依据可信插件身份，不依据导出名前缀；以这份报告核对当前覆盖清单。
 
 只有跨进程的接缝才需要 system test，`goal_control` 的 attempt 协议是那个例子。见 [`testing.md`](./testing)。
 

@@ -111,7 +111,7 @@ func NewGroupDispatcher(db *pgxpool.Pool, coord *Coordinator, publishers *Publis
 		dispatchC:     make(chan sqlc.CtxGroupDispatch, 25),
 	}
 	d.chats = newGroupChatResolver(d.q, coord)
-	d.publish = newGroupPublishDriver(db, d.q, publishers, d.log, d.Wake, d.chats.abort)
+	d.publish = newGroupPublishDriver(db, d.q, publishers, coord, d.log, d.Wake, d.chats.abort)
 	d.chat = d.chats.chatDispatch
 	return d
 }

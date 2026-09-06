@@ -8,6 +8,7 @@ import (
 	"github.com/CherryHQ/stella/internal/agent"
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/platform/config"
+	"github.com/CherryHQ/stella/internal/scheduler"
 	"github.com/CherryHQ/stella/internal/skill"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 	"github.com/CherryHQ/stella/pkg/providers"
@@ -57,6 +58,9 @@ type Config struct {
 	// Services provides the per-agent session registry used for review target
 	// listing and owner-scoped memory coordinates.
 	Services agent.ServiceManager
+	// CapabilityGate resolves system/reflect against the target's trusted
+	// user/agent tuple at the review boundary.
+	CapabilityGate scheduler.BackgroundCapabilityGate
 }
 
 // watermarker abstracts watermark storage for testability.
@@ -83,6 +87,7 @@ type Service struct {
 	candidateGates           CandidateGateSettings
 	usageCuratorSettings     UsageCuratorSettings
 	services                 agent.ServiceManager
+	capabilityGate           scheduler.BackgroundCapabilityGate
 }
 
 // New creates a new reflect service.
@@ -107,5 +112,6 @@ func New(cfg Config) *Service {
 		candidateGates:           cfg.CandidateGates.withDefaults(),
 		usageCuratorSettings:     cfg.UsageCuratorSettings.withDefaults(),
 		services:                 cfg.Services,
+		capabilityGate:           cfg.CapabilityGate,
 	}
 }

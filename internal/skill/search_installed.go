@@ -89,14 +89,14 @@ func (t *Tool) Search(ctx context.Context, in SkillSearchInput) (any, error) {
 const noInstalledSkills = "No installed skills found."
 
 func (t *Tool) visibleSearchableSkills(merged []ResolvedSkill) []Skill {
-	all := make([]Skill, 0, len(merged))
-	for _, rs := range merged {
-		all = append(all, rs.Skill)
-	}
-	all = filterVisibleSkills(all, pkgplugins.SystemPromptContext{
+	visible := filterVisibleResolvedSkills(merged, pkgplugins.SystemPromptContext{
 		RegisteredPluginIDs: t.registeredPluginIDs,
 		EnabledPluginIDs:    t.enabledPluginIDs,
 	})
+	all := make([]Skill, 0, len(visible))
+	for _, rs := range visible {
+		all = append(all, rs.Skill)
+	}
 
 	out := make([]Skill, 0, len(all))
 	for _, skill := range all {

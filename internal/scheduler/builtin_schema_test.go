@@ -16,11 +16,11 @@ import (
 // This test makes that whole bug class impossible: it extracts every
 // `recally_*` tool name and every `<name>=` argument from each template and
 // asserts them against the generated per-action input schemas. Add
-// `recally_does_not_exist` or a typo like `limitt=20` and this test fails,
+// `recally__does_not_exist` or a typo like `limitt=20` and this test fails,
 // naming the offending template key and token.
 
 // toolMention matches a native tool name from any split family a builtin
-// template could drive (recally_feed_poll, scheduler_job_create).
+// template could drive (recally__feed_poll, scheduler__job_create).
 var toolMention = regexp.MustCompile(`(?:recally|scheduler)_\w+`)
 
 // tokenAssign matches `<word>=` assignments (limit=20).

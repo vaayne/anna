@@ -62,15 +62,15 @@ runner 会从 `STELLA_SANDBOX_BACKEND` 解析部署时后端，并通过注入�
 - managed Skill revision 通过 `FileAccess.ProjectFiles` 复制到精确、no-replace 的 Session 投影；已存在但内容冲突的 tree 会 fail closed
 - 插件工具接收 `ToolContext.Runtime`，这是活动会话上的 `pkg/plugins.ToolRuntime` 适配器
 - 技能和代理预设加载在代理会话内运行时使用 `ToolRuntime`
-- MCP stdio 进程派生使用 `Session.StartProcess`
 
 读取文件的核心工具每次调用只选择一个 `FileView`。其中的策略环境、工作目录与 `FileAccess` 来自同一个 resilient generation，因此路径展开不会在中途静默切换 backing tree。跨越该边界的 provider 错误只标识逻辑进程 mount，不暴露物理 source path。
 
 managed Skill 投影会原子发布，并在每次 load 时校验，但它不是针对同一用户身份运行命令的独立隔离边界。此类命令可能与校验并发，或在校验后修改 disposable tree。只要 load 观察到不一致，就会 fail closed，而不会替换该路径。Session 关闭时会删除其临时 backing；Docker 启动清理还会移除被中断 Session 遗留的临时目录。
 
-### stdio-MCP 优势
+### 长期运行进程
 
-两个内置后端都支持 `Session.StartProcess`。Docker 为 stdio MCP 服务器提供独立的容器进程命名空间；本地后端则直接在宿主机上启动这些进程。
+`Session.StartProcess` 可供后端拥有的长期运行进程使用。MCP 插件连接仍是远程 HTTP
+传输；这个接口不会增加另一条本地 MCP 执行路径。
 
 ### 非 runner 文件系统访问
 
@@ -82,7 +82,6 @@ runner 外的项目提示上下文与项目级 Skill 读取会解析精确的用
 
 远程 MCP HTTP/SSE/StreamableHTTP 传输目前被视为独立的信任边界。
 
-- 本地 stdio 传输通过 `Session.StartProcess` 经活动 runner 会话进行运行时中介
 - 远程传输拨号目前**不**由 `ToolRuntime` 中介
 - 此例外被显式跟踪为 `EX-009`，并记录为 `runtime.exception_path`
 
@@ -113,23 +112,40 @@ Stella 优先选择显式拒绝而非静默降级：
 
 用 `docker compose down` 停掉整套栈。
 
-sandbox 镜像通过 `stellad mise reconcile-builtins`（与宿主相同的 `resources/tools.yaml` reconcile）把 mise 工具链烤在 `/opt/stella`，因此 docker 与 Linux `local` 后端呈现完全一致的 mise 路径。运行时采用 mise 原生的 system < global < workspace 配置顺序：发行版自带的 `_builtin.toml` 是 system 文件，principal 全局配置位于共享 XDG config 根目录，项目 `mise.toml` 仍具有最高优先级。Per-principal installs 继续位于 `STELLA_HOME` frame，确保指向系统 installs 的相对链接在后端重映射后仍然有效。当嵌套的非交互 Bash login profile 替换 `PATH` 时，托管 mise 二进制旁的只读 shell environment 会通过 `BASH_ENV` 恢复 principal、Stella 和系统 shim 路径；Docker 还会从 `/etc/profile.d` source 同一文件，以覆盖 POSIX login shell。
+sandbox 镜像包含发行版自带的 mise 工具链和 builtin CLI 文件。运行时从
+`system`、`system_agent`、`user`、`user_agent` 四层解析一份插件 snapshot，再由
+selection helper 只物化选中的条目。Docker preparation 按一个解析后的 image ID 和完整
+选择身份做缓存键。Native managed 安装使用 managed tree；user 和 user-agent 安装留在
+自己的沙箱目录，并在 `PATH` 中优先。不会使用宿主机 `_builtin.toml`、manifest 权限面，
+也不会把宿主机平台的安装作为 Docker 回退。
 
 ## builtin Skill bundle 与投影
 
-`resources.Registry` 是发行版自带 builtin 的唯一权威。它产出不可变、内容寻址的 bundle，供原生 `local` 和 `none` 执行安装到 `$STELLA_HOME/bundles/<revision>`。隔离执行将这一精确 bundle 以只读方式投影到 `/opt/stella/skills/builtin`；`/opt` 是执行坐标而非另一份权威，bundle 中辅助可执行文件的模式必须在投影中保留。
+`resources.Registry` 是发行版自带 core Skill 的唯一权威。它产出不可变、内容寻址的
+bundle，供原生 `local` 和 `none` 执行安装到 `$STELLA_HOME/bundles/<revision>`。隔离执行
+将这一精确 bundle 以只读方式投影到 `/opt/stella/skills/builtin`；`/opt` 是执行坐标而非
+另一份权威，bundle 中辅助可执行文件的模式必须在投影中保留。Plugin Skill 由
+PluginDefinition 与选中的 PluginConfig 拥有，同一份四层范围决策控制其暴露。任何 builtin
+插件都可以通过配置禁用。
 
 Project Skill 仍是持久 Agent/项目工作树中的普通文件；在活动执行之外通过有界、只读的 Home snapshot 读取。可变 `system`、`system_agent`、`user` 和 `user_agent` identity 仍登记在 PostgreSQL 中，其当前选中 revision 的 manifest 与 bytes 则以持久 Home storage 为权威。活动 Session 只获得 disposable、digest-pinned 的精确投影；revision history 不会进入 Agent workspace 的搜索树。
 
-Docker 沙箱镜像会烤入并标记精确 revision，不会回退到宿主机 builtin。Docker provider preflight 拒绝二进制与镜像 revision 不匹配的组合，从而阻止 runner session 启动。操作员命令语法使用 `stellad system-bundle --help` 查询。开发镜像用 `mise run sandbox:docker:build` 重建；每个自定义沙箱镜像都必须从匹配的 Stella revision 重建。
+Docker 沙箱镜像会烤入并标记精确 core Skill revision，不会回退到宿主机 builtin。Docker
+provider preflight 拒绝二进制与镜像 revision 不匹配的组合，从而阻止 runner session 启动。
+操作员命令语法使用 `stellad system-bundle --help` 查询。开发镜像用
+`mise run sandbox:docker:build` 重建；每个自定义沙箱镜像都必须从匹配的 Stella revision 重建。
 
-升级前，操作员必须使用旧的可工作二进制，将遗留 `$STELLA_HOME/.agents/skills` 下的每个自定义 Skill 根导入为全局（`system`）Skill：旧版入口为 **设置 → 技能**，新版入口为 **管理控制台 → 部署资源 → 全局技能**。其他残留路径必须先备份、验证后删除。启动会报告每个阻塞路径并退出，不会修改任何内容。当前 manifest 路径即使内容或模式不同也只是惰性数据；其他每个 Skill 根或残留路径都会阻塞启动。
+这次切换属于维护升级。启动新运行态前必须停止所有旧写入进程，并在一个事务中完成导入
+与校验。不支持新旧写入进程对同一数据库滚动运行。
 
 ## Agent Skill 策略
 
-存储的作用域词汇为 `system`、`system_agent`、`user`、`user_agent` 和 `project`，另加上下文作用域 `builtin`。发行版的 `builtin:<name>` 不可变。管理员安装的 `system:<name>` 与绑定 Agent 的 `system_agent:<name>` 是独立的可变身份。
+独立 Skill 仍使用 `system`、`system_agent`、`user`、`user_agent`、`project` 以及上下文
+`builtin` 身份。Plugin Skill 使用 PluginConfig 的四层范围模型，不另建全局 builtin 或
+manifest 权限面。发行版的 `builtin:<name>` core 资源不可变；管理员安装的 `system:<name>`
+与绑定 Agent 的 `system_agent:<name>` 独立可变。
 
-解析会先选择唯一的胜出项，再应用策略：`project > user_agent > user > system_agent > system > builtin`。禁用该胜出项不会暴露同名的低优先级 Skill。策略默认启用、按 Agent 共享，且与编辑内容的授权、`disable_model_invocation` 彼此独立。已接纳的 turn 保留其快照，下一次 turn 才会看到成功提交。悬空的禁用引用不影响执行，需显式清理。
+解析会先选择唯一的胜出项，再应用策略：`project > user_agent > user > system_agent > system > builtin`。禁用该胜出项不会暴露同名的低优先级 Skill。托管的 `system:*` 与 `system_agent:*` 策略默认启用、按 Agent 共享，且与编辑内容的授权、`disable_model_invocation` 彼此独立。随插件发布的资源只通过所属插件启停，不再使用 `builtin:*` 策略；`.agents` 项目技能保持独立。已接纳的 turn 保留其快照，下一次 turn 才会看到成功提交。悬空的禁用引用不影响执行，需显式清理。
 
 ## 添加新后端
 

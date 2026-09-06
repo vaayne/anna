@@ -27,7 +27,7 @@ func (vanishedInstallerAPI) ContainerInspect(context.Context, string, mobyclient
 func TestWaitForToolCacheFailsClosedWhenInstallerVanishedButVolumeNotReady(t *testing.T) {
 	client := dockerclient.NewWithAPI(vanishedInstallerAPI{})
 	verifyErr := errors.New("ready marker missing")
-	_, err := waitForToolCache(context.Background(), client, "installer", &userToolCache{VolumeName: "vol", BinPath: containerUserToolsBin}, func(context.Context) error {
+	_, err := waitForToolCache(context.Background(), client, "installer", &selectionToolCache{VolumeName: "vol", BinPath: containerSelectionBin}, func(context.Context) error {
 		return verifyErr
 	})
 	if err == nil {
@@ -38,13 +38,13 @@ func TestWaitForToolCacheFailsClosedWhenInstallerVanishedButVolumeNotReady(t *te
 	}
 }
 
-func TestEnsureUserToolCacheSingleflightsConcurrentInstall(t *testing.T) {
-	resetToolCacheMemoForTest()
-	defer resetToolCacheMemoForTest()
+func TestEnsureSelectionToolCacheSingleflightsConcurrentInstall(t *testing.T) {
+	resetToolCacheStateForTest()
+	defer resetToolCacheStateForTest()
 
 	var installCalls atomic.Int32
 	unblock := make(chan struct{})
-	installToolCacheFn = func(ctx context.Context, _ *dockerclient.Client, _ Config, _ string, _ string, cache *userToolCache) (*userToolCache, error) {
+	installSelectionToolCacheFn = func(ctx context.Context, _ *dockerclient.Client, _ Config, _ string, _ string, _ string, cache *selectionToolCache) (*selectionToolCache, error) {
 		installCalls.Add(1)
 		select {
 		case <-ctx.Done():
@@ -55,7 +55,7 @@ func TestEnsureUserToolCacheSingleflightsConcurrentInstall(t *testing.T) {
 	}
 
 	client := dockerclient.NewWithAPI(noopAPI{})
-	cfg := Config{Image: "tool-cache-singleflight:latest", UserToolBinaries: []ToolBinary{{Name: "uv", Tool: "uv"}}}
+	cfg := Config{Image: "tool-cache-singleflight:latest", SelectionToolBinaries: []ToolBinary{{Name: "uv", Tool: "uv"}}}
 
 	const callers = 8
 	start := make(chan struct{})
@@ -64,19 +64,24 @@ func TestEnsureUserToolCacheSingleflightsConcurrentInstall(t *testing.T) {
 	for range callers {
 		wg.Go(func() {
 			<-start
-			_, err := ensureUserToolCache(context.Background(), client, cfg)
+			_, err := ensureSelectionToolCache(context.Background(), client, cfg, "sha256:image")
 			errs <- err
 		})
 	}
 	close(start)
 	for installCalls.Load() == 0 {
 	}
+	// Keep the first installer in flight long enough for every caller to join
+	// the same singleflight key. The production path has no ready memo, so
+	// calls that arrive after completion are intentionally eligible to install
+	// again when a later session needs the same cache.
+	time.Sleep(25 * time.Millisecond)
 	close(unblock)
 	wg.Wait()
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("ensureUserToolCache: %v", err)
+			t.Fatalf("ensureSelectionToolCache: %v", err)
 		}
 	}
 	if got := installCalls.Load(); got != 1 {

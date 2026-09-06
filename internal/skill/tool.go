@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/CherryHQ/stella/internal/authz"
+	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 	pkgsandbox "github.com/CherryHQ/stella/pkg/sandbox"
 	"github.com/CherryHQ/stella/pkg/tools"
 )
@@ -259,6 +260,12 @@ func (t *Tool) loadManagedOrImmutable(ctx context.Context, name, filename string
 	}
 	if resolved == nil {
 		return "", fmt.Errorf("skill %q not found", name)
+	}
+	if len(filterVisibleResolvedSkills([]ResolvedSkill{*resolved}, pkgplugins.SystemPromptContext{
+		RegisteredPluginIDs: t.registeredPluginIDs,
+		EnabledPluginIDs:    t.enabledPluginIDs,
+	})) == 0 {
+		return "", errSkillNotFound
 	}
 	if err := t.authorizeLoadable(ctx, resolved); err != nil {
 		return "", err

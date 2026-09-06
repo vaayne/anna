@@ -42,8 +42,19 @@ type runnerSelection struct {
 	runner         Runner
 	model          string
 	thinking       ai.ThinkingLevel
+	pluginContext  PluginContext
 	beforeRun      BeforeRunFunc
 	snapshotPrompt SnapshotPromptFunc
+}
+
+func runnerSelectionFor(cs *cachedSession) runnerSelection {
+	return runnerSelection{
+		session:       cs,
+		runner:        cs.r,
+		model:         cs.model,
+		thinking:      cs.thinking,
+		pluginContext: cs.r.PluginContext(),
+	}
 }
 
 // runnerCache manages active runners keyed by session ID.
@@ -174,7 +185,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 				if reserve {
 					cs.reserved = true
 				}
-				selection = runnerSelection{session: cs, runner: cs.r, model: cs.model, thinking: cs.thinking}
+				selection = runnerSelectionFor(cs)
 				selected = true
 				return
 			}
@@ -190,7 +201,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 				(thinking != "" && cs.thinking != thinking) {
 				cs.stale = true
 			}
-			selection = runnerSelection{session: cs, runner: cs.r, model: cs.model, thinking: cs.thinking}
+			selection = runnerSelectionFor(cs)
 			selected = true
 			return
 		}
@@ -200,7 +211,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 				if reserve {
 					cs.reserved = true
 				}
-				selection = runnerSelection{session: cs, runner: cs.r, model: cs.model, thinking: cs.thinking}
+				selection = runnerSelectionFor(cs)
 				selected = true
 				return
 			}
@@ -220,7 +231,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 				if reserve {
 					cs.reserved = true
 				}
-				selection = runnerSelection{session: cs, runner: cs.r, model: cs.model, thinking: cs.thinking}
+				selection = runnerSelectionFor(cs)
 				selected = true
 				return
 			}
@@ -249,7 +260,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 				if reserve {
 					cs.reserved = true
 				}
-				selection = runnerSelection{session: cs, runner: cs.r, model: cs.model, thinking: cs.thinking}
+				selection = runnerSelectionFor(cs)
 				selected = true
 				return
 			}
@@ -317,7 +328,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 	c.mu.Lock()
 	if cs.r != nil {
 		// Another goroutine installed a runner; discard ours.
-		selection := runnerSelection{session: cs, runner: cs.r, model: cs.model, thinking: cs.thinking}
+		selection := runnerSelectionFor(cs)
 		c.mu.Unlock()
 		_ = c.closeRetired(r)
 		return selection, nil
@@ -339,7 +350,7 @@ func (c *runnerCache) getOrCreateWithReservation(ctx context.Context, info sessi
 	}
 
 	c.log.Info("created runner", "session_id", info.ID, "model", effectiveModel)
-	return runnerSelection{session: cs, runner: r, model: effectiveModel, thinking: effectiveThinking}, nil
+	return runnerSelection{session: cs, runner: r, model: effectiveModel, thinking: effectiveThinking, pluginContext: r.PluginContext()}, nil
 }
 
 // foregroundHumanSession gates discovery of Stella settings tools. It accepts

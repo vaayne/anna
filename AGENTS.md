@@ -9,8 +9,8 @@ Stella is a single-tenant, multi-user, multi-agent AI assistant platform written
 - `internal/platform/cli/` is shared command-output/env plumbing for `stellad`, not a user-facing chat CLI.
 - `api/` contains the OpenAPI spec and generated contracts; follow `api/CLAUDE.md` for spec-first API changes.
 - `web/` contains the frontend and docs content, including these development rules.
-- `resources/skills/` contains built-in system, channel, provider, sandbox, hook, and tool skills.
-- `plugins/` contains built-in plugin packages; `pkg/` contains reusable public Go packages.
+- `plugins/` contains built-in plugin packages and their shipped skills.
+- `resources/` contains other embedded runtime resources; `pkg/` contains reusable public Go packages.
 
 ## Commands
 
@@ -83,7 +83,7 @@ Read `web/content/docs/development/rules/doc-style.md` before writing or editing
 When behavior, APIs, config, commands, or architecture change:
 
 - Update `README.md` and/or `web/content/docs/` as appropriate.
-- Keep `resources/skills/system/stella/` and `internal/agent/prompt/template/system_prompt.tmpl` in sync with user-facing changes.
+- Keep `plugins/core/skills/stella/` and `internal/agent/prompt/template/system_prompt.tmpl` in sync with user-facing changes.
 - Maintain both English (`*.md`, `*.mdx`) and Chinese (`*.zh.md`, `*.zh.mdx`) versions.
 
 ## Issue & PR tracking

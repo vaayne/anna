@@ -1,6 +1,7 @@
 // Package-direction guards for the repo's layered trees. The rule text lives
 // in each guarded package or tree (pkg is the extension contract;
-// non-channel plugins are replaceable adapters; internal/core is the leaf
+// non-channel plugins are replaceable adapters; plugins/core owns fixed release
+// runtimes; internal/core is the leaf
 // kernel; internal/platform is infrastructure) and in
 // web/content/docs/development/rules/go-patterns.md; this file only enforces it.
 package internal_test
@@ -31,7 +32,8 @@ type boundary struct {
 
 var boundaries = []boundary{
 	{root: "pkg", allowed: []string{"pkg/"}},
-	{root: "plugins", allowed: []string{"pkg/", "plugins/"}, testOnly: []string{"internal/agent/prompt"}, skipDirs: []string{"channels"}},
+	{root: "plugins", allowed: []string{"pkg/", "plugins/"}, testOnly: []string{"internal/agent/prompt"}, skipDirs: []string{"channels", "core"}},
+	{root: "plugins/core", allowed: []string{"internal/plugin/manifest", "resources/binaries"}, testOnly: []string{"resources"}},
 	// Channel tests use the host and notifier fixtures to exercise registration;
 	// production channel adapters remain under the same pkg-only guard.
 	{root: "plugins/channels", allowed: []string{"pkg/", "plugins/"}, testOnly: []string{"internal/notify", "internal/platform/config", "internal/plugin/host"}},
@@ -54,7 +56,7 @@ func (b boundary) forbidden(f *ast.File, isTest bool) []string {
 		}
 		permitted := false
 		for _, prefix := range allowed {
-			if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+			if rel == strings.TrimSuffix(prefix, "/") || (strings.HasSuffix(prefix, "/") && strings.HasPrefix(rel, prefix)) {
 				permitted = true
 				break
 			}
@@ -143,10 +145,10 @@ func TestInternalDoesNotImportNonChannelPlugins(t *testing.T) {
 		for _, imp := range file.Imports {
 			importPath := strings.Trim(imp.Path.Value, "`\"")
 			relImport, ok := strings.CutPrefix(importPath, modulePrefix)
-			if !ok || !strings.HasPrefix(relImport, "plugins/") || strings.HasPrefix(relImport, "plugins/channels/") {
+			if !ok || !isReplaceablePluginImport(relImport) {
 				continue
 			}
-			t.Errorf("%s imports concrete non-channel plugin %s; wire it in cmd/stellad through a pkg contract", filepath.ToSlash(relPath), importPath)
+			t.Errorf("%s imports replaceable plugin %s; wire it in cmd/stellad through a pkg contract", filepath.ToSlash(relPath), importPath)
 		}
 		return nil
 	})
@@ -170,7 +172,11 @@ func TestPackageBoundariesTripwire(t *testing.T) {
 	const offender = modulePrefix + "internal/agent"
 	for _, b := range boundaries {
 		t.Run(b.root, func(t *testing.T) {
-			bad := parse("package x\nimport (\n\t\"context\"\n\t\"" + offender + "\"\n\t\"" + modulePrefix + b.allowed[0] + "ai\"\n)\n")
+			allowed := b.allowed[0]
+			if strings.HasSuffix(allowed, "/") {
+				allowed += "ai"
+			}
+			bad := parse("package x\nimport (\n\t\"context\"\n\t\"" + offender + "\"\n\t\"" + modulePrefix + allowed + "\"\n)\n")
 			if got := b.forbidden(bad, false); len(got) != 1 || got[0] != offender {
 				t.Fatalf("counterexample not detected, got %v; the guard is vacuous", got)
 			}
@@ -184,5 +190,34 @@ func TestPackageBoundariesTripwire(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The fixed release runtime is the only non-channel plugin package that
+// internal code may consume directly. Its subpackages gain no exception.
+func isReplaceablePluginImport(name string) bool {
+	return strings.HasPrefix(name, "plugins/") && !strings.HasPrefix(name, "plugins/channels/") && name != "plugins/core"
+}
+
+func TestCoreRuntimeBoundaryIsExact(t *testing.T) {
+	for name, rejected := range map[string]bool{"plugins/core": false, "plugins/core/other": true, "plugins/core-extra": true, "plugins/tools": true} {
+		if got := isReplaceablePluginImport(name); got != rejected {
+			t.Errorf("%s rejected=%v, want %v", name, got, rejected)
+		}
+	}
+	var coreBoundary boundary
+	for _, b := range boundaries {
+		if b.root == "plugins/core" {
+			coreBoundary = b
+		}
+	}
+	for name, rejected := range map[string]bool{"internal/plugin/manifest": false, "resources/binaries": false, "internal/plugin/manifest/other": true, "internal/agent": true, "resources": true} {
+		f, err := parser.ParseFile(token.NewFileSet(), "core.go", "package core\nimport _ \""+modulePrefix+name+"\"", parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(coreBoundary.forbidden(f, false)) > 0; got != rejected {
+			t.Errorf("core -> %s rejected=%v, want %v", name, got, rejected)
+		}
 	}
 }

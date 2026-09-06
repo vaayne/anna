@@ -47,6 +47,7 @@ run = """
 # Must run first: every other generator here transitively imports
 # resources/binaries, which does not compile until its archives exist.
 go run ./internal/tools/syncembeddedbinaries
+go run ./internal/tools/generatepluginassets
 go run ./internal/tools/generatebuiltinmanifest
 sqlc generate
 """

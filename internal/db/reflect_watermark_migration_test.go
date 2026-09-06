@@ -3,13 +3,10 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
 	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 )
 
 const (
@@ -18,14 +15,8 @@ const (
 )
 
 func TestMigrateReflectLineWatermarks(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, reflectWatermarkBeforeMigration); err != nil {
-		t.Fatalf("restore pre-watermark-migration schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, reflectWatermarkBeforeMigration)
+	ctx := t.Context()
 
 	seedReflectState(t, db, "legacy-only", "review_watermark", `{"reviewed_at":"2026-07-01 10:00:00"}`)
 	seedReflectState(t, db, "line-newer", "review_watermark", `{"reviewed_at":"2026-07-01 10:00:00"}`)
@@ -56,11 +47,8 @@ func TestMigrateReflectLineWatermarks(t *testing.T) {
 	assertReflectState(t, db, "line-only", "reflect_watermark:fact", `{"reviewed_at":"2026-07-01T14:00:00Z","reviewed_seq":9}`)
 	assertReflectStateMissing(t, db, "line-only", "reflect_watermark:skill")
 
-	// Down is intentionally inert; running Up again must leave migrated values
+	// Re-applying the already-applied migration must leave migrated values
 	// unchanged instead of stripping sequence information from newer lines.
-	if _, err := provider.DownTo(ctx, reflectWatermarkBeforeMigration); err != nil {
-		t.Fatalf("mark watermark migration down: %v", err)
-	}
 	if _, err := provider.UpTo(ctx, reflectWatermarkMigration); err != nil {
 		t.Fatalf("repeat watermark migration: %v", err)
 	}
@@ -69,14 +57,8 @@ func TestMigrateReflectLineWatermarks(t *testing.T) {
 }
 
 func TestMigrateReflectLineWatermarksRejectsMalformedTimestamp(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, reflectWatermarkBeforeMigration); err != nil {
-		t.Fatalf("restore pre-watermark-migration schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, reflectWatermarkBeforeMigration)
+	ctx := t.Context()
 	seedReflectState(t, db, "valid", "review_watermark", `{"reviewed_at":"2026-07-01 10:00:00"}`)
 	seedReflectState(t, db, "invalid", "review_watermark", `{"reviewed_at":"not-a-timestamp"}`)
 
@@ -139,19 +121,4 @@ func assertReflectStateMissing(t *testing.T, db *pgxpool.Pool, sessionID, stateK
 	if count != 0 {
 		t.Fatalf("Reflect state %s/%s exists", sessionID, stateKey)
 	}
-}
-
-func reflectWatermarkProvider(t *testing.T, pool *pgxpool.Pool) (*goose.Provider, func()) {
-	t.Helper()
-	migrations, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(pool)
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
-	if err != nil {
-		_ = sqlDB.Close()
-		t.Fatalf("create migration provider: %v", err)
-	}
-	return provider, func() { _ = sqlDB.Close() }
 }

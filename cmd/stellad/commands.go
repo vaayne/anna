@@ -19,7 +19,7 @@ import (
 	ucli "github.com/urfave/cli/v2"
 
 	"github.com/CherryHQ/stella/internal/agent"
-	"github.com/CherryHQ/stella/internal/agent/prompt"
+	agentruntime "github.com/CherryHQ/stella/internal/agent/runtime"
 	"github.com/CherryHQ/stella/internal/agent/settingspolicy"
 	"github.com/CherryHQ/stella/internal/auth"
 	"github.com/CherryHQ/stella/internal/authz"
@@ -53,8 +53,8 @@ import (
 	"github.com/CherryHQ/stella/internal/platform/observability"
 	"github.com/CherryHQ/stella/internal/platform/observability/metrichook"
 	"github.com/CherryHQ/stella/internal/platform/version"
+	"github.com/CherryHQ/stella/internal/plugin"
 	pluginhost "github.com/CherryHQ/stella/internal/plugin/host"
-	"github.com/CherryHQ/stella/internal/plugin/manifest"
 	"github.com/CherryHQ/stella/internal/reflect"
 	"github.com/CherryHQ/stella/internal/scheduler"
 	"github.com/CherryHQ/stella/internal/sessionmedia"
@@ -69,7 +69,7 @@ import (
 	"github.com/CherryHQ/stella/pkg/hooks"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 	"github.com/CherryHQ/stella/pkg/providers"
-	pkgtools "github.com/CherryHQ/stella/pkg/tools"
+	"github.com/CherryHQ/stella/plugins/core"
 	"github.com/CherryHQ/stella/plugins/email"
 	"github.com/CherryHQ/stella/resources"
 	"github.com/CherryHQ/stella/resources/binaries"
@@ -88,7 +88,6 @@ the server, or use "stellad service" to manage it as a background service.`,
 			upgradeCommand(),
 			postgresCommand(),
 			vaultCommand(),
-			miseCommand(),
 			systemBundleCommand(),
 			serviceCommand(),
 		},
@@ -113,77 +112,52 @@ type setupResult struct {
 	credentialSvc *providercred.Service
 	// credentialProviders exposes canonical Provider IDs only; unlike the general
 	// config Store it cannot reveal deployment-global Provider keys.
-	credentialProviders      agentaccess.ProviderReader
-	authStore                *appdb.AuthStore
-	agentAccess              *agentaccess.Service
-	agentManagement          *agentaccess.Management
-	projectStore             *agent.ProjectStore
-	sessionAccess            *sessionaccess.Service
-	skillAccess              *access.Service
-	pluginHost               *pluginhost.Host
-	providerRegistry         *providers.Registry
-	channelRuntimeServices   *pluginhost.ChannelPlatform
-	poolManager              *agent.PoolManager
-	schedulerSvc             *scheduler.Service
-	goalSvc                  *goal.Service
-	vaultSvc                 *vault.Service
-	mcpSvc                   *mcp.Service
-	controlPlane             *controlplane.Service
-	webhooks                 *webhook.Service
-	credSvc                  *connections.Service
-	emailSvc                 *email.Service
-	shareSvc                 *sharepkg.Service
-	recallySvc               *recally.Service
-	assetStore               *asset.Store
-	workspaceManager         *home.WorkspaceManager
-	homeDeletion             *home.OwnerDeletion
-	workflowSvc              *workflowpkg.Service
-	embeddingSvc             *embedding.Service
-	librarySvc               *library.Service
-	groupNudgeWorker         *channel.GroupNudgeWorker
-	riverClient              *river.Client[pgx.Tx]
-	builtinTools             []agent.BuiltinTool
-	toolMeta                 *toolmeta.Registry
-	notifier                 *notify.Dispatcher
-	pluginToolsBuilder       agent.PluginToolsBuilder
-	promptSectionsBuilder    prompt.SectionsBuilder
-	sessionPluginViewBuilder agent.SessionPluginViewBuilder
-	toolLifecycle            *coreagent.ToolLifecycle
-	skillStore               *skill.POSIXStore
-	sessionImages            *sessionmedia.Pipeline
-	cliUserID                int64
-	oauthRegistry            *oauth.ProviderRegistry
-	backgroundTasks          *sync.WaitGroup
-	metricHook               *metrichook.Hook
-}
-
-// manifestReconciler schedules the background install of manifest plugin
-// binaries. It is a seam because the real one shells out to mise and downloads
-// from the network, which a hermetic in-process test must not do.
-type manifestReconciler func(context.Context, *sync.WaitGroup, *manifest.Manifest, string)
-
-type setupOptions struct {
-	reconcileManifest manifestReconciler
-}
-
-type setupOption func(*setupOptions)
-
-// withManifestReconciler replaces the background binary install. Only a test
-// that must reach nothing outside the host passes it; production takes the
-// default, so the behavior it replaces is unconditional in the server.
-func withManifestReconciler(fn manifestReconciler) setupOption {
-	return func(o *setupOptions) { o.reconcileManifest = fn }
+	credentialProviders    agentaccess.ProviderReader
+	authStore              *appdb.AuthStore
+	agentAccess            *agentaccess.Service
+	agentManagement        *agentaccess.Management
+	projectStore           *agent.ProjectStore
+	sessionAccess          *sessionaccess.Service
+	skillAccess            *access.Service
+	pluginHost             *pluginhost.Host
+	pluginService          *plugin.Service
+	providerRegistry       *providers.Registry
+	channelRuntimeServices *pluginhost.ChannelPlatform
+	poolManager            *agent.PoolManager
+	schedulerSvc           *scheduler.Service
+	goalSvc                *goal.Service
+	vaultSvc               *vault.Service
+	mcpSvc                 *mcp.Service
+	controlPlane           *controlplane.Service
+	webhooks               *webhook.Service
+	credSvc                *connections.Service
+	emailSvc               *email.Service
+	shareSvc               *sharepkg.Service
+	recallySvc             *recally.Service
+	assetStore             *asset.Store
+	workspaceManager       *home.WorkspaceManager
+	homeDeletion           *home.OwnerDeletion
+	workflowSvc            *workflowpkg.Service
+	embeddingSvc           *embedding.Service
+	librarySvc             *library.Service
+	groupNudgeWorker       *channel.GroupNudgeWorker
+	riverClient            *river.Client[pgx.Tx]
+	builtinTools           []agent.BuiltinTool
+	toolMeta               *toolmeta.Registry
+	notifier               *notify.Dispatcher
+	skillStore             *skill.POSIXStore
+	sessionImages          *sessionmedia.Pipeline
+	cliUserID              int64
+	oauthRegistry          *oauth.ProviderRegistry
+	backgroundTasks        *sync.WaitGroup
+	metricHook             *metrichook.Hook
 }
 
 // setup builds every subsystem. baseURL is the final public URL resolved once at
 // the startup boundary; the shared credentials/share services are constructed
 // with it directly, so no service is built with a localhost placeholder and
 // mutated later.
-func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts ...setupOption) (*setupResult, error) {
-	options := setupOptions{reconcileManifest: reconcileManifestPluginsInBackground}
-	for _, opt := range opts {
-		opt(&options)
-	}
+func setup(parent context.Context, cfg config.ServerConfig, baseURL string) (*setupResult, error) {
 	dsn := cfg.Database.URL
 	var embedded *appdb.Embedded
 	if dsn == "" {
@@ -231,6 +205,43 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	// Every authorization domain owns its own static rules and loads durable facts
 	// before deciding; the Agent domain is the shared read gate the others fold in.
 	agentAccess := agentaccess.NewService(store, authStore, agentaccess.WithGuestPolicyDecoder(phost.GuestPolicyResolver))
+	var poolMgr *agent.PoolManager
+	pluginSvc := plugin.NewService(db, agentAccess, ps.catalog, pluginBackendPolicy(cfg.MCP.AllowPrivateEndpoints), func(ctx context.Context, mutate func() error) error {
+		// Startup has no admitted runners or listeners yet.
+		if poolMgr == nil {
+			return mutate()
+		}
+		err := poolMgr.ApplyPluginMutation(ctx, mutate)
+		if err == nil || errors.Is(err, plugin.ErrCommitOutcomeUnknown) {
+			// Event admission already reads the committed cap. Reconcile listeners
+			// after releasing the admission fence, without holding a database tx.
+			reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if reconcileErr := phost.ReconcileChannels(reconcileCtx); reconcileErr != nil {
+				slog.Error("reconcile channels after committed plugin change", "error", reconcileErr)
+			}
+		}
+		return err
+	})
+	if err := plugin.ImportLegacyState(parent, db, ps.catalog, newToolMetaRegistry(generatedFamilies()...)); err != nil && !errors.Is(err, plugin.ErrImportComplete) {
+		return nil, fmt.Errorf("import plugin configuration: %w", err)
+	}
+	if err := pluginSvc.SyncBuiltinDefaults(parent); err != nil {
+		return nil, fmt.Errorf("sync builtin plugins: %w", err)
+	}
+	phost.SetListenerCap(pluginSvc.AdministrativeCap)
+	backgroundCapabilityGate := pluginBackgroundGate(pluginSvc)
+	pluginContextBuilder := func(ctx context.Context, authority authz.Authority, agentID string) (agent.PluginContext, error) {
+		snapshot, err := pluginSvc.ResolveSnapshot(ctx, authority, agentID)
+		if err != nil {
+			return agent.PluginContext{}, err
+		}
+		view, err := phost.SessionPluginView(snapshot)
+		if err != nil {
+			return agent.PluginContext{}, err
+		}
+		return agentruntime.NewPluginContext(snapshot, view), nil
+	}
 
 	// One process-wide manager is the sole materializer beneath STELLA_HOME.
 	homeRegistry, err := home.NewWorkspaceManager(db, config.StellaHome())
@@ -253,6 +264,14 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	}
 	if err := ensureEmbeddedAssets(); err != nil {
 		return nil, err
+	}
+	var coreRuntimePlan *core.RuntimePlan
+	if config.ActiveSandboxBackend() != config.SandboxBackendDocker {
+		plan, err := core.Prepare(parent, config.StellaHome())
+		if err != nil {
+			return nil, fmt.Errorf("prepare core runtimes: %w", err)
+		}
+		coreRuntimePlan = &plan
 	}
 	blobStore, err := blob.NewStoreFromConfig(cfg.Blob)
 	if err != nil {
@@ -298,7 +317,7 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 		return nil, fmt.Errorf("build sandbox backend registry: %w", err)
 	}
 
-	schedulerSvc, err := setupScheduler(db, phost, agentAccess)
+	schedulerSvc, err := setupScheduler(db, agentAccess, backgroundCapabilityGate)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +355,6 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 		return nil, fmt.Errorf("memory provider: %w", err)
 	}
 
-	var poolMgr *agent.PoolManager
 	memProvider = wrapMemoryWithTracing(memProvider, &poolMgr)
 	if _, ok := memory.Unwrap(memProvider).(memory.InboxAppender); !ok {
 		return nil, errors.New("memory provider does not support durable Session inbox")
@@ -347,9 +365,7 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	}
 	sessionInbox := sessioninbox.New(db)
 
-	pluginToolsBuilder := func(ctx context.Context, build pkgplugins.ToolBuildContext) []pkgtools.Tool {
-		return phost.BuildEnabledTools(ctx, build)
-	}
+	pluginToolsBuilder := phost.BuildEnabledTools
 	// Immutable library raw content may use the configured BlobStore independently
 	// of mutable Home files.
 	libraryRaw, err := library.NewRawStoreFromConfig(config.StellaHome(), cfg.Blob, library.RawStoreOptions{
@@ -406,11 +422,13 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	}
 	projectStore := agent.NewProjectStore(db, agentAccess, agent.WithProjectHomeWorkspace(homeRegistry))
 	systemPromptBuilder, err := sessionaccess.NewSystemPromptBuilder(sessionaccess.SystemPromptDeps{
-		Memory:    memProvider,
-		Agents:    sessionaccess.ConfigAgentSystemPrompt(store),
-		Projects:  projectStore.Resolve,
-		Workspace: homeRegistry,
-		Plugins:   phost,
+		Memory:                memProvider,
+		Agents:                sessionaccess.ConfigAgentSystemPrompt(store),
+		Projects:              projectStore.Resolve,
+		Workspace:             homeRegistry,
+		PluginContextBuilder:  pluginContextBuilder,
+		PromptSectionsBuilder: phost.SystemPromptSections,
+		SandboxBackendFn:      func(context.Context) string { return config.ActiveSandboxBackend() },
 		Skills: func(ctx context.Context, build pkgplugins.SystemPromptContext, project *skill.ProjectSnapshot) (pkgplugins.SystemPromptSection, error) {
 			return skill.BuildAuthorizedPromptSection(ctx, build, project, skillStore, skillAccess)
 		},
@@ -428,6 +446,7 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 		return nil, fmt.Errorf("memory provider does not implement group recall")
 	}
 	if err := registerReflectBuiltin(schedulerSvc, reflect.Config{
+		CapabilityGate:    backgroundCapabilityGate,
 		Memory:            memProvider,
 		Store:             store,
 		Snapshots:         snapshotLoader,
@@ -444,8 +463,8 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 		return nil, err
 	}
 
-	pluginHooksBuilder := func(ctx context.Context) []hooks.HookPlugin {
-		return phost.BuildEnabledHooks(ctx, binaries.BinDir(config.StellaHome()))
+	pluginHooksBuilder := func(ctx context.Context, snapshot plugin.Snapshot) ([]hooks.HookPlugin, error) {
+		return phost.BuildEnabledHooks(ctx, binaries.BinDir(config.StellaHome()), snapshot)
 	}
 
 	// The trace hook is server-level infrastructure, not a user-managed plugin:
@@ -467,12 +486,8 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	usageHook.Start()
 	coreHooks := []hooks.HookPlugin{traceHook, usageHook, metricHook}
 
-	toolLifecycle := buildToolLifecycle(phost)
-	promptSectionsBuilder := func(ctx context.Context, build pkgplugins.SystemPromptContext) ([]pkgplugins.SystemPromptSection, error) {
-		return phost.SystemPromptSections(ctx, build)
-	}
-	sessionPluginViewBuilder := func(ctx context.Context) (pkgplugins.SessionPluginView, error) {
-		return phost.SessionPluginView(ctx)
+	toolLifecycleBuilder := func(ctx context.Context, snapshot plugin.Snapshot) (*coreagent.ToolLifecycle, error) {
+		return buildToolLifecycle(phost, snapshot), nil
 	}
 
 	// A goal worker must not reach the orchestration surface that scheduled it:
@@ -558,6 +573,7 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	}
 	mcpSvc := mcp.NewServiceForPool(db, mcpVault, bindMCPVault)
 	mcpSvc.SetEndpointPolicy(mcp.EndpointPolicy{AllowPrivate: cfg.MCP.AllowPrivateEndpoints})
+	mcpSvc.SetPluginService(pluginSvc)
 
 	// The tools are built before the PoolManager exists; the closure is resolved
 	// only during a turn, after the shared Management service is fully wired.
@@ -593,6 +609,7 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 		SettingsAdmin:   settingsAdminLookup{users: appdb.NewOIDCStore(db)},
 		SettingsAgents:  store,
 		ControlPlane:    func() *controlplane.Service { return controlPlaneSvc },
+		PluginService:   func() *plugin.Service { return pluginSvc },
 		MCPAccess:       func() *mcp.Access { return mcpAccess },
 		MCPCatalog:      mcpCatalogFunc(mcpSvc),
 	})
@@ -620,17 +637,16 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 		agent.WithCoreHooks(coreHooks),
 		agent.WithProviderStreamBuilder(providerStreamBuilder),
 		agent.WithSandboxBackends(sandboxBackends),
-		agent.WithPromptSectionsBuilder(promptSectionsBuilder),
-		agent.WithSessionPluginViewBuilder(sessionPluginViewBuilder),
-		agent.WithBeforeRunBuilderPM(func(ctx context.Context, build pkgplugins.BeforeRunContext) (pkgplugins.BeforeRunResult, error) {
-			return phost.BeforeRun(ctx, build)
-		}),
-		agent.WithToolLifecyclePM(toolLifecycle),
+		agent.WithPromptSectionsBuilder(phost.SystemPromptSections),
+		agent.WithPluginContextBuilder(pluginContextBuilder),
+		agent.WithBeforeRunBuilderPM(phost.BeforeRun),
+		agent.WithToolLifecycleBuilder(toolLifecycleBuilder),
 		agent.WithToolOverrideFetcher(agent.NewToolOverrideStore(db).Fetch),
 		agent.WithSkillRevisionReader(skillStore),
 		agent.WithSkillReadAuthorizer(skillAccess),
 		agent.WithProjectResolver(projectStore.Resolve),
 		agent.WithHomeWorkspace(homeRegistry),
+		agent.WithCoreRuntimePlan(coreRuntimePlan),
 	)
 
 	// Bind the static Vault/MCP/OAuth capabilities into the pool BEFORE StartAll,
@@ -719,9 +735,7 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	}
 
 	backgroundTasks := &sync.WaitGroup{}
-	if ps.manifestToReconcile != nil {
-		options.reconcileManifest(parent, backgroundTasks, ps.manifestToReconcile, config.StellaHome())
-	}
+
 	reconcileProjectCoordinatesInBackground(parent, backgroundTasks, homeRegistry)
 	// Close runtime entry points before setup returns and traffic can beat the
 	// background reconciler to the legacy inventory.
@@ -730,56 +744,53 @@ func setup(parent context.Context, cfg config.ServerConfig, baseURL string, opts
 	backfillRecallyContentInBackground(parent, backgroundTasks, recallySvc)
 
 	result := &setupResult{
-		ctx:                      parent,
-		cfg:                      cfg,
-		db:                       db,
-		embedded:                 embedded,
-		mem:                      memProvider,
-		store:                    store,
-		snapshotLoader:           snapshotLoader,
-		credentialSvc:            credentialSvc,
-		credentialProviders:      store,
-		authStore:                authStore,
-		agentAccess:              agentAccess,
-		agentManagement:          agentManagement,
-		projectStore:             projectStore,
-		sessionAccess:            sessionAccess,
-		skillAccess:              skillAccess,
-		pluginHost:               phost,
-		providerRegistry:         providerRegistry,
-		channelRuntimeServices:   ps.channelRuntimeServices,
-		poolManager:              poolMgr,
-		schedulerSvc:             schedulerSvc,
-		goalSvc:                  goalSvc,
-		vaultSvc:                 vaultSvc,
-		mcpSvc:                   mcpSvc,
-		controlPlane:             controlPlaneSvc,
-		webhooks:                 webhookSvc,
-		credSvc:                  credSvc,
-		emailSvc:                 emailSvc,
-		shareSvc:                 shareSvc,
-		recallySvc:               recallySvc,
-		assetStore:               assetStore,
-		workspaceManager:         homeRegistry,
-		homeDeletion:             homeDeletion,
-		workflowSvc:              workflowSvc,
-		embeddingSvc:             embeddingSvc,
-		librarySvc:               librarySvc,
-		groupNudgeWorker:         groupNudgeWorker,
-		riverClient:              riverClient,
-		builtinTools:             builtinTools,
-		toolMeta:                 registeredToolMeta,
-		notifier:                 dispatcher,
-		pluginToolsBuilder:       pluginToolsBuilder,
-		promptSectionsBuilder:    promptSectionsBuilder,
-		sessionPluginViewBuilder: sessionPluginViewBuilder,
-		toolLifecycle:            toolLifecycle,
-		skillStore:               skillStore,
-		sessionImages:            sessionImages,
-		cliUserID:                0,
-		oauthRegistry:            ps.oauthRegistry,
-		backgroundTasks:          backgroundTasks,
-		metricHook:               metricHook,
+		ctx:                    parent,
+		cfg:                    cfg,
+		db:                     db,
+		embedded:               embedded,
+		mem:                    memProvider,
+		store:                  store,
+		snapshotLoader:         snapshotLoader,
+		credentialSvc:          credentialSvc,
+		credentialProviders:    store,
+		authStore:              authStore,
+		agentAccess:            agentAccess,
+		agentManagement:        agentManagement,
+		projectStore:           projectStore,
+		sessionAccess:          sessionAccess,
+		skillAccess:            skillAccess,
+		pluginHost:             phost,
+		pluginService:          pluginSvc,
+		providerRegistry:       providerRegistry,
+		channelRuntimeServices: ps.channelRuntimeServices,
+		poolManager:            poolMgr,
+		schedulerSvc:           schedulerSvc,
+		goalSvc:                goalSvc,
+		vaultSvc:               vaultSvc,
+		mcpSvc:                 mcpSvc,
+		controlPlane:           controlPlaneSvc,
+		webhooks:               webhookSvc,
+		credSvc:                credSvc,
+		emailSvc:               emailSvc,
+		shareSvc:               shareSvc,
+		recallySvc:             recallySvc,
+		assetStore:             assetStore,
+		workspaceManager:       homeRegistry,
+		homeDeletion:           homeDeletion,
+		workflowSvc:            workflowSvc,
+		embeddingSvc:           embeddingSvc,
+		librarySvc:             librarySvc,
+		groupNudgeWorker:       groupNudgeWorker,
+		riverClient:            riverClient,
+		builtinTools:           builtinTools,
+		toolMeta:               registeredToolMeta,
+		notifier:               dispatcher,
+		skillStore:             skillStore,
+		sessionImages:          sessionImages,
+		cliUserID:              0,
+		oauthRegistry:          ps.oauthRegistry,
+		backgroundTasks:        backgroundTasks,
+		metricHook:             metricHook,
 	}
 	// Ownership of the embedded server moves to result; clear the local so the
 	// cleanup defer above becomes a no-op on this success path.
@@ -820,7 +831,7 @@ func ensureEmbeddedAssets() error {
 	return nil
 }
 
-func setupScheduler(db *pgxpool.Pool, phost *pluginhost.Host, agentAccess *agentaccess.Service) (*scheduler.Service, error) {
+func setupScheduler(db *pgxpool.Pool, agentAccess *agentaccess.Service, capabilityGate scheduler.BackgroundCapabilityGate) (*scheduler.Service, error) {
 	// External-river mode: the scheduler does not build its own River client. The
 	// composition root (buildSharedRiverClient) assembles the single process-wide
 	// working client from both the scheduler and goal queues and injects it back
@@ -829,7 +840,7 @@ func setupScheduler(db *pgxpool.Pool, phost *pluginhost.Host, agentAccess *agent
 	//
 	// WithAgentAccess wires Scheduler to Agent's direct access port. Scheduler
 	// itself owns durable-job rules for HTTP and tool use cases.
-	svc, err := scheduler.New(db, scheduler.WithExternalRiver(), scheduler.WithAgentAccess(agentAccess))
+	svc, err := scheduler.New(db, scheduler.WithExternalRiver(), scheduler.WithAgentAccess(agentAccess), scheduler.WithBackgroundCapabilityGate(capabilityGate))
 	if err != nil {
 		return nil, fmt.Errorf("create scheduler service: %w", err)
 	}
@@ -994,11 +1005,12 @@ func wireSchedulerCallbacks(svc *scheduler.Service, poolMgr *agent.PoolManager, 
 			}
 		}
 		ch := agentSvc.ChatForScheduler(schedulerJobContext(ctx, agentID, job), agent.SchedulerChatRequest{
-			SessionID: sessionID,
-			UserID:    job.UserID,
-			AgentID:   agentID,
-			Message:   schedulerJobMessage(job),
-			Authority: authority,
+			SessionID:   sessionID,
+			UserID:      job.UserID,
+			AgentID:     agentID,
+			Message:     schedulerJobMessage(job),
+			Authority:   authority,
+			BeforeStart: func() error { return svc.AuthorizeAgentStart(ctx, job, authority, agentID) },
 		})
 		// Keep the last step's text — that's the final assistant answer;
 		// earlier steps are tool-call narration.

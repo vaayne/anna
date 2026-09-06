@@ -14,6 +14,7 @@ import (
 	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/model/embedding"
 	"github.com/CherryHQ/stella/internal/platform/config"
+	pluginapi "github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/pkg/tools"
 )
 
@@ -42,15 +43,16 @@ var deploymentToolDescriptions = map[string]map[string]string{
 	},
 }
 
-// ManagementTool is one Stella-only deployment action. It obtains both direct
-// human authority and the control-plane admin capability at execution time so a
-// cached catalog cannot turn a role change into a write capability.
+// ManagementTool is one Stella-only deployment action. It obtains direct
+// human authority at execution time; deployment actions then require the
+// control-plane admin capability, while settings_plugin uses common plugin PEPs.
 type ManagementTool struct {
 	providerSpec         *SettingsProviderActionTool
 	defaultModelSpec     *SettingsDefaultModelActionTool
 	embeddingSettingSpec *SettingsEmbeddingSettingActionTool
 	pluginSpec           *SettingsPluginActionTool
 	service              func() *Service
+	pluginService        func() *pluginapi.Service
 }
 
 func NewProviderManagementTool(spec SettingsProviderActionTool, service func() *Service) *ManagementTool {
@@ -65,8 +67,8 @@ func NewEmbeddingSettingManagementTool(spec SettingsEmbeddingSettingActionTool, 
 	return &ManagementTool{embeddingSettingSpec: &spec, service: service}
 }
 
-func NewPluginManagementTool(spec SettingsPluginActionTool, service func() *Service) *ManagementTool {
-	return &ManagementTool{pluginSpec: &spec, service: service}
+func NewPluginManagementTool(spec SettingsPluginActionTool, service func() *pluginapi.Service) *ManagementTool {
+	return &ManagementTool{pluginSpec: &spec, pluginService: service}
 }
 
 func (t *ManagementTool) Definition() tools.Definition {
@@ -75,27 +77,44 @@ func (t *ManagementTool) Definition() tools.Definition {
 }
 
 func (t *ManagementTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	if t == nil || t.service == nil || t.service() == nil {
+	if t == nil {
 		return "", fmt.Errorf("deployment management is unavailable — try again later")
 	}
 	authority, err := authz.DirectAuthority(ctx, authz.UserIDFromContext(ctx))
 	if err != nil {
 		return "", authz.MapToolError(t.name(), deploymentToolSibling, err)
 	}
-	access, err := t.service().Begin(ctx, authority)
-	if err != nil {
-		return "", authz.MapToolError(t.name(), deploymentToolSibling, err)
-	}
 	var out any
 	switch {
-	case t.providerSpec != nil:
-		out, err = SettingsProviderDispatch(ctx, providerManagementHandler{access: access}, t.providerSpec.Action, args)
-	case t.defaultModelSpec != nil:
-		out, err = SettingsDefaultModelDispatch(ctx, defaultModelManagementHandler{access: access}, t.defaultModelSpec.Action, args)
-	case t.embeddingSettingSpec != nil:
-		out, err = SettingsEmbeddingSettingDispatch(ctx, embeddingManagementHandler{access: access}, t.embeddingSettingSpec.Action, args)
 	case t.pluginSpec != nil:
-		out, err = SettingsPluginDispatch(ctx, pluginManagementHandler{access: access}, t.pluginSpec.Action, args)
+		if t.pluginService == nil {
+			return "", fmt.Errorf("deployment management is unavailable — try again later")
+		}
+		service := t.pluginService()
+		if service == nil {
+			return "", fmt.Errorf("deployment management is unavailable — try again later")
+		}
+		access, beginErr := service.Begin(authority)
+		if beginErr != nil {
+			return "", authz.MapToolError(t.name(), deploymentToolSibling, beginErr)
+		}
+		out, err = SettingsPluginDispatch(ctx, NewUnifiedPluginManagementHandler(access), t.pluginSpec.Action, args)
+	case t.providerSpec != nil, t.defaultModelSpec != nil, t.embeddingSettingSpec != nil:
+		if t.service == nil || t.service() == nil {
+			return "", fmt.Errorf("deployment management is unavailable — try again later")
+		}
+		access, beginErr := t.service().Begin(ctx, authority)
+		if beginErr != nil {
+			return "", authz.MapToolError(t.name(), deploymentToolSibling, beginErr)
+		}
+		switch {
+		case t.providerSpec != nil:
+			out, err = SettingsProviderDispatch(ctx, providerManagementHandler{access: access}, t.providerSpec.Action, args)
+		case t.defaultModelSpec != nil:
+			out, err = SettingsDefaultModelDispatch(ctx, defaultModelManagementHandler{access: access}, t.defaultModelSpec.Action, args)
+		case t.embeddingSettingSpec != nil:
+			out, err = SettingsEmbeddingSettingDispatch(ctx, embeddingManagementHandler{access: access}, t.embeddingSettingSpec.Action, args)
+		}
 	default:
 		err = fmt.Errorf("deployment management tool has no action")
 	}
@@ -366,41 +385,6 @@ type pluginToolView struct {
 
 func projectPlugin(kind, name string, enabled bool) pluginToolView {
 	return pluginToolView{Kind: kind, Name: name, Enabled: enabled, Version: deploymentVersion(kind, name, enabled)}
-}
-
-type pluginManagementHandler struct{ access *Access }
-
-func (h pluginManagementHandler) List(ctx context.Context, _ SettingsPluginListInput) (any, error) {
-	rows, e := h.access.ListPlugins(ctx)
-	if e != nil {
-		return nil, e
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Kind+"/"+rows[i].Name < rows[j].Kind+"/"+rows[j].Name })
-	truncated := len(rows) > 50
-	if truncated {
-		rows = rows[:50]
-	}
-	out := make([]pluginToolView, 0, len(rows))
-	for _, p := range rows {
-		out = append(out, projectPlugin(p.Kind, p.Name, p.State.Enabled))
-	}
-	return map[string]any{"plugins": out, "truncated": truncated}, nil
-}
-
-func (h pluginManagementHandler) Enable(ctx context.Context, in SettingsPluginEnableInput) (any, error) {
-	p, e := h.access.TogglePlugin(ctx, in.Kind, in.Name, true)
-	if e != nil {
-		return nil, e
-	}
-	return projectPlugin(p.Kind, p.Name, p.Enabled), nil
-}
-
-func (h pluginManagementHandler) Disable(ctx context.Context, in SettingsPluginDisableInput) (any, error) {
-	p, e := h.access.TogglePlugin(ctx, in.Kind, in.Name, false)
-	if e != nil {
-		return nil, e
-	}
-	return projectPlugin(p.Kind, p.Name, p.Enabled), nil
 }
 
 // validateEmbeddingDim is shared by HTTP and tool callers. Keeping it here

@@ -92,9 +92,9 @@ func (t *Tool) Execute(ctx context.Context, args map[string]any) (string, error)
 // points the model at the list for the resource it actually asked about rather
 // than at the family's first list action.
 var listTools = map[string]string{
-	"article": "recally_article_list",
-	"feed":    "recally_feed_list",
-	"entry":   "recally_entry_list",
+	"article": "recally__article_list",
+	"feed":    "recally__feed_list",
+	"entry":   "recally__entry_list",
 }
 
 func (t *Tool) listSibling() string {

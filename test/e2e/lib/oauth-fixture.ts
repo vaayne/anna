@@ -39,6 +39,15 @@ async function form(req: IncomingMessage): Promise<URLSearchParams> {
   return new URLSearchParams(await body(req));
 }
 
+function basicCredentials(req: IncomingMessage): { clientID: string; clientSecret: string; } | undefined {
+  const header = req.headers.authorization ?? "";
+  if (!header.startsWith("Basic ")) return undefined;
+  const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
+  const separator = decoded.indexOf(":");
+  if (separator < 0) return undefined;
+  return { clientID: decoded.slice(0, separator), clientSecret: decoded.slice(separator + 1) };
+}
+
 // Loopback OAuth 2.1 authorization server. It auto-approves /authorize, which
 // keeps the browser test deterministic while still exercising redirect + PKCE.
 export async function startOAuthFixture(): Promise<OAuthFixture> {
@@ -105,13 +114,19 @@ export async function startOAuthFixture(): Promise<OAuthFixture> {
       }
       if (req.method === "POST" && path === "/token") {
         count(fixture, "token");
-        if (fixture.tokenStatus) return json(res, fixture.tokenBody ? JSON.parse(fixture.tokenBody) : {}, fixture.tokenStatus);
         const body = await form(req);
+        const credentials = basicCredentials(req);
+        const clientID = body.get("client_id") ?? credentials?.clientID ?? "";
+        const clientSecret = body.get("client_secret") ?? credentials?.clientSecret ?? "";
+        if (clientID !== "e2e-client" || clientSecret !== "e2e-secret") {
+          return json(res, { error: "invalid_client" }, 401);
+        }
+        if (fixture.tokenStatus) return json(res, fixture.tokenBody ? JSON.parse(fixture.tokenBody) : {}, fixture.tokenStatus);
         if (body.get("grant_type") === "authorization_code") {
           const code = codes.get(body.get("code") ?? "");
           if (
-            !code || code.clientID !== body.get("client_id") || code.challenge !== pkceChallenge(body.get("code_verifier") ?? "")
-            || !body.get("resource")
+            !code || code.clientID !== clientID
+            || code.challenge !== pkceChallenge(body.get("code_verifier") ?? "") || !body.get("resource")
           ) {
             return json(res, { error: "invalid_grant" }, 400);
           }

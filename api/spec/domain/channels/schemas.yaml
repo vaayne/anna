@@ -7,13 +7,15 @@ components:
   schemas:
     Channel:
       type: object
-      required: [id, name, type, enabled, config]
+      required: [id, name, type, is_active, config]
       properties:
         id: { type: string }
         name: { type: string }
         type: { type: string }
         agent_id: { type: string }
-        enabled: { type: boolean }
+        is_active:
+          type: boolean
+          description: Whether this channel instance accepts and delivers messages.
         config:
           type: string
           description: "JSON string of the channel config"
@@ -46,14 +48,16 @@ components:
 
     PublicChannel:
       type: object
-      required: [id, type, label, enabled]
+      required: [id, type, label, is_active]
       properties:
         id: { type: string }
         type: { type: string }
         label: { type: string }
         agent_id: { type: string }
         agent_name: { type: string }
-        enabled: { type: boolean }
+        is_active:
+          type: boolean
+          description: Whether this channel instance accepts and delivers messages.
 
     PublicChannelList:
       type: object
@@ -70,9 +74,8 @@ components:
         id:
           type: string
           description: >-
-            Channel id. Optional on create — the server mints a uuid when it is
-            omitted (weixin is singleton-only and always gets the id "weixin").
-            Ignored on update; the path id wins.
+            Channel id. Optional on create — the server mints an independent
+            uuid when it is omitted. Ignored on update; the path id wins.
         name:
           type: string
           description: >-
@@ -80,7 +83,10 @@ components:
             "{type}-{random suffix}" when it is omitted.
         type: { type: string, nullable: true }
         agent_id: { type: string, nullable: true }
-        enabled: { type: boolean, nullable: true }
+        is_active:
+          type: boolean
+          nullable: true
+          description: Set whether this channel instance accepts and delivers messages.
         config:
           type: string
           description: >-
@@ -162,7 +168,7 @@ components:
           type: string
           enum: [feishu, lark]
           default: feishu
-        enabled:
+        is_active:
           type: boolean
           default: true
         config:
@@ -183,23 +189,36 @@ components:
           allOf:
             - $ref: "#/components/schemas/Channel"
 
+    WeixinRegistrationBeginRequest:
+      type: object
+      properties:
+        channel_id:
+          type: string
+          description: >-
+            Existing Weixin channel instance to update. Omit this to mint a new
+            instance id; the returned id must be sent with every poll.
+
     WeixinRegistrationBegin:
       type: object
-      required: [qrcode, qr_image_url, poll_interval]
+      required: [channel_id, qrcode, qr_image_url, poll_interval]
       properties:
+        channel_id:
+          type: string
+          description: Exact channel instance id to use for this registration.
         qrcode: { type: string }
         qr_image_url: { type: string }
         poll_interval: { type: integer }
 
     WeixinRegistrationPollRequest:
       type: object
-      required: [qrcode, agent_id]
+      required: [qrcode, channel_id, agent_id]
       properties:
         qrcode: { type: string }
         channel_id:
           type: string
-          default: weixin
-          description: Weixin is singleton-only; omit or set to "weixin".
+          description: >-
+            Exact channel instance id returned by begin. The server verifies
+            that it is a Weixin row before saving credentials.
         agent_id: { type: string }
         name: { type: string }
         config:

@@ -1,0 +1,21 @@
+id: tool/lark-cli
+kind: tool
+name: lark-cli
+display_name: Lark CLI
+description: Lark CLI with managed OAuth and bundled workspace automation skills.
+enabled: true
+prompt: "Always use lark-cli for Feishu/Lark operations. If an API error reports missing user scopes, call oauth list and select the provider whose required_by includes Lark CLI, then call oauth connect for that provider with only the missing scopes; send the returned authorization link to the user, then retry after authorization. If the error says the application lacks a scope, surface its console_url to the administrator instead. Never run lark-cli config init or auth login inside Stella."
+binaries:
+  - name: lark-cli
+    tool: github:larksuite/cli
+    version: 1.0.87
+oauth_provider: feishu
+session_env:
+  - env_var: LARKSUITE_CLI_USER_ACCESS_TOKEN
+    source: oauth.access_token
+  - env_var: LARKSUITE_CLI_APP_ID
+    source: oauth.client_id
+  - env_var: LARKSUITE_CLI_BRAND
+    source: oauth.brand
+skills:
+  - name: lark-cli

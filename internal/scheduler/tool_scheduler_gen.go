@@ -19,7 +19,7 @@ type ActionTool = toolmeta.ActionTool
 // ActionTools lists every generated tool in a stable order.
 func ActionTools() []ActionTool {
 	return []ActionTool{
-		{Name: "scheduler_job_create", Family: "scheduler", Resource: "job", Action: "create", InputSchemaJSON: `{
+		{Name: "scheduler__job_create", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_create", Family: "scheduler", Resource: "job", Action: "create", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "at": {
@@ -54,7 +54,7 @@ func ActionTools() []ActionTool {
   },
   "type": "object"
 }`},
-		{Name: "scheduler_job_delete", Family: "scheduler", Resource: "job", Action: "delete", InputSchemaJSON: `{
+		{Name: "scheduler__job_delete", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_delete", Family: "scheduler", Resource: "job", Action: "delete", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -66,7 +66,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "scheduler_job_get", Family: "scheduler", Resource: "job", Action: "get", InputSchemaJSON: `{
+		{Name: "scheduler__job_get", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_get", Family: "scheduler", Resource: "job", Action: "get", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -78,12 +78,12 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "scheduler_job_list", Family: "scheduler", Resource: "job", Action: "list", InputSchemaJSON: `{
+		{Name: "scheduler__job_list", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_list", Family: "scheduler", Resource: "job", Action: "list", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {},
   "type": "object"
 }`},
-		{Name: "scheduler_job_pause", Family: "scheduler", Resource: "job", Action: "pause", InputSchemaJSON: `{
+		{Name: "scheduler__job_pause", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_pause", Family: "scheduler", Resource: "job", Action: "pause", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -95,7 +95,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "scheduler_job_resume", Family: "scheduler", Resource: "job", Action: "resume", InputSchemaJSON: `{
+		{Name: "scheduler__job_resume", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_resume", Family: "scheduler", Resource: "job", Action: "resume", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -107,7 +107,7 @@ func ActionTools() []ActionTool {
   ],
   "type": "object"
 }`},
-		{Name: "scheduler_job_update", Family: "scheduler", Resource: "job", Action: "update", InputSchemaJSON: `{
+		{Name: "scheduler__job_update", PluginID: "system/scheduler", Namespace: "scheduler", LocalName: "job_update", Family: "scheduler", Resource: "job", Action: "update", InputSchemaJSON: `{
   "additionalProperties": false,
   "properties": {
     "at": {

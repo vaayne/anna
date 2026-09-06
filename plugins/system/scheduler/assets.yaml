@@ -1,0 +1,5 @@
+assets:
+  - name: scheduler
+    source: skills/scheduler
+    logical_root: plugins/system/scheduler/scheduler
+    owner_plugin_id: system/scheduler

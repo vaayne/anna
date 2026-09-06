@@ -479,22 +479,47 @@ components:
           type: string
     AgentMCPServer:
       type: object
-      allOf:
-        - $ref: "#/components/schemas/MCPServer"
-        - type: object
-          required: [readable]
-          properties:
-            shadowed_scopes:
-              type: array
-              description: >-
-                Scopes of same-named registrations that lost the precedence resolution to this one. Overrides are keyed by tool name, so a shadowed registration's overrides simply lose with it.
-              items:
-                type: string
-                enum: [user, user_agent, system, system_agent]
-            readable:
-              type: boolean
-              description: >-
-                Whether the caller could read this registration through the scoped MCP API; a user sees another user's row only as an unreadable system-owned shadow it cannot manage.
+      required: [
+        plugin_id,
+        config_id,
+        namespace,
+        scope,
+        enabled,
+        credential_mode,
+        needs_auth,
+        status,
+        tools,
+        readable,
+      ]
+      additionalProperties: false
+      description: >-
+        Safe effective MCP projection for an agent. It intentionally omits the endpoint, payload, metadata, credential references, and OAuth details.
+      properties:
+        plugin_id:
+          type: string
+        config_id:
+          type: string
+        namespace:
+          type: string
+        scope:
+          type: string
+          enum: [user, user_agent, system, system_agent]
+        enabled:
+          type: boolean
+        credential_mode:
+          type: string
+          enum: [shared, per_user]
+        needs_auth:
+          type: boolean
+        status:
+          type: string
+          enum: [unknown, ok, error, needs_auth]
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPTool"
+        readable:
+          type: boolean
     AgentMCPServerList:
       type: object
       required: [servers]
@@ -674,7 +699,7 @@ components:
             $ref: "#/components/schemas/BuiltinResource"
     Channel:
       type: object
-      required: [id, name, type, enabled, config]
+      required: [id, name, type, is_active, config]
       properties:
         id:
           type: string
@@ -684,8 +709,9 @@ components:
           type: string
         agent_id:
           type: string
-        enabled:
+        is_active:
           type: boolean
+          description: Whether this channel instance accepts and delivers messages.
         config:
           type: string
           description: "JSON string of the channel config"
@@ -719,7 +745,7 @@ components:
           nullable: true
     PublicChannel:
       type: object
-      required: [id, type, label, enabled]
+      required: [id, type, label, is_active]
       properties:
         id:
           type: string
@@ -731,8 +757,9 @@ components:
           type: string
         agent_name:
           type: string
-        enabled:
+        is_active:
           type: boolean
+          description: Whether this channel instance accepts and delivers messages.
     PublicChannelList:
       type: object
       required: [channels]
@@ -747,7 +774,7 @@ components:
         id:
           type: string
           description: >-
-            Channel id. Optional on create — the server mints a uuid when it is omitted (weixin is singleton-only and always gets the id "weixin"). Ignored on update; the path id wins.
+            Channel id. Optional on create — the server mints an independent uuid when it is omitted. Ignored on update; the path id wins.
         name:
           type: string
           description: >-
@@ -758,9 +785,10 @@ components:
         agent_id:
           type: string
           nullable: true
-        enabled:
+        is_active:
           type: boolean
           nullable: true
+          description: Set whether this channel instance accepts and delivers messages.
         config:
           type: string
           description: >-
@@ -845,7 +873,7 @@ components:
           type: string
           enum: [feishu, lark]
           default: feishu
-        enabled:
+        is_active:
           type: boolean
           default: true
         config:
@@ -866,10 +894,20 @@ components:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/Channel"
+    WeixinRegistrationBeginRequest:
+      type: object
+      properties:
+        channel_id:
+          type: string
+          description: >-
+            Existing Weixin channel instance to update. Omit this to mint a new instance id; the returned id must be sent with every poll.
     WeixinRegistrationBegin:
       type: object
-      required: [qrcode, qr_image_url, poll_interval]
+      required: [channel_id, qrcode, qr_image_url, poll_interval]
       properties:
+        channel_id:
+          type: string
+          description: Exact channel instance id to use for this registration.
         qrcode:
           type: string
         qr_image_url:
@@ -878,14 +916,14 @@ components:
           type: integer
     WeixinRegistrationPollRequest:
       type: object
-      required: [qrcode, agent_id]
+      required: [qrcode, channel_id, agent_id]
       properties:
         qrcode:
           type: string
         channel_id:
           type: string
-          default: weixin
-          description: Weixin is singleton-only; omit or set to "weixin".
+          description: >-
+            Exact channel instance id returned by begin. The server verifies that it is a Weixin row before saving credentials.
         agent_id:
           type: string
         name:
@@ -2463,86 +2501,6 @@ components:
           nullable: true
         quota:
           $ref: "#/components/schemas/LibraryQuota"
-    MCPServer:
-      type: object
-      required: [
-        id,
-        scope,
-        name,
-        url,
-        transport,
-        auth_type,
-        enabled,
-        status,
-        credential_mode,
-      ]
-      properties:
-        id:
-          type: string
-        scope:
-          type: string
-          enum: [user, user_agent, system, system_agent]
-        user_id:
-          type: string
-        agent_id:
-          type: string
-        name:
-          type: string
-        url:
-          type: string
-        transport:
-          type: string
-          enum: [streamable_http, sse]
-        auth_type:
-          type: string
-          enum: [none, bearer, oauth]
-        enabled:
-          type: boolean
-        status:
-          type: string
-          enum: [unknown, ok, error, needs_auth]
-          description: Result of the last probe (or credential rejection).
-        status_error:
-          type: string
-          description: Redacted failure reason when status is error or needs_auth.
-        probed_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: When the server was last probed; null if never.
-        tools:
-          type: array
-          description: Snapshot of the server's tools/list from the last successful probe.
-          items:
-            $ref: "#/components/schemas/MCPTool"
-        credential_mode:
-          type: string
-          enum: [shared, per_user]
-        version:
-          type: string
-          description: Opaque version digest; send it as If-Match on PATCH/DELETE.
-        oauth:
-          type: object
-          description: >-
-            OAuth connection state computed for the calling user (per_user) or the registration owner (shared). Never carries token material.
-          required: [connected, needs_reconnect, client_registered]
-          properties:
-            connected:
-              type: boolean
-            access_expires_at:
-              type: string
-              format: date-time
-              nullable: true
-            needs_reconnect:
-              type: boolean
-            client_registered:
-              type: boolean
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
     MCPOAuthStart:
       type: object
       required: [authorization_url, flow_id, expires_at]
@@ -2569,98 +2527,6 @@ components:
         annotations:
           type: object
           additionalProperties: true
-    MCPServerList:
-      type: object
-      required: [servers]
-      properties:
-        servers:
-          type: array
-          items:
-            $ref: "#/components/schemas/MCPServer"
-    CreateMCPServerRequest:
-      type: object
-      required: [name, url, scope]
-      properties:
-        scope:
-          type: string
-          enum: [user, user_agent, system, system_agent]
-        agent_id:
-          type: string
-        name:
-          type: string
-        url:
-          type: string
-        transport:
-          type: string
-          enum: [streamable_http, sse]
-          default: streamable_http
-        auth_type:
-          type: string
-          enum: [none, bearer, oauth]
-          default: none
-        # token is the bearer credential; stored encrypted in the vault and never
-        # returned by any response.
-        token:
-          type: string
-        # oauth_client_id is the public pre-registered client id; without it the
-        # server's registration endpoint (DCR) is used on the first oauth-start.
-        oauth_client_id:
-          type: string
-          writeOnly: true
-        # oauth_client_secret is stored encrypted in the vault and never returned.
-        oauth_client_secret:
-          type: string
-          writeOnly: true
-        credential_mode:
-          type: string
-          enum: [shared, per_user]
-          default: shared
-          description: per_user is only valid with auth_type oauth.
-        # Marketplace provenance, written into metadata.registry on install.
-        source:
-          type: string
-          writeOnly: true
-        source_id:
-          type: string
-          writeOnly: true
-        source_version:
-          type: string
-          writeOnly: true
-    UpdateMCPServerRequest:
-      type: object
-      properties:
-        scope:
-          type: string
-          enum: [user, user_agent, system, system_agent]
-        agent_id:
-          type: string
-        name:
-          type: string
-        url:
-          type: string
-        # Same OAuth client fields as create; empty oauth_client_id removes the
-        # stored id, empty oauth_client_secret clears the vault secret.
-        oauth_client_id:
-          type: string
-          writeOnly: true
-        oauth_client_secret:
-          type: string
-          writeOnly: true
-        credential_mode:
-          type: string
-          enum: [shared, per_user]
-        transport:
-          type: string
-          enum: [streamable_http, sse]
-        auth_type:
-          type: string
-          enum: [none, bearer, oauth]
-        enabled:
-          type: boolean
-        # Omit token to keep the existing bearer token. Send with auth_type=bearer
-        # to replace it. Send auth_type=none to delete any stored token.
-        token:
-          type: string
     MCPRegistryServer:
       type: object
       required: [source, id, name, url, transport, auth]
@@ -2901,363 +2767,397 @@ components:
           type: string
         personal_access_token:
           $ref: "#/components/schemas/PersonalAccessToken"
-    PluginView:
+    PluginDefinition:
       type: object
+      additionalProperties: false
+      required: [
+        id,
+        namespace,
+        display_name,
+        backend,
+        is_builtin,
+        is_default_enabled,
+        spec,
+        revision,
+        created_at,
+        updated_at,
+      ]
       properties:
         id:
           type: string
-        kind:
+        namespace:
           type: string
-        name:
-          type: string
-        enabled:
-          type: boolean
-        config:
-          type: object
-          additionalProperties: true
         display_name:
           type: string
-        description:
+        backend:
           type: string
-        managed:
+          enum: [cli, mcp, go]
+        is_builtin:
           type: boolean
-        admin_visible:
+          readOnly: true
+        is_default_enabled:
           type: boolean
-        has_config:
-          type: boolean
-        has_status:
-          type: boolean
-        capabilities:
+          readOnly: true
+        spec:
+          type: object
+          additionalProperties: true
+          description: Safe non-secret resource summaries. Private endpoints and credentials are omitted.
+        revision:
+          type: integer
+          format: int64
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    PluginList:
+      type: object
+      required: [plugins, next_page_token]
+      properties:
+        plugins:
           type: array
           items:
-            type: string
-        persisted:
-          type: boolean
-        persisted_id:
+            $ref: "#/components/schemas/PluginDefinition"
+        next_page_token:
           type: string
-    TogglePluginRequest:
-      type: object
-      required: [enabled]
-      properties:
-        enabled:
-          type: boolean
-    UpdatePluginConfigRequest:
-      type: object
-      properties:
-        config:
-          type: object
-          additionalProperties: true
-    ManifestBinary:
+          nullable: true
+    PluginConfig:
       type: object
       additionalProperties: false
-      required: [name, tool]
+      required: [
+        id,
+        plugin_id,
+        scope,
+        is_enabled,
+        backend_summary,
+        revision,
+        created_at,
+        updated_at,
+      ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        plugin_id:
+          type: string
+        scope:
+          type: string
+          enum: [system, system_agent, user, user_agent]
+        user_id:
+          type: string
+          format: uuid
+          readOnly: true
+        agent_id:
+          type: string
+        is_enabled:
+          type: boolean
+          nullable: true
+        backend_summary:
+          oneOf:
+            - $ref: "#/components/schemas/PluginCLIBackendSummary"
+            - $ref: "#/components/schemas/PluginMCPBackendSummary"
+            - $ref: "#/components/schemas/PluginGoBackendSummary"
+          discriminator:
+            propertyName: backend
+            mapping:
+              cli: "#/components/schemas/PluginCLIBackendSummary"
+              mcp: "#/components/schemas/PluginMCPBackendSummary"
+              go: "#/components/schemas/PluginGoBackendSummary"
+          description: Typed non-secret backend summary. Raw backend payload and credential references are never returned.
+        revision:
+          type: integer
+          format: int64
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    PluginCLIBackendSummary:
+      type: object
+      additionalProperties: false
+      required: [
+        backend,
+        binaries,
+        skills,
+        session_env,
+        oauth_provider_configured,
+      ]
+      properties:
+        backend:
+          type: string
+          enum: [cli]
+        binaries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PluginCLIBackendBinarySummary"
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/PluginCLIBackendSkillSummary"
+        session_env:
+          type: array
+          items:
+            $ref: "#/components/schemas/PluginCLIBackendSessionEnvSummary"
+        oauth_provider_configured:
+          type: boolean
+    PluginCLIBackendBinarySummary:
+      type: object
+      additionalProperties: false
+      required: [name, version]
       properties:
         name:
           type: string
-          description: Binary name installed into Stella's bin directory.
-        tool:
-          type: string
-          description: mise tool key, such as github:cli/cli or npm:serve.
         version:
           type: string
-          description: Version to install. Defaults to latest when omitted.
-        options:
-          type: object
-          additionalProperties: true
-          description: mise backend options.
-    ManifestSkill:
+    PluginCLIBackendSkillSummary:
       type: object
-      deprecated: true
-      description: >
-        Reserved manifest declaration. Stella currently stores and returns skill entries but does not install or register them at runtime.
-
       additionalProperties: false
-      required: [repo, name]
+      required: [name]
       properties:
-        repo:
-          type: string
         name:
           type: string
-    ManifestSessionEnv:
+    PluginCLIBackendSessionEnvSummary:
       type: object
       additionalProperties: false
-      required: [env_var, source]
+      required: [env_var, source, required]
       properties:
         env_var:
           type: string
         source:
           type: string
-          description: Value source, such as static or oauth.access_token.
-        value:
-          type: string
         required:
           type: boolean
-    ManifestPluginDefinition:
+    PluginMCPBackendSummary:
       type: object
       additionalProperties: false
-      required: [name, display_name, description]
+      required: [
+        backend,
+        transport,
+        auth_type,
+        credential_mode,
+        endpoint_configured,
+        bearer_configured,
+        oauth_client_id_configured,
+        oauth_client_secret_configured,
+      ]
       properties:
-        name:
+        backend:
           type: string
-        display_name:
+          enum: [mcp]
+        transport:
           type: string
-        description:
+          enum: [streamable_http, sse]
+        auth_type:
           type: string
-        category:
+          enum: [none, bearer, oauth]
+        credential_mode:
           type: string
-          description: Optional settings UI grouping hint.
-        prompt:
-          type: string
-        binaries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestBinary"
-        skills:
-          type: array
-          deprecated: true
-          description: >
-            Reserved declarations. They are stored and returned but are not currently installed or registered at runtime.
-
-          items:
-            $ref: "#/components/schemas/ManifestSkill"
-        session_env:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestSessionEnv"
-        oauth_provider:
-          type: string
-    ManifestPlugin:
+          enum: [shared, per_user]
+        endpoint_configured:
+          type: boolean
+        bearer_configured:
+          type: boolean
+        oauth_client_id_configured:
+          type: boolean
+        oauth_client_secret_configured:
+          type: boolean
+    PluginGoBackendSummary:
       type: object
       additionalProperties: false
-      required: [id, kind, name, display_name, description, enabled]
+      required: [backend, configured]
       properties:
-        id:
+        backend:
           type: string
+          enum: [go]
         kind:
           type: string
-        name:
-          type: string
-        display_name:
-          type: string
-        description:
-          type: string
-        enabled:
+          enum: [channel]
+          nullable: true
+        configured:
           type: boolean
-        category:
-          type: string
-          description: Optional settings UI grouping hint.
-        essential:
-          type: boolean
-          description: Server policy indicating that the plugin cannot be disabled.
-        prompt:
-          type: string
-        binaries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestBinary"
-        skills:
-          type: array
-          deprecated: true
-          description: >
-            Reserved declarations. They are stored and returned but are not currently installed or registered at runtime.
-
-          items:
-            $ref: "#/components/schemas/ManifestSkill"
-        session_env:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestSessionEnv"
-        oauth_provider:
-          type: string
-        builtin:
-          type: boolean
-          readOnly: true
-          description: Whether the plugin definition ships with the server.
-        overridden_fields:
-          type: array
-          readOnly: true
-          description: Definition fields owned by the stored override.
-          items:
-            $ref: "#/components/schemas/ManifestPluginDefinitionField"
-    ManifestPluginInput:
+    PluginConfigList:
       type: object
-      description: >
-        Submitted builtin plugin view. Only the definition fields named by the sibling `fields` array are stored; all other values are context for validation and remain unowned.
-
-      additionalProperties: false
+      required: [configs, next_page_token]
       properties:
-        id:
-          type: string
-          description: Ignored; the URL identifies the plugin.
-        kind:
-          type: string
-          description: Must match the kind in the URL when supplied.
-        name:
-          type: string
-        display_name:
-          type: string
-        description:
-          type: string
-        enabled:
-          type: boolean
-          description: Used for admin-added plugins and ignored for builtins.
-        category:
-          type: string
-          description: Optional settings UI grouping hint.
-        essential:
-          type: boolean
-          description: Server-owned for builtins.
-        prompt:
-          type: string
-        binaries:
+        configs:
           type: array
           items:
-            $ref: "#/components/schemas/ManifestBinary"
-        skills:
-          type: array
-          deprecated: true
-          description: >
-            Reserved declarations. They are stored and returned but are not currently installed or registered at runtime.
-
-          items:
-            $ref: "#/components/schemas/ManifestSkill"
-        session_env:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestSessionEnv"
-        oauth_provider:
+            $ref: "#/components/schemas/PluginConfig"
+        next_page_token:
           type: string
-    ManifestPluginDefinitionField:
-      type: string
-      description: >
-        Editable definition field. `skills` is reserved: its value can be stored and returned but is not currently installed or registered at runtime.
-
-      enum:
-        - name
-        - display_name
-        - description
-        - category
-        - prompt
-        - binaries
-        - skills
-        - session_env
-        - oauth_provider
-    SaveBuiltinManifestPluginDefinitionRequest:
+          nullable: true
+    PluginEffective:
       type: object
       additionalProperties: false
-      required: [plugin, fields]
+      required: [
+        plugin_id,
+        namespace,
+        config_id,
+        source_scope,
+        is_effectively_enabled,
+        availability_reason,
+        readiness,
+      ]
+      properties:
+        plugin_id:
+          type: string
+        namespace:
+          type: string
+        config_id:
+          type: string
+          nullable: true
+        source_scope:
+          type: string
+          nullable: true
+        is_effectively_enabled:
+          type: boolean
+        availability_reason:
+          type: string
+        readiness:
+          type: string
+          enum: [unknown, ready, unavailable]
+    PluginConfigInput:
+      type: object
+      additionalProperties: false
+      required: [scope]
+      properties:
+        scope:
+          type: string
+          enum: [system, system_agent, user, user_agent]
+        agent_id:
+          type: string
+        is_enabled:
+          type: boolean
+          nullable: true
+        config:
+          type: object
+          nullable: true
+          additionalProperties: true
+        credentials:
+          type: object
+          nullable: true
+          writeOnly: true
+          additionalProperties: true
+          description: Write-only credential material.
+    CreatePluginConfigRequest:
+      type: object
+      additionalProperties: false
+      required: [scope]
+      properties:
+        scope:
+          type: string
+          enum: [system, system_agent, user, user_agent]
+        agent_id:
+          type: string
+        is_enabled:
+          type: boolean
+          nullable: true
+        config:
+          type: object
+          nullable: true
+          additionalProperties: true
+        credentials:
+          type: object
+          nullable: true
+          writeOnly: true
+          additionalProperties: true
+          description: Write-only credential material.
+    CreatePluginRequest:
+      type: object
+      additionalProperties: false
+      required: [
+        display_name,
+        namespace,
+        backend,
+        definition_spec,
+        initial_config,
+      ]
+      properties:
+        display_name:
+          type: string
+        namespace:
+          type: string
+        backend:
+          type: string
+          enum: [cli, mcp]
+        definition_spec:
+          type: object
+          additionalProperties: true
+        initial_config:
+          $ref: "#/components/schemas/PluginConfigInput"
+    CreatePluginResponse:
+      type: object
+      additionalProperties: false
+      required: [plugin, config]
       properties:
         plugin:
-          $ref: "#/components/schemas/ManifestPluginInput"
-        fields:
-          type: array
-          description: Definition fields this request takes ownership of.
-          items:
-            $ref: "#/components/schemas/ManifestPluginDefinitionField"
-    ManifestPluginReplacement:
+          $ref: "#/components/schemas/PluginDefinition"
+        config:
+          $ref: "#/components/schemas/PluginConfig"
+    UpdatePluginRequest:
       type: object
-      description: >
-        Complete replacement value for an admin-added plugin. Empty strings and arrays explicitly clear optional definition fields.
-
       additionalProperties: false
-      required:
-        - kind
-        - name
-        - display_name
-        - description
-        - enabled
-        - category
-        - essential
-        - prompt
-        - binaries
-        - skills
-        - session_env
-        - oauth_provider
+      required: [expected_revision]
       properties:
-        id:
-          type: string
-          description: Ignored; the URL identifies the plugin.
-        kind:
-          type: string
-        name:
-          type: string
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
         display_name:
           type: string
         description:
           type: string
-        enabled:
-          type: boolean
-        category:
-          type: string
-        essential:
-          type: boolean
-        prompt:
-          type: string
-        binaries:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestBinary"
-        skills:
-          type: array
-          deprecated: true
-          description: >
-            Reserved declarations. They are stored and returned but are not currently installed or registered at runtime.
-
-          items:
-            $ref: "#/components/schemas/ManifestSkill"
-        session_env:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestSessionEnv"
-        oauth_provider:
-          type: string
-    ReplaceCustomManifestPluginDefinitionRequest:
+          nullable: true
+    UpdatePluginConfigRequest:
       type: object
-      description: >
-        Full replacement for an admin-added plugin.
-
       additionalProperties: false
-      required: [plugin]
+      required: [expected_revision]
       properties:
-        plugin:
-          $ref: "#/components/schemas/ManifestPluginReplacement"
-    SaveManifestPluginDefinitionRequest:
-      oneOf:
-        - $ref: "#/components/schemas/SaveBuiltinManifestPluginDefinitionRequest"
-        - $ref: "#/components/schemas/ReplaceCustomManifestPluginDefinitionRequest"
-    ManifestOAuthProvider:
-      type: object
-      properties:
-        id:
-          type: string
-        scopes:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        is_enabled:
+          type: boolean
+          nullable: true
+        config:
+          type: object
+          nullable: true
+          additionalProperties: true
+        reset_fields:
           type: array
           items:
             type: string
-        vault_key:
-          type: string
-        client_id:
-          type: string
-    ManifestPluginsResponse:
+        binary_versions:
+          type: object
+          writeOnly: true
+          additionalProperties:
+            type: string
+            minLength: 1
+          description: Write-only CLI binary version edits keyed by definition resource name.
+        credentials:
+          type: object
+          nullable: true
+          writeOnly: true
+          additionalProperties: true
+          description: Write-only credential material.
+    RevisionRequest:
       type: object
-      required: [plugins, oauth_providers]
+      additionalProperties: false
+      required: [expected_revision]
       properties:
-        plugins:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestPlugin"
-        oauth_providers:
-          type: array
-          items:
-            $ref: "#/components/schemas/ManifestOAuthProvider"
-    PluginViewList:
-      type: object
-      required: [plugins]
-      properties:
-        plugins:
-          type: array
-          items:
-            $ref: "#/components/schemas/PluginView"
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
     CliToolRegistryItem:
       type: object
       properties:

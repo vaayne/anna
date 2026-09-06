@@ -1,0 +1,8 @@
+id: skill/skill-creator
+kind: skill
+name: skill-creator
+display_name: Skill Creator
+description: Create and refine reusable skills.
+enabled: true
+skills:
+  - name: skill-creator

@@ -3,16 +3,21 @@ package access
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/CherryHQ/stella/internal/agent"
 	"github.com/CherryHQ/stella/internal/agent/prompt"
+	agentruntime "github.com/CherryHQ/stella/internal/agent/runtime"
 	agentsession "github.com/CherryHQ/stella/internal/agent/session"
 	"github.com/CherryHQ/stella/internal/authz"
+	agentaccess "github.com/CherryHQ/stella/internal/core/access"
 	"github.com/CherryHQ/stella/internal/memory"
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/skill"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
+	"github.com/CherryHQ/stella/plugins/core"
 )
 
 // SystemPromptInput is the transport-owned identity and route tuple for the
@@ -40,25 +45,26 @@ func ConfigAgentSystemPrompt(store config.Store) AgentSystemPrompt {
 	}
 }
 
-type PromptPlugins interface {
-	SessionPluginView(context.Context) (pkgplugins.SessionPluginView, error)
-	SystemPromptSections(context.Context, pkgplugins.SystemPromptContext) ([]pkgplugins.SystemPromptSection, error)
-	ManifestPluginPrompts() []pkgplugins.SystemPromptSection
-}
-
 type PromptSkillSectionBuilder func(context.Context, pkgplugins.SystemPromptContext, *skill.ProjectSnapshot) (pkgplugins.SystemPromptSection, error)
+
+type PromptSectionsBuilder func(context.Context, pkgplugins.SystemPromptContext, plugin.Snapshot) ([]pkgplugins.SystemPromptSection, error)
 
 type SystemPromptBuildInput struct {
 	Info agentsession.Info
 }
 
 type SystemPromptDeps struct {
-	Memory    memory.Provider
-	Agents    AgentSystemPrompt
-	Projects  agent.ProjectResolverFunc
-	Workspace home.RootOpener
-	Plugins   PromptPlugins
-	Skills    PromptSkillSectionBuilder
+	Memory                memory.Provider
+	Agents                AgentSystemPrompt
+	Projects              agent.ProjectResolverFunc
+	Workspace             home.RootOpener
+	PluginContextBuilder  agentruntime.PluginContextBuilder
+	PromptSectionsBuilder PromptSectionsBuilder
+	Skills                PromptSkillSectionBuilder
+	// SandboxBackendFn lets prompt construction preserve bundled declarations
+	// for Docker, whose Linux image is the authority on runtime availability.
+	// Other backends filter against the current host's trusted assets.
+	SandboxBackendFn func(context.Context) string
 }
 
 // SystemPromptBuilder assembles a session's effective system prompt from the
@@ -82,8 +88,11 @@ func NewSystemPromptBuilder(deps SystemPromptDeps) (*SystemPromptBuilder, error)
 	if deps.Workspace == nil {
 		missing = appendMissing(missing, "Workspace")
 	}
-	if deps.Plugins == nil {
-		missing = appendMissing(missing, "Plugins")
+	if deps.PluginContextBuilder == nil {
+		missing = appendMissing(missing, "PluginContextBuilder")
+	}
+	if deps.PromptSectionsBuilder == nil {
+		missing = appendMissing(missing, "PromptSectionsBuilder")
 	}
 	if deps.Skills == nil {
 		missing = appendMissing(missing, "Skills")
@@ -99,6 +108,19 @@ func appendMissing(current, next string) string {
 		return next
 	}
 	return current + ", " + next
+}
+
+func promptPluginAuthority(info agentsession.Info) (authz.Authority, error) {
+	switch {
+	case info.GuestID != "":
+		return authz.Authority{}, nil
+	case info.GroupID != "":
+		return agentaccess.GroupAgentAuthority(info.GroupID, info.AgentID)
+	case info.UserID != "" && info.AgentID != "":
+		return agentaccess.WorkerAgentAuthority(info.UserID, info.AgentID)
+	default:
+		return authz.Authority{}, nil
+	}
 }
 
 func (b *SystemPromptBuilder) BuildSessionSystemPrompt(ctx context.Context, in SystemPromptBuildInput) (string, error) {
@@ -124,24 +146,51 @@ func (b *SystemPromptBuilder) BuildSessionSystemPrompt(ctx context.Context, in S
 		projectContext, projectSkills = projectSnapshot.Context, projectSnapshot.Skills
 	}
 
-	pluginView, err := b.deps.Plugins.SessionPluginView(ctx)
-	if err != nil {
-		return "", fmt.Errorf("%w: session plugin view: %w", ErrUnavailable, err)
+	pluginContext := agentruntime.PluginContext{}
+	hasPluginAuthority := false
+	if info.GuestID == "" {
+		authority, err := promptPluginAuthority(info)
+		if err != nil {
+			return "", fmt.Errorf("%w: plugin authority: %w", ErrUnavailable, err)
+		}
+		if authority.Valid() {
+			pluginContext, err = b.deps.PluginContextBuilder(ctx, authority, info.AgentID)
+			if err != nil {
+				return "", fmt.Errorf("%w: plugin context: %w", ErrUnavailable, err)
+			}
+			hasPluginAuthority = true
+		}
+	}
+	pluginView := pluginContext.SessionPluginView()
+	backendName := config.SandboxBackendLocal
+	if b.deps.SandboxBackendFn != nil {
+		if selected := b.deps.SandboxBackendFn(ctx); selected != "" {
+			backendName = selected
+		}
+	}
+	var disabledSkillRefs []string
+	if backendName != config.SandboxBackendDocker {
+		disabledSkillRefs = core.UnavailableSkillRefs()
 	}
 	promptBuild := pkgplugins.SystemPromptContext{
 		UserID:              info.UserID,
 		AgentID:             info.AgentID,
-		RegisteredPluginIDs: pluginView.RegisteredPluginIDs,
-		EnabledPluginIDs:    pluginView.EnabledPluginIDs,
+		RegisteredPluginIDs: slices.Clone(pluginView.RegisteredPluginIDs),
+		EnabledPluginIDs:    slices.Clone(pluginView.ExposedPluginIDs),
+		DisabledSkillRefs:   disabledSkillRefs,
 	}
-	promptSections, err := b.deps.Plugins.SystemPromptSections(ctx, promptBuild)
-	if err != nil {
-		return "", fmt.Errorf("%w: system prompt sections: %w", ErrUnavailable, err)
-	}
-	if skillsSection, err := b.deps.Skills(ctx, promptBuild, projectSkills); err != nil {
-		return "", fmt.Errorf("%w: skills prompt section: %w", ErrUnavailable, err)
-	} else if skillsSection.Title != "" && skillsSection.Content != "" {
-		promptSections = append(promptSections, skillsSection)
+	var promptSections []pkgplugins.SystemPromptSection
+	if hasPluginAuthority {
+		var err error
+		promptSections, err = b.deps.PromptSectionsBuilder(ctx, promptBuild, pluginContext.Snapshot())
+		if err != nil {
+			return "", fmt.Errorf("%w: system prompt sections: %w", ErrUnavailable, err)
+		}
+		if skillsSection, err := b.deps.Skills(ctx, promptBuild, projectSkills); err != nil {
+			return "", fmt.Errorf("%w: skills prompt section: %w", ErrUnavailable, err)
+		} else if skillsSection.Title != "" && skillsSection.Content != "" {
+			promptSections = append(promptSections, skillsSection)
+		}
 	}
 
 	promptUserID := info.UserID
@@ -155,7 +204,7 @@ func (b *SystemPromptBuilder) BuildSessionSystemPrompt(ctx context.Context, in S
 		AgentID:        info.AgentID,
 		GroupID:        info.GroupID,
 		ProjectContext: projectContext,
-		Sections:       append(promptSections, b.deps.Plugins.ManifestPluginPrompts()...),
+		Sections:       promptSections,
 	})
 	return system, nil
 }

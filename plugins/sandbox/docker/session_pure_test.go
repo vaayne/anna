@@ -2,6 +2,7 @@ package docker
 
 import (
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -191,6 +192,39 @@ func TestInjectToolPaths_UsesDefaultPathWhenPATHAbsent(t *testing.T) {
 	}
 	if len(got["PATH"]) <= len("/opt/stella/user-tools/bin:") {
 		t.Error("PATH should include containerDefaultPATH after user tool bin")
+	}
+}
+
+func TestInjectToolPaths_UsesSelectionLocalShims(t *testing.T) {
+	selection := "/opt/stella/.mise-tools/contexts/system-a/shims"
+	got := injectToolPaths(map[string]string{}, []string{selection})
+
+	if want := selection + ":" + containerDefaultPATH; got["PATH"] != want {
+		t.Fatalf("PATH = %q, want selection-local path followed by system PATH %q", got["PATH"], want)
+	}
+	if strings.Contains(got["PATH"], "/opt/stella/bin") || strings.Contains(got["PATH"], "/opt/stella/.mise-tools/shims") {
+		t.Fatalf("PATH leaked shared Stella paths: %q", got["PATH"])
+	}
+}
+
+func TestInjectToolPathsExecutesUserSelectionBeforeBundled(t *testing.T) {
+	userDir := t.TempDir()
+	bundledDir := t.TempDir()
+	systemDir := t.TempDir()
+	for dir, output := range map[string]string{userDir: "user", bundledDir: "bundled", systemDir: "system"} {
+		if err := os.WriteFile(filepath.Join(dir, "same-tool"), []byte("#!/bin/sh\nprintf '%s\\n' "+output+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := injectToolPaths(map[string]string{}, []string{userDir, bundledDir, systemDir})
+	command := exec.Command("/bin/sh", "-c", "same-tool")
+	command.Env = append(os.Environ(), "PATH="+env["PATH"])
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("execute selected tool: %v", err)
+	}
+	if string(output) != "user\n" {
+		t.Fatalf("selected tool output = %q, want user precedence", output)
 	}
 }
 

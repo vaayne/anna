@@ -22,10 +22,11 @@ func (*blockingCloseRunner) Chat(context.Context, []ai.Message, agentruntime.Mes
 	close(out)
 	return out
 }
-func (*blockingCloseRunner) Alive() bool             { return true }
-func (*blockingCloseRunner) Busy() bool              { return false }
-func (*blockingCloseRunner) LastActivity() time.Time { return time.Now() }
-func (*blockingCloseRunner) SystemPrompt() string    { return "" }
+func (*blockingCloseRunner) Alive() bool                  { return true }
+func (*blockingCloseRunner) Busy() bool                   { return false }
+func (*blockingCloseRunner) LastActivity() time.Time      { return time.Now() }
+func (*blockingCloseRunner) SystemPrompt() string         { return "" }
+func (*blockingCloseRunner) PluginContext() PluginContext { return PluginContext{} }
 func (r *blockingCloseRunner) Close() error {
 	close(r.closeEntered)
 	<-r.releaseClose

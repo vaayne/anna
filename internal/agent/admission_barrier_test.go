@@ -37,11 +37,12 @@ func (r *barrierRunner) Chat(context.Context, []ai.Message, agentruntime.Message
 	}()
 	return out
 }
-func (r *barrierRunner) Alive() bool             { return true }
-func (r *barrierRunner) Busy() bool              { return r.busy.Load() }
-func (r *barrierRunner) LastActivity() time.Time { return time.Now() }
-func (r *barrierRunner) SystemPrompt() string    { return r.snapshot }
-func (r *barrierRunner) Close() error            { r.closed.Store(true); return nil }
+func (r *barrierRunner) Alive() bool                  { return true }
+func (r *barrierRunner) Busy() bool                   { return r.busy.Load() }
+func (r *barrierRunner) LastActivity() time.Time      { return time.Now() }
+func (r *barrierRunner) SystemPrompt() string         { return r.snapshot }
+func (r *barrierRunner) PluginContext() PluginContext { return PluginContext{} }
+func (r *barrierRunner) Close() error                 { r.closed.Store(true); return nil }
 
 func newBarrierService(t *testing.T) (*Service, *agentruntime.Runtime, chan *barrierRunner) {
 	t.Helper()

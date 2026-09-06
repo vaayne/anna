@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/CherryHQ/stella/internal/memory/memorytest"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/pkg/hooks"
 )
 
@@ -27,12 +28,12 @@ func TestConcurrentReloadPluginHooksRetiresEachGenerationOnce(t *testing.T) {
 	release := make(chan struct{})
 	var next atomic.Int32
 	created := make(chan *countingHook, 2)
-	pm.pluginHooksBuilder = func(context.Context) []hooks.HookPlugin {
+	pm.pluginHooksBuilder = func(context.Context, plugin.Snapshot) ([]hooks.HookPlugin, error) {
 		h := &countingHook{name: fmt.Sprintf("reload-%d", next.Add(1))}
 		created <- h
 		constructed <- struct{}{}
 		<-release
-		return []hooks.HookPlugin{h}
+		return []hooks.HookPlugin{h}, nil
 	}
 	results := make(chan error, 2)
 	go func() { results <- pm.ReloadPluginHooks(context.Background()) }()

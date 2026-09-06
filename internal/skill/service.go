@@ -36,6 +36,15 @@ type ResolvedSkill struct {
 	registry *resources.Registry
 }
 
+// OwnerPluginID returns the trusted owner for a builtin skill. Mutable skill
+// metadata and project frontmatter never participate in ownership decisions.
+func (s ResolvedSkill) OwnerPluginID() string {
+	if s.builtin == nil {
+		return ""
+	}
+	return s.builtin.OwnerPluginID
+}
+
 func (s *ResolvedSkill) LoadBuiltinFile(filePath string) (string, error) {
 	if s.builtin == nil || s.registry == nil {
 		return "", fmt.Errorf("not a builtin skill")
@@ -158,9 +167,6 @@ func isDisabled(rs ResolvedSkill, disabled []string) bool {
 
 // PolicyRef returns the stable policy identity for policy-addressable Skills.
 func PolicyRef(rs ResolvedSkill) (string, bool) {
-	if rs.builtin != nil {
-		return "builtin:" + rs.Name, true
-	}
 	switch rs.Scope {
 	case "system", "system_agent":
 		return rs.Scope + ":" + rs.Name, true

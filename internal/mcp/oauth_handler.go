@@ -45,7 +45,7 @@ func (h *oauthSession) Authorize(ctx context.Context, req *http.Request, resp *h
 			reason = "credential rejected by server: " + code
 		}
 	}
-	_ = h.svc.SetStatus(ctx, h.reg.ID, StatusNeedsAuth, reason)
+	_ = h.svc.setStatusForRegistration(ctx, h.reg, h.owner, StatusNeedsAuth, reason)
 	return fmt.Errorf("mcp: %s", credentialRejectedHint)
 }
 
@@ -77,12 +77,13 @@ func (ts *oauthRefreshSource) Token() (*oauth2.Token, error) {
 
 	// Bind the refresh round trip to the SSRF-safe client (test-hook aware);
 	// oauth2 would otherwise dial with http.DefaultClient.
-	ctx, cancel := context.WithTimeout(oauth2Context(ts.svc.endpoints), oauthExchangeTimeout)
+	ctx, cancel := context.WithTimeout(oauth2Context(context.Background(), ts.svc.endpoints), oauthExchangeTimeout)
 	defer cancel()
-	bundle, err := ts.svc.loadBundle(ctx, ts.reg, ts.owner)
+	snapshot, err := ts.svc.loadCredentialSnapshot(ctx, ts.reg, ts.owner)
 	if err != nil {
 		return nil, err
 	}
+	bundle, expectedRaw := snapshot.Bundle, snapshot.BundleRaw
 	if bundle == nil || bundle.AccessToken == "" {
 		return nil, fmt.Errorf("mcp: %s", credentialRejectedHint)
 	}
@@ -101,7 +102,10 @@ func (ts *oauthRefreshSource) Token() (*oauth2.Token, error) {
 		}
 		return nil, fmt.Errorf("mcp: %s", credentialRejectedHint)
 	}
-	clientSecret := ts.svc.oauthClientSecret(ctx, ts.reg)
+	clientSecret, err := ts.svc.oauthClientSecret(ctx, ts.reg)
+	if err != nil {
+		return nil, err
+	}
 	refreshed, err := (&oauth2.Config{
 		ClientID:     bundle.ClientID,
 		ClientSecret: clientSecret,
@@ -110,7 +114,7 @@ func (ts *oauthRefreshSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		// Refresh failure is terminal for this credential. Mark it before
 		// returning so the provider cannot repeatedly offer a dead token.
-		_ = ts.svc.SetStatus(ctx, ts.reg.ID, StatusNeedsAuth, credentialRejectedHint)
+		_ = ts.svc.setStatusForRegistration(ctx, ts.reg, ts.owner, StatusNeedsAuth, credentialRejectedHint)
 		return nil, fmt.Errorf("mcp: refresh oauth token: %w", err)
 	}
 	bundle.AccessToken = refreshed.AccessToken
@@ -118,7 +122,7 @@ func (ts *oauthRefreshSource) Token() (*oauth2.Token, error) {
 	if refreshed.RefreshToken != "" {
 		bundle.RefreshToken = refreshed.RefreshToken
 	}
-	if err := ts.svc.storeBundle(ctx, ts.reg, ts.owner, *bundle); err != nil {
+	if err := ts.svc.storeBundleCAS(ctx, ts.reg, ts.owner, *bundle, expectedRaw); err != nil {
 		return nil, err
 	}
 	return refreshed, nil
@@ -137,12 +141,9 @@ func (s *Service) lockRefresh(regID string, owner CredentialOwner) func() {
 // oauthClientSecret reads the confidential client secret, which always lives
 // at the registration's own scope: the client is registered once per
 // registration even when token bundles are per user.
-func (s *Service) oauthClientSecret(ctx context.Context, reg Registration) string {
-	if s.vault == nil {
-		return ""
-	}
-	secret, _ := s.vault.GetScoped(ctx, reg.Scope, reg.UserID, reg.AgentID, oauthClientSecretName(reg.ID))
-	return secret
+
+func (s *Service) oauthClientSecret(ctx context.Context, reg Registration) (string, error) {
+	return s.loadOAuthClientSecret(ctx, reg)
 }
 
 // flowParams shapes the flow row insert.

@@ -2,10 +2,7 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
-	"time"
 )
 
 // Catalog sources are prefixed into IDs and page tokens so a second source can
@@ -106,37 +103,4 @@ func dedupeServers(in []CatalogServer) []CatalogServer {
 		out = append(out, s)
 	}
 	return out
-}
-
-// withRegistryMetadata merges the marketplace provenance into metadata.registry.
-func withRegistryMetadata(raw json.RawMessage, in CreateInput) (json.RawMessage, error) {
-	if in.RegistrySource == "" && in.RegistryID == "" && in.RegistryVersion == "" {
-		return raw, nil
-	}
-	m := map[string]any{}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return nil, fmt.Errorf("mcp: decode metadata: %w", err)
-		}
-	}
-	registryMeta, _ := m["registry"].(map[string]any)
-	if registryMeta == nil {
-		registryMeta = map[string]any{}
-	}
-	if in.RegistrySource != "" {
-		registryMeta["source"] = in.RegistrySource
-	}
-	if in.RegistryID != "" {
-		registryMeta["id"] = in.RegistryID
-	}
-	if in.RegistryVersion != "" {
-		registryMeta["version"] = in.RegistryVersion
-	}
-	registryMeta["installed_at"] = time.Now().UTC().Format(time.RFC3339)
-	m["registry"] = registryMeta
-	out, err := json.Marshal(m)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: encode metadata: %w", err)
-	}
-	return out, nil
 }

@@ -44,11 +44,18 @@ type ManagementTool struct {
 	mcpCatalog   MCPCatalogFunc
 }
 
-// MCPCatalogFunc returns the MCP tool names currently in the resolved
-// registrations' persisted catalogs for one (user, agent), mapped to their
-// family ("mcp:<server>"). It is a func, not an import: internal/mcp imports
-// this package for pool invalidation, so the dependency arrow cannot reverse.
-type MCPCatalogFunc func(ctx context.Context, userID, agentID string) map[string]string
+// MCPCatalogEntry is the management projection of one trusted MCP tool. Name
+// is a display projection; Identity is the only policy key.
+type MCPCatalogEntry struct {
+	Name     string
+	Identity ToolIdentity
+	Family   string
+}
+
+// MCPCatalogFunc resolves the authority-bound common snapshot for one agent.
+// It returns an error instead of silently producing an empty catalog, because
+// an unavailable catalog must not turn Update/Delete into a successful no-op.
+type MCPCatalogFunc func(ctx context.Context, authority authz.Authority, agentID string) ([]MCPCatalogEntry, error)
 
 func NewManagementTool(spec SettingsAgentActionTool, management func() *agentaccess.Management) *ManagementTool {
 	return &ManagementTool{agentSpec: &spec, management: management}
@@ -229,23 +236,43 @@ func (h agentOverrideHandler) List(ctx context.Context, in SettingsAgentToolList
 	}
 	items := make([]ToolOverrideVersion, 0, len(h.registry.Names()))
 	for _, name := range h.registry.Names() {
-		if !h.managedTool(ctx, in.TargetAgentId, name) {
+		identity, ok := h.registryToolIdentity(name)
+		if !ok {
 			continue
 		}
-		item, ok := versions[name]
+		if _, managed, err := h.managedTool(ctx, in.TargetAgentId, name); err != nil {
+			return nil, err
+		} else if !managed {
+			continue
+		}
+		item, ok := versions[toolOverrideVersionKey(identity)]
 		if !ok {
-			item = ToolOverrideVersion{ToolName: name, Scope: ToolOverrideScopeUserAgent, Version: ToolOverrideAbsentVersion}
+			item = absentOverrideVersion(identity, name)
+		} else {
+			// Keep the exported name as the API display value. The persisted
+			// identity remains the only policy key, especially for plugin tools.
+			item.ToolName = name
 		}
 		items = append(items, item)
 	}
-	// MCP tools are not in the toolmeta registry: they come from the resolved
-	// registrations' persisted catalogs, keyed by family for UI grouping.
-	for name, family := range h.catalog(ctx, in.TargetAgentId) {
-		item, ok := versions[name]
-		if !ok {
-			item = ToolOverrideVersion{ToolName: name, Scope: ToolOverrideScopeUserAgent, Version: ToolOverrideAbsentVersion}
+	// MCP tools are not in the toolmeta registry. Their exported names are
+	// display values; versions are keyed by the durable plugin/local identity.
+	catalog, err := h.catalog(ctx, in.TargetAgentId)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range catalog {
+		if entry.Identity.Validate() != nil || !entry.Identity.isPlugin() {
+			continue
 		}
-		item.Family = family
+		key := toolOverrideVersionKey(entry.Identity)
+		item, ok := versions[key]
+		if !ok {
+			item = absentOverrideVersion(entry.Identity, entry.Name)
+		} else {
+			item.ToolName = entry.Name
+		}
+		item.Family = entry.Family
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ToolName < items[j].ToolName })
@@ -256,11 +283,15 @@ func (h agentOverrideHandler) Update(ctx context.Context, in SettingsAgentToolUp
 	if err := h.management.ManageForTool(ctx, h.authority, in.TargetAgentId); err != nil {
 		return nil, err
 	}
-	if !h.managedTool(ctx, in.TargetAgentId, in.ToolName) {
+	identity, ok, err := h.managedTool(ctx, in.TargetAgentId, in.ToolName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, fmt.Errorf("tool is not managed here")
 	}
-	key := h.overrideKey(in.TargetAgentId, ToolOverrideScopeUserAgent, in.ToolName)
-	item, err := h.overrides.SetIfVersion(ctx, ToolOverrideWrite{ToolName: key.ToolName, Scope: key.Scope, UserID: key.UserID, AgentID: key.AgentID, Enabled: in.Enabled}, in.ExpectedVersion)
+	key := h.overrideKey(in.TargetAgentId, ToolOverrideScopeUserAgent, identity)
+	item, err := h.overrides.SetIfVersion(ctx, ToolOverrideWrite{Identity: key.Identity, Scope: key.Scope, UserID: key.UserID, AgentID: key.AgentID, Enabled: in.Enabled}, in.ExpectedVersion)
 	if err != nil {
 		return nil, mapOverrideConflict(err)
 	}
@@ -272,10 +303,14 @@ func (h agentOverrideHandler) Delete(ctx context.Context, in SettingsAgentToolDe
 	if err := h.management.ManageForTool(ctx, h.authority, in.TargetAgentId); err != nil {
 		return nil, err
 	}
-	if !h.managedTool(ctx, in.TargetAgentId, in.ToolName) {
+	identity, ok, err := h.managedTool(ctx, in.TargetAgentId, in.ToolName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, fmt.Errorf("tool is not managed here")
 	}
-	key := h.overrideKey(in.TargetAgentId, ToolOverrideScopeUserAgent, in.ToolName)
+	key := h.overrideKey(in.TargetAgentId, ToolOverrideScopeUserAgent, identity)
 	if err := h.overrides.ClearIfVersion(ctx, key, in.ExpectedVersion); err != nil {
 		return nil, mapOverrideConflict(err)
 	}
@@ -284,33 +319,38 @@ func (h agentOverrideHandler) Delete(ctx context.Context, in SettingsAgentToolDe
 }
 
 // managedTool accepts a name only when a runner in this context can actually
-// register it: generated registry entries, or MCP tools present in the
-// resolved registrations' persisted catalogs. The mcp__ name prefix alone is
-// not enough — a stale override for a since-removed server tool must stay
-// invisible rather than look managed.
-func (h agentOverrideHandler) managedTool(ctx context.Context, targetAgentID, name string) bool {
+// register it and a trusted generated or MCP catalog supplies its identity.
+func (h agentOverrideHandler) managedTool(ctx context.Context, targetAgentID, name string) (ToolIdentity, bool, error) {
 	if IsCoreToolName(name) {
-		return false
+		return ToolIdentity{}, false, nil
 	}
 	if _, settingsManaged := settingspolicy.Lookup(name); settingsManaged {
-		return false
+		return ToolIdentity{}, false, nil
 	}
-	if _, ok := h.registry.Lookup(name); ok {
-		return true
+	if identity, ok := h.registryToolIdentity(name); ok {
+		return identity, true, nil
 	}
-	_, ok := h.catalog(ctx, targetAgentID)[name]
-	return ok
+	entries, err := h.catalog(ctx, targetAgentID)
+	if err != nil {
+		return ToolIdentity{}, false, err
+	}
+	for _, entry := range entries {
+		if entry.Name == name && entry.Identity.Validate() == nil && entry.Identity.isPlugin() {
+			return entry.Identity, true, nil
+		}
+	}
+	return ToolIdentity{}, false, nil
 }
 
-func (h agentOverrideHandler) catalog(ctx context.Context, targetAgentID string) map[string]string {
+func (h agentOverrideHandler) catalog(ctx context.Context, targetAgentID string) ([]MCPCatalogEntry, error) {
 	if h.mcpCatalog == nil {
-		return nil
+		return nil, nil
 	}
-	return h.mcpCatalog(ctx, string(h.authority.UserID()), targetAgentID)
+	return h.mcpCatalog(ctx, h.authority, targetAgentID)
 }
 
-func (h agentOverrideHandler) overrideKey(targetID, scope, toolName string) ToolOverrideKey {
-	key := ToolOverrideKey{ToolName: toolName, Scope: scope}
+func (h agentOverrideHandler) overrideKey(targetID, scope string, identity ToolIdentity) ToolOverrideKey {
+	key := ToolOverrideKey{Identity: identity, Scope: scope}
 	if scope == ToolOverrideScopeUser || scope == ToolOverrideScopeUserAgent {
 		key.UserID = string(h.authority.UserID())
 	}
@@ -318,6 +358,34 @@ func (h agentOverrideHandler) overrideKey(targetID, scope, toolName string) Tool
 		key.AgentID = targetID
 	}
 	return key
+}
+
+func (h agentOverrideHandler) registryToolIdentity(name string) (ToolIdentity, bool) {
+	if h.registry == nil {
+		return ToolIdentity{}, false
+	}
+	spec, ok := h.registry.Lookup(name)
+	if !ok {
+		return ToolIdentity{}, false
+	}
+	identity := ToolIdentity{CoreToolName: name}
+	if spec.PluginID != "" {
+		if spec.Namespace == "" || spec.LocalName == "" {
+			return ToolIdentity{}, false
+		}
+		identity = ToolIdentity{PluginID: spec.PluginID, LocalToolName: spec.LocalName}
+	} else if spec.Namespace != "" || spec.LocalName != "" {
+		return ToolIdentity{}, false
+	}
+	return identity, identity.Validate() == nil
+}
+
+func absentOverrideVersion(identity ToolIdentity, name string) ToolOverrideVersion {
+	item := ToolOverrideVersion{ToolName: name, Scope: ToolOverrideScopeUserAgent, Version: ToolOverrideAbsentVersion}
+	if identity.isPlugin() {
+		item.Identity = &identity
+	}
+	return item
 }
 
 func mapOverrideConflict(err error) error {

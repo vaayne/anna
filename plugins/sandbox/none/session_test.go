@@ -119,11 +119,94 @@ func TestAdjustPolicySnapshotsRunnerPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("adjustPolicy: %v", err)
 	}
-	if got, want := adjusted.Env["PATH"], sandboxpkg.HostEnvBuildPath(stellaHome, ""); got != want {
+	if got, want := adjusted.Env["PATH"], sandboxpkg.HostEnvBuildPath(stellaHome, "", ""); got != want {
 		t.Fatalf("PATH = %q, want %q", got, want)
 	}
 	if got, want := adjusted.Env[sandboxpkg.EnvRunnerPath], adjusted.Env["PATH"]; got != want {
 		t.Fatalf("%s = %q, want final PATH %q", sandboxpkg.EnvRunnerPath, got, want)
+	}
+}
+
+func TestAdjustPolicyUsesSelectionLocalShims(t *testing.T) {
+	stellaHome := t.TempDir()
+	selectionShims := filepath.Join(stellaHome, ".mise-tools", "contexts", "system-a", "shims")
+	adjusted, err := (&Factory{cfg: Config{StellaHome: stellaHome}}).adjustPolicy(
+		sandboxpkg.Policy{Env: map[string]string{"MISE_SHIMS_DIR": selectionShims}},
+		t.TempDir(), "", t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("adjustPolicy: %v", err)
+	}
+	if !strings.HasPrefix(adjusted.Env["PATH"], selectionShims+string(filepath.ListSeparator)) {
+		t.Fatalf("selection-local shims must lead PATH, got %q", adjusted.Env["PATH"])
+	}
+	if strings.Contains(adjusted.Env["PATH"], filepath.Join(stellaHome, "bin")) || strings.Contains(adjusted.Env["PATH"], filepath.Join(stellaHome, ".mise-tools", "shims")) {
+		t.Fatalf("PATH leaked shared Stella paths: %q", adjusted.Env["PATH"])
+	}
+}
+
+func TestAdjustPolicyPreservesCoreAndOptionalSelectionMarkers(t *testing.T) {
+	stellaHome := t.TempDir()
+	optional := filepath.Join(stellaHome, ".mise-tools", "public", "optional")
+	core := filepath.Join(stellaHome, "core-runtime")
+	base := map[string]string{
+		"PATH":                           "/usr/bin",
+		"MISE_DATA_DIR":                  filepath.Join(stellaHome, ".mise-tools"),
+		"MISE_CONFIG_DIR":                filepath.Join(stellaHome, ".mise-tools", "config"),
+		"MISE_YES":                       "1",
+		"MISE_NOT_FOUND_AUTO_INSTALL":    "false",
+		sandboxpkg.EnvNativeSelectionDir: optional,
+		sandboxpkg.EnvCoreRuntimeDir:     core,
+	}
+	adjusted, err := (&Factory{cfg: Config{StellaHome: stellaHome}}).adjustPolicy(
+		sandboxpkg.Policy{Env: base}, t.TempDir(), "", t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("adjustPolicy: %v", err)
+	}
+	if adjusted.Env[sandboxpkg.EnvNativeSelectionDir] != optional {
+		t.Fatalf("optional selection marker = %q, want %q", adjusted.Env[sandboxpkg.EnvNativeSelectionDir], optional)
+	}
+	if adjusted.Env[sandboxpkg.EnvCoreRuntimeDir] != core {
+		t.Fatalf("core selection marker = %q, want %q", adjusted.Env[sandboxpkg.EnvCoreRuntimeDir], core)
+	}
+	if adjusted.Env["MISE_DATA_DIR"] != filepath.Join(stellaHome, ".mise-tools") {
+		t.Fatalf("MISE_DATA_DIR was not preserved: %q", adjusted.Env["MISE_DATA_DIR"])
+	}
+	if adjusted.Env["MISE_CONFIG_DIR"] != filepath.Join(stellaHome, ".mise-tools", "config") || adjusted.Env["MISE_YES"] != "1" {
+		t.Fatalf("MISE_* overlay was not preserved: config=%q yes=%q", adjusted.Env["MISE_CONFIG_DIR"], adjusted.Env["MISE_YES"])
+	}
+	path := adjusted.Env["PATH"]
+	if !strings.HasPrefix(path, optional+string(filepath.ListSeparator)) || !strings.Contains(path, core) {
+		t.Fatalf("PATH lost optional/core selections: %q", path)
+	}
+}
+
+func TestNativeSelectionPathRunsSelectedCommand(t *testing.T) {
+	stellaHome := t.TempDir()
+	selection := filepath.Join(stellaHome, ".mise-tools", "public", "selection")
+	if err := os.MkdirAll(selection, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := filepath.Join(selection, "selected-tool")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\nprintf 'selected\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	policy := sandboxpkg.Policy{
+		Env: map[string]string{
+			sandboxpkg.EnvNativeSelectionDir: selection,
+			"PATH":                           "/usr/bin",
+		},
+		Filesystem: sandboxpkg.FilesystemPolicy{WorkingDir: t.TempDir()},
+	}
+	sess, err := (&Factory{cfg: Config{StellaHome: stellaHome}}).CreateSession(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer sess.Close() //nolint:errcheck
+	result, err := sess.Exec(context.Background(), "selected-tool", sandboxpkg.ExecOptions{})
+	if err != nil || result.ExitCode != 0 || result.Stdout != "selected\n" {
+		t.Fatalf("selected command result = %+v, err=%v", result, err)
 	}
 }
 

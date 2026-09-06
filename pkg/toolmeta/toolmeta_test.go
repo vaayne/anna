@@ -4,14 +4,38 @@ import (
 	"testing"
 )
 
+func TestNewRegistryRejectsDuplicateNames(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewRegistry accepted duplicate tool names")
+		}
+	}()
+	NewRegistry(ActionTool{Name: "email__send"}, ActionTool{Name: "email__send"})
+}
+
+func TestRegistryToolsReturnsStableSnapshot(t *testing.T) {
+	reg := NewRegistry(
+		ActionTool{Name: "z", Family: "z"},
+		ActionTool{Name: "a", Family: "a"},
+	)
+	tools := reg.Tools()
+	if len(tools) != 2 || tools[0].Name != "a" || tools[1].Name != "z" {
+		t.Fatalf("Tools() = %#v, want stable name order", tools)
+	}
+	tools[0].Name = "changed"
+	if got, ok := reg.Lookup("a"); !ok || got.Name != "a" {
+		t.Fatalf("Tools() exposed registry storage: %#v, %v", got, ok)
+	}
+}
+
 var recallyTools = []ActionTool{
-	{Name: "recally_feed_add", Family: "recally", Resource: "feed", Action: "feed_add", InputSchemaJSON: `{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}`},
-	{Name: "recally_digest_get", Family: "recally", Resource: "digest", Action: "digest_get", InputSchemaJSON: `{"type":"object","properties":{},"additionalProperties":false}`},
+	{Name: "recally__feed_add", PluginID: "system/recally", Namespace: "recally", LocalName: "feed_add", Family: "recally", Resource: "feed", Action: "feed_add", InputSchemaJSON: `{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}`},
+	{Name: "recally__digest_get", PluginID: "system/recally", Namespace: "recally", LocalName: "digest_get", Family: "recally", Resource: "digest", Action: "digest_get", InputSchemaJSON: `{"type":"object","properties":{},"additionalProperties":false}`},
 }
 
 func TestFamilyComesFromTheRegistryNotTheName(t *testing.T) {
 	reg := NewRegistry(recallyTools...)
-	if got := reg.Family("recally_feed_add"); got != "recally" {
+	if got := reg.Family("recally__feed_add"); got != "recally" {
 		t.Fatalf("Family=%q, want recally", got)
 	}
 	// A plugin is free to name itself anything. Splitting on "_" would read
@@ -27,7 +51,7 @@ func TestFamilyComesFromTheRegistryNotTheName(t *testing.T) {
 
 func TestMatchAcceptsExactNamesAndFamilies(t *testing.T) {
 	feedAdd := recallyTools[0]
-	for _, selector := range []string{"recally_feed_add", "recally"} {
+	for _, selector := range []string{"recally__feed_add", "recally"} {
 		if !Match(selector, feedAdd) {
 			t.Errorf("Match(%q) = false, want true", selector)
 		}
@@ -53,7 +77,7 @@ func TestMatchDoesNotInferFamilyFromAPrefix(t *testing.T) {
 
 func TestMatchAnyAndNames(t *testing.T) {
 	reg := NewRegistry(recallyTools...)
-	if got := reg.Names(); len(got) != 2 || got[0] != "recally_digest_get" || got[1] != "recally_feed_add" {
+	if got := reg.Names(); len(got) != 2 || got[0] != "recally__digest_get" || got[1] != "recally__feed_add" {
 		t.Fatalf("Names=%v, want both tools sorted", got)
 	}
 	if !MatchAny([]string{"goal", "recally"}, recallyTools[1]) {
@@ -70,20 +94,20 @@ func TestMatchNameResolvesFamiliesThroughTheRegistry(t *testing.T) {
 	// A nil registry is the pre-wiring case: exact names still match, families
 	// do not, which is what these call sites did before family selectors.
 	var absent *Registry
-	if !absent.MatchName("recally_feed_add", "recally_feed_add") {
+	if !absent.MatchName("recally__feed_add", "recally__feed_add") {
 		t.Fatal("an exact name must match without a registry")
 	}
-	if absent.MatchName("recally", "recally_feed_add") {
+	if absent.MatchName("recally", "recally__feed_add") {
 		t.Fatal("a family selector must not match without a registry")
 	}
 
 	reg := NewRegistry(recallyTools...)
-	if !reg.MatchName("recally", "recally_feed_add") {
+	if !reg.MatchName("recally", "recally__feed_add") {
 		t.Fatal("a family selector must match every member")
 	}
 	// A retired name is gone, not redirected: the override rows naming it were
 	// deleted by the migration, so a selector written against it selects nothing.
-	if reg.MatchName("recally_digest", "recally_digest_get") {
+	if reg.MatchName("recally_digest", "recally__digest_get") {
 		t.Fatal("a retired name must not redirect to its replacement")
 	}
 	// The skills union split into the singular "skill" family, so its own name
@@ -100,11 +124,11 @@ func TestMatchNameResolvesFamiliesThroughTheRegistry(t *testing.T) {
 	if reg.MatchName("recally", "recally_helper_plugin") {
 		t.Fatal("an unregistered name must match only itself")
 	}
-	if !reg.MatchAnyName([]string{"goal", "recally"}, "recally_feed_add") {
+	if !reg.MatchAnyName([]string{"goal", "recally"}, "recally__feed_add") {
 		t.Fatal("MatchAnyName must match on any selector")
 	}
 
-	names := []string{"recally_feed_add", "recally_digest_get", "bash"}
+	names := []string{"recally__feed_add", "recally__digest_get", "bash"}
 	if reg.SelectsNothing("recally", names) {
 		t.Fatal("a family selector that matches members must not report empty")
 	}
@@ -112,7 +136,7 @@ func TestMatchNameResolvesFamiliesThroughTheRegistry(t *testing.T) {
 		t.Fatal("a stale selector must report empty so the caller can warn")
 	}
 
-	if got := reg.Action("recally_digest_get"); got != "digest_get" {
+	if got := reg.Action("recally__digest_get"); got != "digest_get" {
 		t.Fatalf("Action=%q, want digest_get", got)
 	}
 	if got := reg.Action("bash"); got != "" {
@@ -142,12 +166,7 @@ func TestHandWrittenExceptionsAreClosed(t *testing.T) {
 			t.Errorf("HandWritten(%q) = false, want true", name)
 		}
 	}
-	for _, name := range []string{"mcp__github__search"} {
-		if !HandWritten(name) {
-			t.Errorf("HandWritten(%q) = false, want true for the prefixed families", name)
-		}
-	}
-	for _, name := range []string{"recally_digest_get", "goal", "session_list", "memory_search", "library_search", "shell"} {
+	for _, name := range []string{"mcp__github__search", "recally__digest_get", "goal", "session_list", "memory_search", "library_search", "shell"} {
 		if HandWritten(name) {
 			t.Errorf("HandWritten(%q) = true, want a generated tool", name)
 		}

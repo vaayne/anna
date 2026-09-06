@@ -4,12 +4,14 @@ import (
 	"context"
 	"sort"
 
+	"github.com/CherryHQ/stella/internal/plugin"
+
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
 
 // EnabledToolSpecs returns metadata for plugin tools that are visible in the
 // current server state. It does not build tools or touch runtime sandboxes.
-func (h *Host) EnabledToolSpecs(ctx context.Context) []pkgplugins.ToolSpec {
+func (h *Host) EnabledToolSpecs(ctx context.Context, snapshot plugin.Snapshot) ([]pkgplugins.ToolSpec, error) {
 	h.mu.RLock()
 	regs := make([]pkgplugins.ToolSpec, 0, len(h.toolRegs))
 	for _, reg := range h.toolRegs {
@@ -20,13 +22,14 @@ func (h *Host) EnabledToolSpecs(ctx context.Context) []pkgplugins.ToolSpec {
 
 	out := make([]pkgplugins.ToolSpec, 0, len(regs))
 	for _, reg := range regs {
-		if !reg.Required {
-			state, err := h.DesiredState(ctx, reg.PluginID)
-			if err != nil || !state.Enabled {
-				continue
-			}
+		_, enabled, err := snapshotState(snapshot, reg.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
+			continue
 		}
 		out = append(out, reg)
 	}
-	return out
+	return out, nil
 }

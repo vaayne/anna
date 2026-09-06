@@ -11,22 +11,25 @@ import (
 	"github.com/CherryHQ/stella/internal/agent/session"
 	"github.com/CherryHQ/stella/internal/core/agentctx"
 	"github.com/CherryHQ/stella/internal/memory"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/pkg/ai"
+	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 )
 
 // --- fake runner ------------------------------------------------------------
 
 type fakeRunner struct {
-	alive      bool
-	busy       bool
-	closed     bool
-	lastAct    time.Time
-	system     string
-	chatSystem string
-	closeErr   error
-	panicAlive bool
-	panicBusy  bool
-	panicClose bool
+	alive         bool
+	busy          bool
+	closed        bool
+	lastAct       time.Time
+	system        string
+	chatSystem    string
+	closeErr      error
+	panicAlive    bool
+	panicBusy     bool
+	panicClose    bool
+	pluginContext PluginContext
 }
 
 func newFakeRunner() *fakeRunner { return &fakeRunner{alive: true, lastAct: time.Now()} }
@@ -72,14 +75,54 @@ func (r *fakeRunner) Busy() bool {
 	}
 	return r.busy
 }
-func (r *fakeRunner) LastActivity() time.Time { return r.lastAct }
-func (r *fakeRunner) SystemPrompt() string    { return r.system }
+func (r *fakeRunner) LastActivity() time.Time      { return r.lastAct }
+func (r *fakeRunner) SystemPrompt() string         { return r.system }
+func (r *fakeRunner) PluginContext() PluginContext { return r.pluginContext }
 func (r *fakeRunner) Close() error {
 	if r.panicClose {
 		panic("close panic")
 	}
 	r.closed = true
 	return r.closeErr
+}
+
+func TestRunnerCacheKeepsReservedContextAndRefreshesNewRunner(t *testing.T) {
+	first := newFakeRunner()
+	first.pluginContext = NewPluginContext(plugin.Snapshot{}, pkgplugins.SessionPluginView{ExposedPluginIDs: []string{"plugin/old"}})
+	second := newFakeRunner()
+	second.pluginContext = NewPluginContext(plugin.Snapshot{}, pkgplugins.SessionPluginView{ExposedPluginIDs: []string{"plugin/new"}})
+	builds := 0
+	cache := newRunnerCache(func(context.Context, RunnerParams) (Runner, error) {
+		builds++
+		if builds == 1 {
+			return first, nil
+		}
+		return second, nil
+	}, fakeMemory{}, time.Minute, slog.Default())
+	info := session.Info{ID: "session", UserID: "user", AgentID: "agent"}
+
+	selection, err := cache.getOrCreateReserved(context.Background(), info, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selection.pluginContext.SessionPluginView().ExposedPluginIDs; len(got) != 1 || got[0] != "plugin/old" {
+		t.Fatalf("first selection context = %v", got)
+	}
+	if err := cache.invalidateSkillPolicy(); err != nil {
+		t.Fatal(err)
+	}
+	cache.releaseReservation(selection.session)
+
+	selection, err = cache.getOrCreateReserved(context.Background(), info, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.runner != second {
+		t.Fatalf("runner after invalidation = %p, want refreshed runner %p", selection.runner, second)
+	}
+	if got := selection.pluginContext.SessionPluginView().ExposedPluginIDs; len(got) != 1 || got[0] != "plugin/new" {
+		t.Fatalf("refreshed selection context = %v", got)
+	}
 }
 
 // --- fake memory provider ---------------------------------------------------
@@ -556,7 +599,7 @@ func TestAdmittedSelectionKeepsModelThinkingAcrossReset(t *testing.T) {
 		Memory:          mem,
 		DefaultModel:    "old-model",
 		DefaultThinking: "low",
-		BeforeRun: func(_ context.Context, _ session.Info, model, _ string, _ string, _ []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, _ session.Info, model, _ string, _ string, _ []ai.Message, _ PluginContext) (string, error) {
 			mu.Lock()
 			beforeModels = append(beforeModels, model)
 			mu.Unlock()
@@ -629,7 +672,7 @@ func TestResetDuringReservedFactoryBuildKeepsSelectionAndDropsCacheMetadata(t *t
 		Memory:          fakeMemory{},
 		DefaultModel:    "old-model",
 		DefaultThinking: "low",
-		BeforeRun: func(_ context.Context, _ session.Info, model, _ string, _ string, _ []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, _ session.Info, model, _ string, _ string, _ []ai.Message, _ PluginContext) (string, error) {
 			mu.Lock()
 			models = append(models, model)
 			mu.Unlock()
@@ -692,7 +735,7 @@ func TestCompactionKeepsAdmittedSelectionMetadata(t *testing.T) {
 		Memory:          mem,
 		DefaultModel:    "old-model",
 		DefaultThinking: "low",
-		BeforeRun: func(_ context.Context, _ session.Info, model, _ string, _ string, _ []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, _ session.Info, model, _ string, _ string, _ []ai.Message, _ PluginContext) (string, error) {
 			mu.Lock()
 			models = append(models, model)
 			mu.Unlock()
@@ -1059,7 +1102,7 @@ func TestRuntimeChat_BeforeRunOverride(t *testing.T) {
 			return runner, nil
 		},
 		Memory: fakeMemory{},
-		BeforeRun: func(_ context.Context, info session.Info, model, msgText, system string, history []ai.Message) (string, error) {
+		BeforeRun: func(_ context.Context, info session.Info, model, msgText, system string, history []ai.Message, _ PluginContext) (string, error) {
 			if info.ID != "s1" {
 				t.Fatalf("session ID = %q, want s1", info.ID)
 			}

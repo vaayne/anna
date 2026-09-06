@@ -92,10 +92,11 @@ func preflightWithClient(ctx context.Context, cfg PreflightConfig, client *docke
 		return fmt.Errorf("docker preflight: %w", &ImageUnavailableError{Err: err})
 	}
 	if expected := cfg.Docker.ExpectedBundleRevision; expected != "" {
-		actual, err := client.ImageLabel(ctx, cfg.Docker.Image, builtinBundleRevisionLabel)
+		imageInfo, err := client.ImageInfo(ctx, cfg.Docker.Image)
 		if err != nil {
 			return fmt.Errorf("docker preflight: inspect builtin bundle revision: %w", err)
 		}
+		actual := imageInfo.Labels[builtinBundleRevisionLabel]
 		if actual != expected {
 			return fmt.Errorf("docker preflight: builtin bundle revision mismatch (expected %s, image has %s); run `mise run sandbox:docker:build` for the local image or rebuild your custom sandbox image from this Stella revision", expected, actual)
 		}

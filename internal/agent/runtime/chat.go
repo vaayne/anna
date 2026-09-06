@@ -29,11 +29,13 @@ var ErrChatTimeout = agenterr.ErrChatTimeout
 
 const autoCompactionTimeout = 2 * time.Minute
 
-// BeforeRunFunc is called before each chat turn to inject/override the system prompt.
-type BeforeRunFunc func(ctx context.Context, info session.Info, model, msgText, system string, history []ai.Message) (systemOut string, err error)
+// BeforeRunFunc is called before each chat turn to inject/override the system
+// prompt using the runner's admission-time plugin snapshot.
+type BeforeRunFunc func(ctx context.Context, info session.Info, model, msgText, system string, history []ai.Message, pluginContext PluginContext) (systemOut string, err error)
 
-// SnapshotPromptFunc builds a system prompt from the session's snapshot version.
-type SnapshotPromptFunc func(ctx context.Context, info session.Info, snap memory.SessionSnapshot) (string, error)
+// SnapshotPromptFunc builds a system prompt from the session's snapshot version
+// and the plugin context captured with the admitted runner.
+type SnapshotPromptFunc func(ctx context.Context, info session.Info, snap memory.SessionSnapshot, pluginContext PluginContext) (string, error)
 
 // chat is retained for direct internal callers and tests. Runtime.ChatAdmitted
 // uses chatWithRunner after synchronously selecting a runner at admission.
@@ -228,7 +230,7 @@ func (rt *Runtime) chatWithRunner(ctx context.Context, out chan<- Event, info se
 				snap, err := sss.GetOrCreateSessionSnapshot(ctx, info.ID, info.UserID, info.AgentID)
 				if err != nil {
 					rt.log.Warn("snapshot lookup failed, using base system", "session_id", info.ID, "error", err)
-				} else if rebuilt, err := selection.snapshotPrompt(ctx, info, snap); err != nil {
+				} else if rebuilt, err := selection.snapshotPrompt(ctx, info, snap, selection.pluginContext); err != nil {
 					out <- Event{Err: fmt.Errorf("snapshot prompt: %w", err)}
 					return
 				} else {
@@ -238,7 +240,7 @@ func (rt *Runtime) chatWithRunner(ctx context.Context, out chan<- Event, info se
 		}
 	}
 	if !isGuest && selection.beforeRun != nil {
-		systemOut, err := selection.beforeRun(ctx, info, selection.model, msgText, baseSystem, history)
+		systemOut, err := selection.beforeRun(ctx, info, selection.model, msgText, baseSystem, history, selection.pluginContext)
 		if err != nil {
 			out <- Event{Err: fmt.Errorf("before run: %w", err)}
 			return

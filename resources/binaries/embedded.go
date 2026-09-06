@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -222,6 +224,49 @@ type embeddedRuntime struct {
 	name    string // installed name under bin/
 	archive string // filename inside toolsDir
 	extract func(archivePath, destDir string) error
+}
+
+// EmbeddedRuntimeAsset identifies one release asset embedded for this
+// platform. Digest is over the compressed artifact, so an asset replacement
+// cannot reuse a previous public selection directory by version alone.
+type EmbeddedRuntimeAsset struct {
+	Name    string
+	Version string
+	Digest  string
+}
+
+// EmbeddedRuntimeAssets returns the embedded runtime assets for this platform.
+// The result is derived from the embedded bytes and carries no mutable install
+// state.
+func EmbeddedRuntimeAssets() ([]EmbeddedRuntimeAsset, error) {
+	runtimes := platformRuntimes()
+	assets := make([]EmbeddedRuntimeAsset, 0, len(runtimes))
+	for _, rt := range runtimes {
+		archivePath := toolsDir + "/" + rt.archive
+		version, err := archiveVersion(archivePath)
+		if err != nil {
+			return nil, fmt.Errorf("read embedded %s version: %w", rt.name, err)
+		}
+		digest, err := embeddedArchiveDigest(archivePath)
+		if err != nil {
+			return nil, fmt.Errorf("digest embedded %s: %w", rt.name, err)
+		}
+		assets = append(assets, EmbeddedRuntimeAsset{Name: rt.name, Version: version, Digest: digest})
+	}
+	return assets, nil
+}
+
+func embeddedArchiveDigest(path string) (string, error) {
+	file, err := toolsFS.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func knownRuntimes() []embeddedRuntime {

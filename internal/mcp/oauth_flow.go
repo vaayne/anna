@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
+
+	"github.com/CherryHQ/stella/internal/authz"
 )
 
 // StartOAuth runs discovery, resolves (or registers) the client, persists a
@@ -16,8 +18,28 @@ import (
 // open. The flow binds the initiating user, so the unauthenticated callback can
 // re-identify safely.
 func (s *Service) StartOAuth(ctx context.Context, reg Registration, userID, callback string) (string, string, time.Time, error) {
+	return s.startOAuth(ctx, reg, userID, callback, authz.Authority{})
+}
+
+// StartOAuthForAuthority carries the already verified request authority into
+// DCR persistence. The authority never comes from registration fields or the
+// callback URL; it is supplied by MCP Access after its PEP checks.
+func (s *Service) StartOAuthForAuthority(ctx context.Context, reg Registration, authority authz.Authority, callback string) (string, string, time.Time, error) {
+	if !authority.Valid() {
+		return "", "", time.Time{}, authz.ErrForbidden
+	}
+	return s.startOAuth(ctx, reg, string(authority.UserID()), callback, authority)
+}
+
+func (s *Service) startOAuth(ctx context.Context, reg Registration, userID, callback string, authority authz.Authority) (string, string, time.Time, error) {
+	if authority.Valid() {
+		ctx = withOAuthAuthority(ctx, authority)
+	}
 	if reg.Transport != TransportStreamableHTTP {
 		return "", "", time.Time{}, fmt.Errorf("mcp: auth_type %q requires the streamable_http transport", AuthTypeOAuth)
+	}
+	if err := s.validatePluginConfigRegistration(ctx, reg); err != nil {
+		return "", "", time.Time{}, err
 	}
 	challenges, err := fetchChallenge(ctx, reg, s.endpoints)
 	if err != nil {
@@ -31,7 +53,7 @@ func (s *Service) StartOAuth(ctx context.Context, reg Registration, userID, call
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
-	clientID, clientSecret, err := s.resolveOAuthClient(ctx, reg, asm, callback)
+	reg, clientID, clientSecret, authStyle, err := s.resolveOAuthClient(ctx, reg, asm, callback)
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
@@ -44,13 +66,19 @@ func (s *Service) StartOAuth(ctx context.Context, reg Registration, userID, call
 	flowID := uuid.Must(uuid.NewV7()).String()
 	expiresAt := time.Now().UTC().Add(oauthFlowTTL)
 	secretRef := ""
-	if clientSecret != "" {
+	if reg.OAuthClientSecretRef != "" {
+		secretRef = reg.OAuthClientSecretRef
+	} else if clientSecret != "" {
 		secretRef = oauthClientSecretName(reg.ID)
 	}
 	configRaw, err := oauthFlowConfig{
 		ClientID: clientID, ClientSecretRef: secretRef,
-		TokenEndpoint: asm.TokenEndpoint, AuthStyle: int(oauth2.AuthStyleInParams),
+		TokenEndpoint: asm.TokenEndpoint, AuthStyle: int(authStyle),
 		Resource: prm.Resource, Scopes: scopes, RedirectURI: callback,
+		PluginID: reg.PluginID, Namespace: reg.Namespace, ConfigRevision: reg.ConfigRevision,
+		ConfigScope: reg.Scope, ConfigUserID: reg.UserID, ConfigAgentID: reg.AgentID,
+		CredentialMode: reg.CredentialMode,
+		Endpoint:       reg.URL, Transport: reg.Transport, RegistrationName: reg.Name,
 	}.marshal()
 	if err != nil {
 		return "", "", time.Time{}, err
@@ -84,19 +112,57 @@ func (s *Service) CompleteOAuth(ctx context.Context, flowID, code string) (Regis
 		return Registration{}, err
 	}
 	owner := CredentialOwner{Scope: flow.CredentialScope, UserID: textOrEmpty(flow.CredentialUserID), AgentID: textOrEmpty(flow.CredentialAgentID)}
-
-	row, err := s.db.GetMCPServerByID(ctx, flow.ServerID)
-	if err != nil {
-		return Registration{}, fmt.Errorf("mcp: get registration: %w", err)
+	if cfg.PluginID == "" || cfg.ConfigRevision < 1 {
+		return Registration{}, errPluginConfigIdentity
 	}
-	reg := registrationFromRow(row)
+	reg, err := commonOAuthRegistration(flow, cfg)
+	if err != nil {
+		return Registration{}, err
+	}
+	if err := s.validatePluginConfigRegistration(ctx, reg); err != nil {
+		return Registration{}, err
+	}
+	expectedOwner := s.CredentialOwner(reg, flow.UserID)
+	if owner != expectedOwner {
+		return Registration{}, fmt.Errorf("mcp: oauth flow credential owner does not match registration")
+	}
+	return s.completeCommonOAuth(ctx, flow, cfg, reg, owner, code)
+}
 
-	// Same SSRF-safe client binding as the refresh path.
-	exchangeCtx, cancel := context.WithTimeout(oauth2Context(s.endpoints), oauthExchangeTimeout)
+func commonOAuthRegistration(flow McpOauthFlow, cfg oauthFlowConfig) (Registration, error) {
+	if cfg.PluginID == "" || cfg.Namespace == "" || cfg.ConfigRevision < 1 ||
+		cfg.ConfigScope == "" || cfg.Endpoint == "" || cfg.Transport == "" || cfg.CredentialMode == "" {
+		return Registration{}, fmt.Errorf("mcp: oauth flow common plugin identity is incomplete")
+	}
+	if !ValidCredentialMode(cfg.CredentialMode) || !ValidScope(cfg.ConfigScope) {
+		return Registration{}, fmt.Errorf("mcp: oauth flow common plugin identity is invalid")
+	}
+	return Registration{
+		ID: flow.ServerID, PluginID: cfg.PluginID, Namespace: cfg.Namespace,
+		ConfigRevision: cfg.ConfigRevision, Scope: cfg.ConfigScope,
+		UserID: cfg.ConfigUserID, AgentID: cfg.ConfigAgentID,
+		Name: cfg.RegistrationName, URL: cfg.Endpoint, Transport: cfg.Transport,
+		AuthType: AuthTypeOAuth, Enabled: true, CredentialMode: cfg.CredentialMode,
+		OAuthClientID: cfg.ClientID, OAuthClientSecretRef: cfg.ClientSecretRef,
+	}, nil
+}
+
+func (s *Service) completeCommonOAuth(ctx context.Context, flow McpOauthFlow, cfg oauthFlowConfig, reg Registration, owner CredentialOwner, code string) (Registration, error) {
+	// Fence immediately before the network exchange. A concurrent config edit
+	// must invalidate this authorization attempt rather than minting a token for
+	// the stale endpoint/config revision.
+	if err := s.validatePluginConfigRegistration(ctx, reg); err != nil {
+		return Registration{}, err
+	}
+	exchangeCtx, cancel := context.WithTimeout(oauth2Context(ctx, s.endpoints), oauthExchangeTimeout)
 	defer cancel()
 	clientSecret := ""
 	if cfg.ClientSecretRef != "" {
-		clientSecret = s.oauthClientSecret(ctx, reg)
+		var secretErr error
+		clientSecret, secretErr = s.oauthClientSecret(ctx, reg)
+		if secretErr != nil {
+			return Registration{}, secretErr
+		}
 	}
 	tok, err := (&oauth2.Config{
 		ClientID: cfg.ClientID, ClientSecret: clientSecret,
@@ -108,7 +174,9 @@ func (s *Service) CompleteOAuth(ctx context.Context, flowID, code string) (Regis
 	if err != nil {
 		return Registration{}, fmt.Errorf("mcp: exchange authorization code: %w", err)
 	}
-
+	// storeBundle takes the config-row lock and validates the captured revision
+	// again before writing the Vault bundle. The callback intentionally does not
+	// update legacy mcp_server status or probe columns.
 	bundle := OAuthBundle{
 		Version: 1, ClientID: cfg.ClientID, TokenEndpoint: cfg.TokenEndpoint,
 		AuthStyle: cfg.AuthStyle, Resource: cfg.Resource,
@@ -118,39 +186,32 @@ func (s *Service) CompleteOAuth(ctx context.Context, flowID, code string) (Regis
 	if err := s.storeBundle(ctx, reg, owner, bundle); err != nil {
 		return Registration{}, err
 	}
-	if err := s.SetStatus(ctx, reg.ID, StatusUnknown, ""); err != nil {
-		return Registration{}, err
-	}
-	probed, err := s.Probe(ctx, reg, owner)
-	if err != nil {
-		return Registration{}, err
-	}
-	return probed, nil
+	// Refresh the exact credential owner's observation after the new bundle is
+	// committed. Probe writes only mcp_connection_state and fences the captured
+	// config revision, so a concurrent config edit cannot publish stale tools.
+	return s.Probe(ctx, reg, owner)
 }
 
 // Disconnect removes the caller-appropriate bundle and marks the server
 // needs_auth, so subsequent tool calls fail closed until a reconnect.
 func (s *Service) Disconnect(ctx context.Context, reg Registration, userID string) (Registration, error) {
 	owner := s.CredentialOwner(reg, userID)
-	if s.vault != nil {
-		if err := s.deleteToken(ctx, owner.Scope, owner.UserID, owner.AgentID, oauthBundleName(reg.ID)); err != nil {
-			return Registration{}, fmt.Errorf("mcp: delete oauth bundle: %w", err)
-		}
+	if err := s.withCredentialVault(ctx, reg, owner, func(vault Vault) error {
+		return deleteOAuthBundle(ctx, vault, owner, reg.ID)
+	}); err != nil {
+		return Registration{}, fmt.Errorf("mcp: delete oauth bundle: %w", err)
 	}
-	if err := s.SetStatus(ctx, reg.ID, StatusNeedsAuth, credentialRejectedHint); err != nil {
+	if err := s.persistCommonStatus(ctx, reg, owner, StatusNeedsAuth, credentialRejectedHint); err != nil {
 		return Registration{}, err
 	}
-	return s.GetMCPServerForOwner(ctx, reg.ID)
+	reg.Status, reg.StatusError, reg.Tools = StatusNeedsAuth, credentialRejectedHint, nil
+	return reg, nil
 }
 
 // GetMCPServerForOwner re-reads a registration by id, unmapped by scope —
 // the callers have already passed the PEP for this exact row.
 func (s *Service) GetMCPServerForOwner(ctx context.Context, id string) (Registration, error) {
-	row, err := s.db.GetMCPServerByID(ctx, id)
-	if err != nil {
-		return Registration{}, fmt.Errorf("mcp: get registration: %w", err)
-	}
-	return registrationFromRow(row), nil
+	return Registration{}, fmt.Errorf("mcp: common registration resolution requires an immutable plugin snapshot")
 }
 
 // HasUserCredential reports whether the given user has a credential to use

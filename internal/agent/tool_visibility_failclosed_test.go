@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/CherryHQ/stella/internal/agent/sandbox"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/pkg/ai"
 	pkgplugins "github.com/CherryHQ/stella/pkg/plugins"
 	pkgtools "github.com/CherryHQ/stella/pkg/tools"
@@ -106,11 +107,11 @@ func TestBuildToolRegistryRejectsDuplicateNonCoreName(t *testing.T) {
 func TestBuildToolRegistryRejectsDuplicateNameWhileIncumbentIsDisabled(t *testing.T) {
 	cfg := failClosedConfig(t)
 	cfg.BuiltinTools = []BuiltinTool{{Tool: staticTool{name: "share"}}}
-	cfg.PluginTools = func(context.Context, pkgplugins.ToolBuildContext) []pkgtools.Tool {
-		return []pkgtools.Tool{staticTool{name: "share"}}
+	cfg.PluginTools = func(context.Context, pkgplugins.ToolBuildContext, plugin.Snapshot) ([]pkgtools.Tool, error) {
+		return []pkgtools.Tool{staticTool{name: "share"}}, nil
 	}
 	cfg.ToolOverrideFetcher = func(context.Context, string, string) ([]ToolOverride, error) {
-		return []ToolOverride{{ToolName: "share", Scope: ToolOverrideScopeUserAgent, Enabled: false}}, nil
+		return []ToolOverride{{Identity: ToolIdentity{CoreToolName: "share"}, Scope: ToolOverrideScopeUserAgent, Enabled: false}}, nil
 	}
 
 	_, _, _, err := buildToolRegistry(context.Background(), cfg, &fakeSession{alive: true}, nil, ai.Model{}, "")
@@ -131,8 +132,8 @@ func TestBuildToolRegistryReservesUnavailableBuiltinNames(t *testing.T) {
 		Tool:      staticTool{name: "email"},
 		Available: func(context.Context, RunnerParams) (bool, error) { return false, nil },
 	}}
-	cfg.PluginTools = func(context.Context, pkgplugins.ToolBuildContext) []pkgtools.Tool {
-		return []pkgtools.Tool{staticTool{name: "email"}}
+	cfg.PluginTools = func(context.Context, pkgplugins.ToolBuildContext, plugin.Snapshot) ([]pkgtools.Tool, error) {
+		return []pkgtools.Tool{staticTool{name: "email"}}, nil
 	}
 
 	_, _, _, err := buildToolRegistry(context.Background(), cfg, &fakeSession{alive: true}, nil, ai.Model{}, "")
@@ -225,7 +226,7 @@ func TestBuildToolRegistryRetryAfterOutageSeesLiveState(t *testing.T) {
 		if outage {
 			return nil, errors.New("database unreachable")
 		}
-		return []ToolOverride{{ToolName: "memory", Scope: ToolOverrideScopeUserAgent, Enabled: false}}, nil
+		return []ToolOverride{{Identity: ToolIdentity{CoreToolName: "memory"}, Scope: ToolOverrideScopeUserAgent, Enabled: false}}, nil
 	}
 
 	if _, _, _, err := buildToolRegistry(context.Background(), cfg, &fakeSession{alive: true}, nil, ai.Model{}, ""); err == nil {
@@ -259,10 +260,10 @@ func TestBuildToolRegistryWarnsOnOrphanOverride(t *testing.T) {
 	}
 	cfg.ToolOverrideFetcher = func(context.Context, string, string) ([]ToolOverride, error) {
 		return []ToolOverride{
-			{ToolName: "recally_digest", Scope: ToolOverrideScopeUser, Enabled: false},
-			{ToolName: "memory", Scope: ToolOverrideScopeUser, Enabled: false},
-			{ToolName: "email", Scope: ToolOverrideScopeUser, Enabled: false},
-			{ToolName: "bash", Scope: ToolOverrideScopeUser, Enabled: false},
+			{Identity: ToolIdentity{CoreToolName: "recally_digest"}, Scope: ToolOverrideScopeUser, Enabled: false},
+			{Identity: ToolIdentity{CoreToolName: "memory"}, Scope: ToolOverrideScopeUser, Enabled: false},
+			{Identity: ToolIdentity{CoreToolName: "email"}, Scope: ToolOverrideScopeUser, Enabled: false},
+			{Identity: ToolIdentity{CoreToolName: "bash"}, Scope: ToolOverrideScopeUser, Enabled: false},
 		}, nil
 	}
 

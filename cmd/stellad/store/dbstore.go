@@ -52,7 +52,7 @@ func (s *DBStore) ReadAgentSkillPolicy(ctx context.Context, agentID string) (ski
 // row lock. The column is the entire concurrency boundary: normal Agent edits
 // deliberately never write it, and two different toggles retain each other.
 func (s *DBStore) SetAgentSkillPolicy(ctx context.Context, agentID, ref string, enabled bool) (skillpolicy.Policy, error) {
-	if err := skillpolicy.ValidateRef(ref); err != nil {
+	if err := skillpolicy.ValidateMutationRef(ref); err != nil {
 		return skillpolicy.Policy{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -562,6 +562,9 @@ func (s *DBStore) ListChannelsByType(ctx context.Context, channelType string) ([
 func (s *DBStore) GetChannel(ctx context.Context, id string) (config.Channel, error) {
 	r, err := s.q.GetChannel(ctx, id)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return config.Channel{}, config.ErrChannelNotFound
+		}
 		return config.Channel{}, fmt.Errorf("get channel %q: %w", id, err)
 	}
 	return channelFromDB(r), nil

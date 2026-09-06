@@ -132,7 +132,10 @@ func (r *fakeRunnerSvc) Alive() bool             { return true }
 func (r *fakeRunnerSvc) Busy() bool              { return false }
 func (r *fakeRunnerSvc) LastActivity() time.Time { return time.Now() }
 func (r *fakeRunnerSvc) SystemPrompt() string    { return "" }
-func (r *fakeRunnerSvc) Close() error            { return nil }
+func (r *fakeRunnerSvc) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (r *fakeRunnerSvc) Close() error { return nil }
 
 // newTestService builds a Service backed by memorytest.Fake and a fake runner.
 func newTestService(t *testing.T, events []agentruntime.Event) (*agent.Service, *memorytest.Fake) {
@@ -258,6 +261,68 @@ func TestServiceGroupTurnPersistsHumanSpeakerAndRendersUnwrapped(t *testing.T) {
 	runner.mu.Unlock()
 	if strings.Contains(modelInput, "stella_actor") {
 		t.Fatalf("human group input was wrapped as injected agent content: %s", modelInput)
+	}
+}
+
+// TestService_ChatForSchedulerFinalFenceRejectsAfterCapabilityMutation models
+// the dispatch race: the scheduler's first capability check has passed, then
+// the plugin is disabled before the agent turn starts. The final fence runs
+// after Runtime registers the active turn, so it rejects without runner work.
+func TestService_ChatForSchedulerFinalFenceRejectsAfterCapabilityMutation(t *testing.T) {
+	svc, _ := newTestService(t, []agentruntime.Event{{Text: "must not run"}})
+	authority, err := authz.NewAgentAuthority("u1", "agent1")
+	if err != nil {
+		t.Fatalf("NewAgentAuthority: %v", err)
+	}
+
+	firstGatePassed := true
+	pluginDisabled := false
+	finalFenceCalled := false
+	denied := errors.New("system/scheduler disabled")
+	stream := svc.ChatForScheduler(context.Background(), agent.SchedulerChatRequest{
+		SessionID: "scheduler-race",
+		UserID:    "u1",
+		AgentID:   "agent1",
+		Message:   "must not run",
+		Authority: authority,
+		BeforeStart: func() error {
+			if !firstGatePassed {
+				t.Fatal("final fence ran before the initial capability check")
+			}
+			pluginDisabled = true // stand-in for the committed disable mutation
+			finalFenceCalled = true
+			if _, err := svc.Runtime.ChatAdmitted(context.Background(), session.Info{
+				ID:      "scheduler-race",
+				UserID:  "u1",
+				AgentID: "agent1",
+				Kind:    string(session.KindScheduler),
+				Channel: string(session.ChannelScheduler),
+			}, "nested"); !errors.Is(err, agentruntime.ErrSessionBusy) {
+				t.Fatalf("nested admission error = %v, want session busy", err)
+			}
+			return denied
+		},
+	})
+
+	var gotErr error
+	var gotText string
+	for event := range stream {
+		if event.Err != nil {
+			gotErr = event.Err
+		}
+		gotText += event.Text
+	}
+	if !errors.Is(gotErr, denied) {
+		t.Fatalf("scheduler admission error = %v, want %v", gotErr, denied)
+	}
+	if gotText != "" {
+		t.Fatalf("rejected scheduler admission produced runner output %q", gotText)
+	}
+	if !finalFenceCalled || !pluginDisabled {
+		t.Fatalf("final fence state called=%v disabled=%v, want both true", finalFenceCalled, pluginDisabled)
+	}
+	if svc.SessionLive("scheduler-race") {
+		t.Fatal("rejected scheduler admission retained the active turn")
 	}
 }
 

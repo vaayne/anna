@@ -1,25 +1,45 @@
-export interface OAuthState {
-  connected: boolean;
-  needs_reconnect: boolean;
-  client_registered: boolean;
-}
-export interface McpServer {
+export type PluginScope = "system" | "system_agent" | "user" | "user_agent";
+
+export interface PluginDefinition {
   id: string;
-  name: string;
-  url: string;
-  status: string;
-  status_error?: string;
-  probed_at?: string;
-  version: string;
-  tools?: { name: string; }[];
-  scope?: string;
-  credential_mode?: string;
-  oauth?: OAuthState;
-  [key: string]: unknown;
+  namespace: string;
+  display_name: string;
+  backend: "cli" | "mcp" | "go";
+  is_builtin: boolean;
+  is_default_enabled: boolean;
+  spec: Record<string, unknown>;
+  revision: number;
+  created_at: string;
+  updated_at: string;
 }
-export interface AgentMcpServer extends McpServer {
+
+export interface PluginMCPBackendSummary {
+  backend: "mcp";
+  transport: "streamable_http" | "sse";
+  auth_type: "none" | "bearer" | "oauth";
+  credential_mode: "shared" | "per_user";
+  endpoint_configured: boolean;
+  bearer_configured: boolean;
+  oauth_client_id_configured: boolean;
+  oauth_client_secret_configured: boolean;
+}
+
+export interface PluginConfig {
+  id: string;
+  plugin_id: string;
+  scope: PluginScope;
+  user_id?: string;
   agent_id?: string;
-  enabled?: boolean;
+  is_enabled: boolean | null;
+  backend_summary: PluginMCPBackendSummary;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatePluginResponse {
+  plugin: PluginDefinition;
+  config: PluginConfig;
 }
 export interface AgentTool {
   name: string;
@@ -38,8 +58,4 @@ export interface RegistryServer {
   version?: string;
   headers?: { name: string; template?: string; }[];
   [key: string]: unknown;
-}
-export interface Server extends McpServer {
-  credential_mode: string;
-  oauth?: OAuthState;
 }

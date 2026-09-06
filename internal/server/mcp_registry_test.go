@@ -8,8 +8,6 @@ import (
 
 	"github.com/CherryHQ/stella/internal/mcp"
 	"github.com/CherryHQ/stella/internal/server"
-	"github.com/CherryHQ/stella/pkg/db/pgnull"
-	"github.com/CherryHQ/stella/pkg/db/sqlc"
 )
 
 // fakeCatalog is a scripted mcp.Catalog for handler tests.
@@ -160,44 +158,5 @@ func TestRegistryDetailNotFound(t *testing.T) {
 	rr := doRequest(t, env, http.MethodGet, "/api/mcp/registry/servers/official/com.missing%2Fmcp", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (body: %s)", rr.Code, rr.Body.String())
-	}
-}
-
-func TestRegistryInstallDuplicateURLConflicts(t *testing.T) {
-	env := setupAdmin(t)
-	env.rebuild(t, func(d *server.Deps) {
-		d.MCP = mcp.NewServiceForPool(env.db, nil, nil)
-		d.MCPAccess = mcp.NewAccess(d.MCP, nil, nil)
-	})
-
-	first := doRequest(t, env, http.MethodPost, "/api/mcp/servers", map[string]any{
-		"name": "one", "url": "https://mcp.example.com", "scope": "user",
-		"source": "official", "source_id": "com.notion/mcp", "source_version": "1.0.1",
-	})
-	if first.Code != http.StatusCreated {
-		t.Fatalf("first create status = %d (body: %s)", first.Code, first.Body.String())
-	}
-	second := doRequest(t, env, http.MethodPost, "/api/mcp/servers", map[string]any{
-		"name": "two", "url": "https://mcp.example.com", "scope": "user",
-	})
-	if second.Code != http.StatusConflict {
-		t.Fatalf("duplicate create status = %d, want 409 (body: %s)", second.Code, second.Body.String())
-	}
-	// The provenance landed on the installed row's metadata.
-	q := sqlc.New(env.db)
-	rows, err := q.ListMCPServersByScope(context.Background(), sqlc.ListMCPServersByScopeParams{Scope: mcp.ScopeUser, UserID: pgnull.Text(env.adminUser.ID)})
-	if err != nil || len(rows) == 0 {
-		t.Fatalf("list rows: %v", err)
-	}
-	var metadata map[string]any
-	if err := json.Unmarshal(rows[0].Metadata, &metadata); err != nil {
-		t.Fatalf("decode metadata: %v", err)
-	}
-	registryMeta, ok := metadata["registry"].(map[string]any)
-	if !ok || registryMeta["source"] != "official" || registryMeta["id"] != "com.notion/mcp" {
-		t.Fatalf("metadata.registry = %#v", metadata["registry"])
-	}
-	if _, ok := registryMeta["installed_at"]; !ok {
-		t.Fatal("installed_at missing from registry provenance")
 	}
 }

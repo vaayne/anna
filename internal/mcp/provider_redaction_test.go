@@ -28,8 +28,10 @@ func TestToolProviderConnectDiagnosticRedactsEndpointSecrets(t *testing.T) {
 	var logs bytes.Buffer
 	provider.log = slog.New(slog.NewTextHandler(&logs, nil))
 
-	if tools := provider.ToolsForContext(context.Background(), "u1", "a1"); len(tools) != 0 {
-		t.Fatalf("ToolsForContext returned %d tools, want none", len(tools))
+	reg := registrationFromRow(db.forCtx[0])
+	reg.Namespace = "broken"
+	if tools := provider.toolsForRegistrations(context.Background(), []Registration{reg}, true, "u1"); len(tools) != 0 {
+		t.Fatalf("provider returned %d tools, want none", len(tools))
 	}
 	got := logs.String()
 	for _, secret := range []string{"canary-userinfo", "canary-query", "canary-fragment"} {

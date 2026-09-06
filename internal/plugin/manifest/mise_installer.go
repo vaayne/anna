@@ -64,12 +64,18 @@ var misePassthroughEnv = []string{
 }
 
 func isolatedMiseEnv(stellaHome string) ([]string, error) {
-	dataDir := miseToolsDir(stellaHome)
+	return isolatedMiseEnvAt(stellaHome, miseToolsDir(stellaHome), filepath.Join(miseToolsDir(stellaHome), "shims"))
+}
+
+func isolatedMiseEnvAt(stellaHome, dataDir, shimsDir string) ([]string, error) {
+	if dataDir == "" || shimsDir == "" {
+		return nil, fmt.Errorf("empty mise data or shims directory")
+	}
 	// Directories the install needs on disk; the shared base (miseBaseEnv)
 	// already covers DATA/CONFIG/CACHE/STATE, install adds shims + an isolated
 	// HOME/XDG so nothing leaks into the host user's profile.
 	installDirs := map[string]string{
-		"MISE_SHIMS_DIR":  filepath.Join(dataDir, "shims"),
+		"MISE_SHIMS_DIR":  shimsDir,
 		"HOME":            filepath.Join(dataDir, "home"),
 		"XDG_CONFIG_HOME": filepath.Join(dataDir, "xdg", "config"),
 		"XDG_CACHE_HOME":  filepath.Join(dataDir, "xdg", "cache"),
@@ -80,6 +86,10 @@ func isolatedMiseEnv(stellaHome string) ([]string, error) {
 	}
 
 	base := miseBaseEnv(stellaHome)
+	base["MISE_DATA_DIR"] = dataDir
+	base["MISE_CONFIG_DIR"] = filepath.Join(dataDir, "config")
+	base["MISE_CACHE_DIR"] = filepath.Join(dataDir, "cache")
+	base["MISE_STATE_DIR"] = filepath.Join(dataDir, "state")
 	for _, dir := range []string{
 		base["MISE_DATA_DIR"], base["MISE_CONFIG_DIR"], base["MISE_CACHE_DIR"], base["MISE_STATE_DIR"],
 		installDirs["MISE_SHIMS_DIR"], installDirs["HOME"],

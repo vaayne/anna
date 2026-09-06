@@ -6,7 +6,7 @@ import {
   disconnectOAuth as disconnectOAuthRequest,
   getScopedVaultEntry,
   listAgents,
-  listManifestPlugins,
+  listOAuthProviders,
   listScopedVaultEntries,
   pollOAuthFlow,
   setOAuthProviderConfig,
@@ -20,7 +20,6 @@ import {
 } from "@/lib/queries/oauth";
 import { formatTime } from "@/lib/time";
 import type { Agent, OAuthFlow, OAuthProvider, VaultEntry } from "@/lib/types";
-import type { ManifestPluginsResponse } from "@/lib/api-client/types.gen";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
@@ -191,18 +190,13 @@ export function CredentialsPage({ scopeBand }: { scopeBand: ScopeBand }) {
     enabled: personalSurface,
   });
   const { data: systemOAuthProviders = [] } = useQuery({
-    queryKey: ["manifest-oauth-providers"],
+    queryKey: ["system-oauth-providers"],
     queryFn: async () => {
-      const { data } = await listManifestPlugins({ throwOnError: true });
-      // SAFETY: listManifestPlugins returns the full plugin manifest response under data.
-      const manifest = data as ManifestPluginsResponse;
-      return (manifest.oauth_providers ?? [])
-        .filter((provider) => !!provider.id)
-        .map((provider) => ({
-          // SAFETY: the filter above kept only providers with an id; the field is a string.
-          provider: provider.id as string,
-          configured: !!provider.client_id,
-        }));
+      const { data } = await listOAuthProviders({ throwOnError: true });
+      return (data?.providers ?? []).map(({ provider, configured }) => ({
+        provider,
+        configured,
+      }));
     },
     enabled: !personalSurface,
   });
@@ -341,7 +335,10 @@ export function CredentialsPage({ scopeBand }: { scopeBand: ScopeBand }) {
     const defaults = providerConfig.default_scopes ?? [];
     // Show every built-in scope, using the saved override as the checked state.
     // Without an override, the built-in defaults start selected.
-    setScopeDraft((prev) => ({ ...prev, [provider]: buildOAuthScopeDraft(saved, defaults) }));
+    setScopeDraft((prev) => ({
+      ...prev,
+      [provider]: buildOAuthScopeDraft(saved, defaults),
+    }));
     setScopeMeta((prev) => ({ ...prev, [provider]: { saved, defaults } }));
   }, [sheetProvider, providerConfig]);
 
@@ -468,7 +465,9 @@ export function CredentialsPage({ scopeBand }: { scopeBand: ScopeBand }) {
 
   const invalidateProviderConfig = useCallback(
     (provider: string) =>
-      queryClient.invalidateQueries({ queryKey: ["oauth-provider-config", provider] }),
+      queryClient.invalidateQueries({
+        queryKey: ["oauth-provider-config", provider],
+      }),
     [queryClient],
   );
 
@@ -498,7 +497,10 @@ export function CredentialsPage({ scopeBand }: { scopeBand: ScopeBand }) {
               ...prev,
               [provider]:
                 status.error ||
-                t("credentials.oauth.authorizationState", { provider, state: status.state }),
+                t("credentials.oauth.authorizationState", {
+                  provider,
+                  state: status.state,
+                }),
             }));
             showToast(
               status.error ||

@@ -43,8 +43,11 @@ func TestSelfRegisteredTelegramPluginIsComplete(t *testing.T) {
 func TestSelfRegisteredTelegramPluginAppliesAndReportsStatus(t *testing.T) {
 	store := newStubStore()
 	store.plugins[PluginID] = config.Plugin{ID: PluginID, Kind: "channel", Name: pkgchannel.PlatformTelegram, Enabled: true, Config: map[string]any{"token": "tg-token", "enable_notify": true}}
+	store.channels = []config.Channel{{ID: "telegram-test", Type: pkgchannel.PlatformTelegram, Enabled: true, Config: `{"token":"tg-token"}`}}
 
-	host := pluginhost.New(store)
+	host := pluginhost.New(store, pluginhost.WithListenerCap(func(context.Context, string, string) (bool, error) {
+		return true, nil
+	}))
 	services := pluginhost.NewChannelRuntimeServices()
 	dispatcher := internalnotify.NewDispatcher()
 	host.SetAccountEnrollment(testAccountEnroller{})
@@ -70,16 +73,16 @@ func TestSelfRegisteredTelegramPluginAppliesAndReportsStatus(t *testing.T) {
 	if err := host.ApplyPlugin(ctx, PluginID); err != nil {
 		t.Fatalf("ApplyPlugin: %v", err)
 	}
-	status, err := host.Status(ctx, PluginID)
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	payload, ok := status.(map[string]any)
+	handle, ok := host.Runtime().Get(ctx, "telegram-test", RuntimeName)
 	if !ok {
-		t.Fatalf("status type = %T", status)
+		t.Fatal("missing exact telegram channel runtime")
 	}
-	if payload["state"] != pkgplugins.RuntimeStateRunning {
-		t.Fatalf("state = %#v, want %q", payload["state"], pkgplugins.RuntimeStateRunning)
+	status, err := handle.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("runtime snapshot: %v", err)
+	}
+	if status.State != pkgplugins.RuntimeStateRunning {
+		t.Fatalf("state = %#v, want %q", status.State, pkgplugins.RuntimeStateRunning)
 	}
 	if got := dispatcher.Channels(); len(got) != 1 || got[0] != pkgchannel.PlatformTelegram {
 		t.Fatalf("dispatcher channels = %v", got)
@@ -92,7 +95,10 @@ func (testAccountEnroller) EnrollAccount(context.Context, string, pkgchannel.Enr
 	return nil
 }
 
-type stubStore struct{ plugins map[string]config.Plugin }
+type stubStore struct {
+	plugins  map[string]config.Plugin
+	channels []config.Channel
+}
 
 func newStubStore() *stubStore { return &stubStore{plugins: map[string]config.Plugin{}} }
 
@@ -118,11 +124,16 @@ func (s *stubStore) UpdateAgent(context.Context, config.Agent) error        { re
 func (s *stubStore) DeleteAgent(context.Context, string) error              { return nil }
 func (s *stubStore) ListChannels(context.Context) ([]config.Channel, error) { return nil, nil }
 func (s *stubStore) ListChannelsByType(context.Context, string) ([]config.Channel, error) {
-	return nil, nil
+	return s.channels, nil
 }
 
-func (s *stubStore) GetChannel(context.Context, string) (config.Channel, error) {
-	return config.Channel{}, nil
+func (s *stubStore) GetChannel(_ context.Context, id string) (config.Channel, error) {
+	for _, channel := range s.channels {
+		if channel.ID == id {
+			return channel, nil
+		}
+	}
+	return config.Channel{}, config.ErrChannelNotFound
 }
 func (s *stubStore) CreateChannel(context.Context, config.Channel) error { return nil }
 func (s *stubStore) UpdateChannel(context.Context, config.Channel) error { return nil }

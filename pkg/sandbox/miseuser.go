@@ -24,11 +24,10 @@ import (
 // agent could replace a structural dir with a symlink; since this runs unsandboxed
 // with server privileges, following such a link would let seeding escape the tree.
 //
-// The "shims" dir is seeded empty on purpose: builtin tools resolve through the
-// system shims (kept on PATH behind the per-user shims by HostEnvBuildPath), and
-// the per-user shims fill in only as the agent installs its own tools. Any shims
-// the agent did create are relinked to a relative target so a persisted tree stays
-// usable if the same user later runs under a different backend.
+// The "shims" dir is seeded empty on purpose: per-user shims fill in only as the
+// agent installs its own tools. Any shims the agent did create are relinked to a
+// relative target so a persisted tree stays usable if the same user later runs
+// under a different backend.
 func EnsureUserMiseHome(stellaHome, userToolsDir string) error {
 	if userToolsDir == "" {
 		return nil
@@ -118,6 +117,16 @@ func miseBinName() string {
 // Idempotent and safe to call before every session; see relinkShimsToLocalMise.
 func RelinkSystemMiseShims(stellaHome string) error {
 	return relinkShimsToLocalMise(stellaHome, MiseShimsDir(stellaHome))
+}
+
+// RelinkMiseShims rewrites managed shims in an arbitrary selection-local
+// directory to the embedded mise binary. Context-specific installers use this
+// after reshim so a host path can never leak into a sandbox-visible shim.
+func RelinkMiseShims(stellaHome, shimsDir string) error {
+	if shimsDir == "" {
+		return nil
+	}
+	return relinkShimsToLocalMise(stellaHome, shimsDir)
 }
 
 // relinkUserShims rewrites the per-user shims (those the agent created with mise

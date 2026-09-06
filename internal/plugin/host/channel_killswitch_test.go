@@ -46,7 +46,10 @@ func TestApplyChannelHonoursOnlyExplicitPlatformOverride(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			host := New(&stubStore{plugins: tc.overrides})
+			store := &stubStore{plugins: tc.overrides, channels: map[string][]config.Channel{
+				"telegram": {{ID: "telegram-team", Type: "telegram", Enabled: true}},
+			}}
+			host := New(store, WithListenerCap(allowAllListenerCap))
 			host.RegisterPluginID("channel/telegram")
 
 			var got []pkgplugins.PluginState

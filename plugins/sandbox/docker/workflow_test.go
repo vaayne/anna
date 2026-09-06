@@ -26,3 +26,18 @@ func TestSandboxImageWorkflowPassesBuiltinBundleRevision(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxImageBuildPreparesBuiltinArtifactsExplicitly(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "..", "plugins", "sandbox", "docker", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read sandbox Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(dockerfile), "system-bundle install --core-path /opt/stella/core-runtime --prepare-builtin-artifacts") {
+		t.Fatal("sandbox image build does not explicitly prepare builtin artifacts")
+	}
+	for _, privatePath := range []string{"/opt/stella/.mise-tools/config", "/opt/stella/.mise-tools/state", "/opt/stella/.mise-private"} {
+		if !strings.Contains(string(dockerfile), privatePath) {
+			t.Fatalf("sandbox image build does not clean private path %s", privatePath)
+		}
+	}
+}

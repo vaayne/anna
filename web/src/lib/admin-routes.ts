@@ -21,9 +21,14 @@ export function adminCompatibilityHref(pathname: string, search = ""): string | 
   return null;
 }
 
-/** Keeps the former mixed Plugins root as an alias for personal MCP. */
+/** Kept for callers that still need to recognize the former mixed Plugins URL. */
 export function personalCompatibilityHref(pathname: string, search = ""): string | null {
-  return pathname === "/settings/plugins" ? `/settings/mcp${search}` : null;
+  // The Plugins root is now the personal unified surface. The old MCP page
+  // remains a bookmark-compatible wrapper, so redirecting this path would
+  // make the new route unreachable.
+  void pathname;
+  void search;
+  return null;
 }
 
 /** Moves pre-split deployment Library bookmarks to the Admin surface. */

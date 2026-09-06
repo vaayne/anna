@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/CherryHQ/stella/api/types"
+	"github.com/CherryHQ/stella/internal/authz"
 )
 
 func TestStatusReportsActiveSandboxBackendToUnauthenticatedCallers(t *testing.T) {
@@ -22,5 +24,15 @@ func TestStatusReportsActiveSandboxBackendToUnauthenticatedCallers(t *testing.T)
 	}
 	if got.SandboxBackend == nil || *got.SandboxBackend != "bridge" {
 		t.Fatalf("sandbox_backend = %v, want bridge", got.SandboxBackend)
+	}
+}
+
+func TestStatusPluginsRequiresAdminAuthority(t *testing.T) {
+	authority, err := authz.NewUserAuthority("user-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (&Server{}).statusPlugins(context.Background(), authority); got != nil {
+		t.Fatalf("ordinary user status plugins = %#v, want nil", got)
 	}
 }

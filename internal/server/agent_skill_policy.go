@@ -27,7 +27,7 @@ func (s *Server) UpdateAgentSkillActivation(w http.ResponseWriter, r *http.Reque
 		writeError(w, code, msg)
 		return
 	}
-	if err := policy.ValidateRef(skillRef); err != nil {
+	if err := policy.ValidateMutationRef(skillRef); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid skill ref")
 		return
 	}

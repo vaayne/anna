@@ -14,7 +14,7 @@ type Notify = (message: string, kind?: "success" | "error") => void;
 /**
  * Edit one existing channel in place, wherever it is listed. Creation stays on
  * `/settings/channels` (Feishu and WeChat register through a scan wizard) and so
- * does deletion, so this sheet only ever writes name, enabled and credentials —
+ * does deletion, so this sheet only ever writes name, active state and credentials —
  * never `agent_id`, which the dedicated bind endpoint owns.
  *
  * `formKey` remounts the draft: the caller bumps it every time the sheet opens,
@@ -79,7 +79,7 @@ function ChannelForm({
         // /settings/channels.
         body: {
           name: draft.name || "",
-          enabled: draft.enabled,
+          is_active: draft.is_active,
           config: channelConfig(draft),
         },
         throwOnError: true,

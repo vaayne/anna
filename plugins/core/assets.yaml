@@ -1,0 +1,7 @@
+assets:
+  - name: stella
+    source: skills/stella
+    logical_root: core/stella
+  - name: xberg
+    source: skills/xberg
+    logical_root: core/xberg

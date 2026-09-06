@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/CherryHQ/stella/internal/plugin"
+
 	"github.com/CherryHQ/stella/internal/platform/config"
 	"github.com/CherryHQ/stella/internal/plugin/manifest"
 	"github.com/CherryHQ/stella/pkg/ai"
@@ -16,6 +18,15 @@ import (
 )
 
 type Option func(*Host)
+
+// ListenerCap decides whether a channel instance may accept new ingress.
+// pluginID identifies the platform plugin and agentID identifies the bound
+// channel owner. The gate is required for channel runtime admission.
+type ListenerCap func(context.Context, string, string) (bool, error)
+
+// ErrListenerCapUnavailable means the common listener policy was not wired.
+// Channel runtimes fail closed when this gate is absent.
+var ErrListenerCapUnavailable = errors.New("pluginhost: listener capability unavailable")
 
 type Host struct {
 	store    config.Store
@@ -39,6 +50,7 @@ type Host struct {
 	authService        pkgplugins.Auth
 	enrollment         AccountEnrollmentBackend
 	channelRuntime     pkgplugins.ChannelPlatform
+	listenerCap        ListenerCap
 	toolRegs           map[string]pkgplugins.ToolSpec
 	hookRegs           map[string]pkgplugins.HookSpec
 	beforeRunRegs      map[string]pkgplugins.BeforeRunSpec
@@ -52,7 +64,6 @@ type Host struct {
 	systemPromptRegs   map[string]pkgplugins.SystemPromptSpec
 	manifestPrompts    map[string]pkgplugins.SystemPromptSection
 	sessionEnvRegs     map[string][]pkgplugins.SessionEnvSpec
-	bundledSkillRegs   map[string][]pkgplugins.BundledSkillSpec
 }
 
 func New(store config.Store, opts ...Option) *Host {
@@ -77,7 +88,6 @@ func New(store config.Store, opts ...Option) *Host {
 		systemPromptRegs:   map[string]pkgplugins.SystemPromptSpec{},
 		manifestPrompts:    map[string]pkgplugins.SystemPromptSection{},
 		sessionEnvRegs:     map[string][]pkgplugins.SessionEnvSpec{},
-		bundledSkillRegs:   map[string][]pkgplugins.BundledSkillSpec{},
 	}
 	h.config = &configService{store: store}
 	h.runtimes = NewRuntimeHost(h)
@@ -351,12 +361,6 @@ func (h *Host) AddSessionEnv(spec pkgplugins.SessionEnvSpec) {
 	h.sessionEnvRegs[spec.PluginID] = append(h.sessionEnvRegs[spec.PluginID], spec)
 }
 
-func (h *Host) AddBundledSkill(spec pkgplugins.BundledSkillSpec) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.bundledSkillRegs[spec.PluginID] = append(h.bundledSkillRegs[spec.PluginID], spec)
-}
-
 func (h *Host) SessionEnvSpecs(pluginID string) []pkgplugins.SessionEnvSpec {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -368,22 +372,6 @@ func (h *Host) AllSessionEnvSpecs() []pkgplugins.SessionEnvSpec {
 	defer h.mu.RUnlock()
 	var out []pkgplugins.SessionEnvSpec
 	for _, specs := range h.sessionEnvRegs {
-		out = append(out, specs...)
-	}
-	return out
-}
-
-func (h *Host) BundledSkillSpecs(pluginID string) []pkgplugins.BundledSkillSpec {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return append([]pkgplugins.BundledSkillSpec(nil), h.bundledSkillRegs[pluginID]...)
-}
-
-func (h *Host) AllBundledSkillSpecs() []pkgplugins.BundledSkillSpec {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	var out []pkgplugins.BundledSkillSpec
-	for _, specs := range h.bundledSkillRegs {
 		out = append(out, specs...)
 	}
 	return out
@@ -473,6 +461,25 @@ func (h *Host) ApplyChannel(ctx context.Context, channel config.Channel) error {
 	return h.runtimes.ApplyChannel(ctx, channel)
 }
 
+// ReconcileChannel reapplies one committed channel instance by exact ID.
+func (h *Host) ReconcileChannel(ctx context.Context, channelID string) error {
+	return h.runtimes.ReconcileChannel(ctx, channelID)
+}
+
+func (h *Host) listenerAllowed(ctx context.Context, pluginID, agentID string) (bool, error) {
+	h.mu.RLock()
+	cap := h.listenerCap
+	h.mu.RUnlock()
+	if cap == nil {
+		return false, ErrListenerCapUnavailable
+	}
+	allowed, err := cap(ctx, pluginID, agentID)
+	if err != nil {
+		return false, fmt.Errorf("listener capability for %s/%s: %w", pluginID, agentID, err)
+	}
+	return allowed, nil
+}
+
 // Quiesce halts new ingress on managed runtimes (channel pollers) for a graceful
 // drain while preserving already-accepted operations and notifier senders. The
 // runtime table is left intact so a later Stop can fully tear them down.
@@ -480,7 +487,7 @@ func (h *Host) Quiesce(ctx context.Context) { h.runtimes.Quiesce(ctx) }
 
 func (h *Host) Stop(ctx context.Context) error { return h.runtimes.Stop(ctx) }
 
-func (h *Host) PromptTools(ctx context.Context, pluginID string) ([]pkgplugins.PromptToolInfo, error) {
+func (h *Host) PromptTools(ctx context.Context, pluginID string, snapshot plugin.Snapshot) ([]pkgplugins.PromptToolInfo, error) {
 	h.mu.RLock()
 	regs := make([]pkgplugins.PromptInventorySpec, 0, len(h.promptRegs))
 	for _, reg := range h.promptRegs {
@@ -497,9 +504,12 @@ func (h *Host) PromptTools(ctx context.Context, pluginID string) ([]pkgplugins.P
 		if reg.GetTools == nil {
 			continue
 		}
-		state, err := h.DesiredState(ctx, reg.PluginID)
+		state, enabled, err := snapshotState(snapshot, reg.PluginID)
 		if err != nil {
-			state = pkgplugins.PluginState{ID: reg.PluginID, Config: h.defaultConfigFor(reg.PluginID)}
+			return nil, err
+		}
+		if !enabled {
+			continue
 		}
 		tools, err := reg.GetTools(ctx, pkgplugins.PromptInventoryContext{Platform: h.platform(reg.PluginID), State: state})
 		if err != nil {
@@ -512,19 +522,7 @@ func (h *Host) PromptTools(ctx context.Context, pluginID string) ([]pkgplugins.P
 	return out, nil
 }
 
-func (h *Host) ManifestPluginPrompts() []pkgplugins.SystemPromptSection {
-	h.mu.RLock()
-	out := make([]pkgplugins.SystemPromptSection, 0, len(h.manifestPrompts))
-	for _, s := range h.manifestPrompts {
-		s.Inline = true
-		out = append(out, s)
-	}
-	h.mu.RUnlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
-	return out
-}
-
-func (h *Host) SystemPromptSections(ctx context.Context, build pkgplugins.SystemPromptContext) ([]pkgplugins.SystemPromptSection, error) {
+func (h *Host) SystemPromptSections(ctx context.Context, build pkgplugins.SystemPromptContext, snapshot plugin.Snapshot) ([]pkgplugins.SystemPromptSection, error) {
 	h.mu.RLock()
 	regs := make([]pkgplugins.SystemPromptSpec, 0, len(h.systemPromptRegs))
 	for _, reg := range h.systemPromptRegs {
@@ -540,19 +538,12 @@ func (h *Host) SystemPromptSections(ctx context.Context, build pkgplugins.System
 		if reg.Build == nil {
 			continue
 		}
-		state := build.State
-		if reg.Required {
-			state = pkgplugins.PluginState{
-				ID:      reg.PluginID,
-				Enabled: true,
-				Config:  h.defaultConfigFor(reg.PluginID),
-			}
-		} else {
-			var err error
-			state, err = h.DesiredState(ctx, reg.PluginID)
-			if err != nil || !state.Enabled {
-				continue
-			}
+		state, enabled, err := snapshotState(snapshot, reg.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
+			continue
 		}
 		section, err := reg.Build(ctx, pkgplugins.SystemPromptContext{
 			Platform:            h.platform(reg.PluginID),
@@ -570,10 +561,39 @@ func (h *Host) SystemPromptSections(ctx context.Context, build pkgplugins.System
 		}
 		out = append(out, section)
 	}
+	for _, definition := range snapshot.Definitions() {
+		if definition.Backend != plugin.BackendCLI {
+			continue
+		}
+		resolved, ok := snapshot.Get(definition.ID)
+		if !ok || !resolved.Effective.IsEffectivelyEnabled {
+			continue
+		}
+		winner, err := snapshot.ResolveNamespace(definition.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		if winner.PluginID != definition.ID || !winner.IsEffectivelyEnabled {
+			continue
+		}
+		if _, err := selectedResourceIdentity(definition, resolved); err != nil {
+			return nil, err
+		}
+		if err := validateResolvedCLIPayload(definition, resolved); err != nil {
+			return nil, err
+		}
+		payload, err := manifest.DecodeCLIPayload(winner.Payload, "prompt CLI payload")
+		if err != nil {
+			return nil, err
+		}
+		if payload.Prompt != "" {
+			out = append(out, pkgplugins.SystemPromptSection{Title: definition.DisplayName, Content: payload.Prompt, Inline: true})
+		}
+	}
 	return out, nil
 }
 
-func (h *Host) BeforeRun(ctx context.Context, build pkgplugins.BeforeRunContext) (pkgplugins.BeforeRunResult, error) {
+func (h *Host) BeforeRun(ctx context.Context, build pkgplugins.BeforeRunContext, snapshot plugin.Snapshot) (pkgplugins.BeforeRunResult, error) {
 	h.mu.RLock()
 	regs := make([]pkgplugins.BeforeRunSpec, 0, len(h.beforeRunRegs))
 	for _, reg := range h.beforeRunRegs {
@@ -596,19 +616,12 @@ func (h *Host) BeforeRun(ctx context.Context, build pkgplugins.BeforeRunContext)
 			continue
 		}
 
-		state := build.State
-		if reg.Required {
-			state = pkgplugins.PluginState{
-				ID:      reg.PluginID,
-				Enabled: true,
-				Config:  h.defaultConfigFor(reg.PluginID),
-			}
-		} else {
-			var err error
-			state, err = h.DesiredState(ctx, reg.PluginID)
-			if err != nil || !state.Enabled {
-				continue
-			}
+		state, enabled, err := snapshotState(snapshot, reg.PluginID)
+		if err != nil {
+			return pkgplugins.BeforeRunResult{}, err
+		}
+		if !enabled {
+			continue
 		}
 
 		result, err := reg.Run(ctx, pkgplugins.BeforeRunContext{

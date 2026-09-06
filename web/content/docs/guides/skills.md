@@ -30,7 +30,9 @@ It applies policy after selecting that winner. Disabling a winner does not revea
 
 ## Per-Agent activation
 
-Skills are enabled for an Agent by default. An administrator or durable Agent creator can use that Agent's **Skills** tab to enable or disable a builtin, global, or matching Agent Skill. This is one shared setting: the last committed update wins.
+Skills supplied by a plugin follow that plugin's permissions and enablement in plugin settings; they have no separate skill switch. A package containing only skills uses the same plugin settings. Project `.agents/skills/`, personal skills, and managed skills remain independent. Required Stella and Xberg guidance ships with the execution environment.
+
+Skills are enabled for an Agent by default. An administrator or durable Agent creator can use that Agent's **Skills** tab to enable or disable a managed global or matching Agent Skill. This is one shared setting: the last committed update wins.
 
 Activation is separate from permission to edit Skill content and from `disable_model_invocation`. A turn already admitted keeps its Skill snapshot; the next turn sees a committed activation change.
 
@@ -119,3 +121,7 @@ For a managed Skill, create the directory locally, package it as a ZIP, and uplo
 - **Keep skills focused.** One skill per task. A skill for "deploy" and a skill for "rollback" is better than one skill that tries to do both.
 - **Use project skills for team workflows.** Put shared skills in `.agents/skills/` in your repository so everyone on the team benefits.
 - **Test skills by loading them.** After creating a skill, ask Stella to load it and try the workflow to verify the instructions work.
+
+## Upgrading older builtin skill settings
+
+Bundled skills follow their owning plugin’s enabled state. Older per-Agent builtin skill disable settings no longer apply and do not block upgrades. Managed skill activation settings and project `.agents/skills/` discovery are unchanged.

@@ -55,7 +55,7 @@ export function FeishuPermissionSync({
             channel_id: channel.id,
             agent_id: channelString(channel.agent_id),
             name: channel.name || "Feishu",
-            enabled: channel.enabled,
+            is_active: channel.is_active,
             config: serializePlatformConfig("feishu", channel),
           },
           throwOnError: true,

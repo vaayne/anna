@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,8 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 
 	"github.com/CherryHQ/stella/internal/platform/home"
 )
@@ -23,13 +20,8 @@ import (
 const projectBaseDirMigration = sequentialAnchor + 16
 
 func TestProjectBaseDirMigrationCanonicalizesPhysicalOwnerPaths(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := projectBaseDirProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-	if _, err := provider.DownTo(ctx, projectBaseDirMigration-1); err != nil {
-		t.Fatalf("restore pre-project-coordinate schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, projectBaseDirMigration-1)
+	ctx := t.Context()
 
 	userID := uuid.NewString()
 	agentID := "project-coordinate-agent"
@@ -104,13 +96,8 @@ func TestProjectBaseDirMigrationCanonicalizesPhysicalOwnerPaths(t *testing.T) {
 }
 
 func TestProjectBaseDirStartupReconcileUpdatesSafeRowsAndIsolatesAmbiguousRows(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := projectBaseDirProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-	if _, err := provider.DownTo(ctx, projectBaseDirMigration-1); err != nil {
-		t.Fatal(err)
-	}
+	db, provider := newTestDBAtMigration(t, projectBaseDirMigration-1)
+	ctx := t.Context()
 
 	userID := uuid.NewString()
 	agentID := "startup-project-coordinate-agent"
@@ -207,13 +194,8 @@ func TestProjectBaseDirMigrationToleratesConcurrentCanonicalizationAndDeletion(t
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db := newTestDB(t)
-			provider, closeProvider := projectBaseDirProvider(t, db)
-			defer closeProvider()
-			ctx := context.Background()
-			if _, err := provider.DownTo(ctx, projectBaseDirMigration-1); err != nil {
-				t.Fatalf("restore pre-project-coordinate schema: %v", err)
-			}
+			db, provider := newTestDBAtMigration(t, projectBaseDirMigration-1)
+			ctx := t.Context()
 
 			userID := uuid.NewString()
 			agentID := "concurrent-project-coordinate-agent"
@@ -280,13 +262,8 @@ func TestProjectBaseDirMigrationToleratesConcurrentCanonicalizationAndDeletion(t
 }
 
 func TestProjectBaseDirMigrationLeavesUnresolvablePhysicalPathFailClosed(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := projectBaseDirProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-	if _, err := provider.DownTo(ctx, projectBaseDirMigration-1); err != nil {
-		t.Fatalf("restore pre-project-coordinate schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, projectBaseDirMigration-1)
+	ctx := t.Context()
 
 	userID := uuid.NewString()
 	agentID := "a"
@@ -348,13 +325,8 @@ func TestProjectBaseDirMigrationRejectsSpoofedOwnerPathOutsideConfiguredHome(t *
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db := newTestDB(t)
-			provider, closeProvider := projectBaseDirProvider(t, db)
-			defer closeProvider()
-			ctx := context.Background()
-			if _, err := provider.DownTo(ctx, projectBaseDirMigration-1); err != nil {
-				t.Fatalf("restore pre-project-coordinate schema: %v", err)
-			}
+			db, provider := newTestDBAtMigration(t, projectBaseDirMigration-1)
+			ctx := t.Context()
 
 			userID := uuid.NewString()
 			agentID := "spoofed-project-coordinate-agent"
@@ -401,21 +373,6 @@ func reconcileProjectCoordinatesStrict(ctx context.Context, manager *home.Worksp
 		return fmt.Errorf("%d project coordinates remain unresolved", len(result.UnresolvedIDs))
 	}
 	return nil
-}
-
-func projectBaseDirProvider(t *testing.T, pool *pgxpool.Pool) (*goose.Provider, func()) {
-	t.Helper()
-	migrations, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(pool)
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
-	if err != nil {
-		_ = sqlDB.Close()
-		t.Fatalf("create migration provider: %v", err)
-	}
-	return provider, func() { _ = sqlDB.Close() }
 }
 
 func assertProjectCoordinateConstraintValidated(t *testing.T, ctx context.Context, db *pgxpool.Pool, want bool) {

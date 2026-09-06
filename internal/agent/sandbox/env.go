@@ -25,13 +25,18 @@ func runnerFilesystemPolicy(paths Paths, cfg Config) (pkgsandbox.FilesystemPolic
 		mounts = append(mounts, pkgsandbox.Mount{SandboxPath: pkgsandbox.MountUserData, Access: pkgsandbox.MountReadWrite})
 		sources[pkgsandbox.MountUserData] = userData
 	}
+	coreSelection := nativeCoreSelection(cfg)
 	for _, name := range pkgsandbox.StellaHomeSandboxDirs() {
 		sandboxPath := path.Join(pkgsandbox.MountStellaHome, strings.ReplaceAll(name, "\\", "/"))
+		source := filepath.Join(paths.StellaHome, name)
+		if name == "bin" && coreSelection != "" {
+			source = coreSelection
+		}
 		mounts = append(mounts, pkgsandbox.Mount{
 			SandboxPath: sandboxPath,
 			Access:      pkgsandbox.MountReadOnly,
 		})
-		sources[sandboxPath] = filepath.Join(paths.StellaHome, name)
+		sources[sandboxPath] = source
 	}
 	agentDelegates := filepath.Join(paths.AgentRoot, ".agents", "delegates")
 	if info, err := os.Stat(agentDelegates); cfg.AgentID != "" && filepath.Clean(paths.AgentRoot) != filepath.Clean(paths.WorkspaceRoot) && err == nil && info.IsDir() {
@@ -42,6 +47,20 @@ func runnerFilesystemPolicy(paths Paths, cfg Config) (pkgsandbox.FilesystemPolic
 	if paths.BuiltinBundle != "" {
 		mounts = append(mounts, pkgsandbox.Mount{SandboxPath: pkgsandbox.MountBuiltinSkills, Access: pkgsandbox.MountReadOnly})
 		sources[pkgsandbox.MountBuiltinSkills] = paths.BuiltinBundle
+	}
+	if cfg.ContextBinaryPlan != nil {
+		appendNativeSecondarySelectionMount(&mounts, sources, paths.StellaHome, cfg.ContextBinaryPlan.PublicDir, coreSelection)
+	}
+	if cfg.CoreRuntimePlan != nil {
+		appendNativeSecondarySelectionMount(&mounts, sources, paths.StellaHome, cfg.CoreRuntimePlan.PublicDir, coreSelection)
+	}
+	if cfg.UserBinaryPlan != nil {
+		appendNativeSecondarySelectionMount(&mounts, sources, paths.StellaHome, cfg.UserBinaryPlan.PublicDir, coreSelection)
+	}
+	if cfg.ManagedBinaryRoot != "" {
+		sandboxPath := remapStellaHomePolicyPath(cfg.ManagedBinaryRoot, paths.StellaHome)
+		mounts = append(mounts, pkgsandbox.Mount{SandboxPath: sandboxPath, Access: pkgsandbox.MountReadWrite})
+		sources[sandboxPath] = cfg.ManagedBinaryRoot
 	}
 	if miseDir := miseUserDirHost(paths, cfg); miseDir != "" {
 		sandboxPath := remapStellaHomePolicyPath(miseDir, paths.StellaHome)
@@ -56,6 +75,35 @@ func runnerFilesystemPolicy(paths Paths, cfg Config) (pkgsandbox.FilesystemPolic
 		workingDir = path.Join(workingDir, filepath.ToSlash(rel))
 	}
 	return pkgsandbox.FilesystemPolicy{WorkingDir: workingDir, Mounts: mounts}, sources
+}
+
+func nativeCoreSelection(cfg Config) string {
+	if cfg.CoreRuntimePlan != nil && cfg.CoreRuntimePlan.PublicDir != "" {
+		return cfg.CoreRuntimePlan.PublicDir
+	}
+	return ""
+}
+
+func appendNativeSecondarySelectionMount(mounts *[]pkgsandbox.Mount, sources map[string]string, stellaHome, publicDir, core string) {
+	if publicDir == "" || publicDir == core {
+		return
+	}
+	rel, err := filepath.Rel(stellaHome, publicDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return
+	}
+	appendSelectionMount(mounts, sources, stellaHome, rel)
+}
+
+func appendSelectionMount(mounts *[]pkgsandbox.Mount, sources map[string]string, stellaHome, relative string) {
+	hostPath := filepath.Join(stellaHome, relative)
+	info, err := os.Stat(hostPath)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	sandboxPath := path.Join(pkgsandbox.MountStellaHome, filepath.ToSlash(relative))
+	*mounts = append(*mounts, pkgsandbox.Mount{SandboxPath: sandboxPath, Access: pkgsandbox.MountReadOnly})
+	sources[sandboxPath] = hostPath
 }
 
 func remapStellaHomePolicyPath(hostPath, stellaHome string) string {
@@ -176,9 +224,14 @@ func buildSandboxEnv(ctx context.Context, cfg Config, paths Paths) (map[string]s
 	if paths.UserDataDir != "" {
 		userConfigDir = filepath.Join(paths.UserDataDir, ".config", "mise")
 	}
+	managedToolsDir := miseUserDirHost(paths, cfg)
+	if cfg.ManagedBinaryRoot != "" {
+		managedToolsDir = cfg.ManagedBinaryRoot
+		env["STELLA_NATIVE_PREP"] = "true"
+	}
 	maps.Copy(env, manifest.RuntimeMiseEnv(
 		paths.StellaHome,
-		miseUserDirHost(paths, cfg),
+		managedToolsDir,
 		userConfigDir,
 		paths.WorkspaceRoot,
 	))

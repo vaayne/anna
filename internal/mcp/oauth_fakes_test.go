@@ -20,12 +20,20 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	storepkg "github.com/CherryHQ/stella/cmd/stellad/store"
 	"github.com/CherryHQ/stella/internal/auth"
+	"github.com/CherryHQ/stella/internal/authz"
+	agentaccess "github.com/CherryHQ/stella/internal/core/access"
 	appdb "github.com/CherryHQ/stella/internal/db"
 	"github.com/CherryHQ/stella/internal/db/dbtest"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/vault"
 	"github.com/CherryHQ/stella/pkg/db/sqlc"
 )
+
+func noopBackendTransition(context.Context, pgx.Tx, authz.Authority, plugin.MutationKind, plugin.Definition, *plugin.Config, *plugin.Config) error {
+	return nil
+}
 
 // loopbackDialer is the test dial policy: loopback reaches the fake AS and MCP
 // servers; everything else still goes through the production SSRF dialer, so
@@ -53,6 +61,12 @@ func withLoopbackDialer(t *testing.T) {
 type fakeAS struct {
 	ts        *httptest.Server
 	tokenHits atomic.Int32
+	// tokenEndpointAuthMethod is the method returned by DCR. An empty value
+	// exercises RFC 7591's client_secret_basic default.
+	tokenEndpointAuthMethod string
+	// requireTokenAuthMethod makes the fake token endpoint reject the other
+	// wire shape, so tests prove AuthStyle rather than merely accepting both.
+	requireTokenAuthMethod string
 	// tokenStatus overrides the token response status (0 = 200).
 	tokenStatus int
 	// tokenBody overrides the token response body ("" = valid token JSON).
@@ -92,10 +106,14 @@ func newFakeAS(t *testing.T) *fakeAS {
 		as.mu.Lock()
 		as.clients = append(as.clients, meta)
 		as.mu.Unlock()
-		writeJSON(w, map[string]any{
+		response := map[string]any{
 			"client_id": "dcr-client-1", "client_secret": "dcr-secret",
 			"redirect_uris": meta["redirect_uris"], "grant_types": []string{"authorization_code", "refresh_token"},
-		})
+		}
+		if as.tokenEndpointAuthMethod != "" {
+			response["token_endpoint_auth_method"] = as.tokenEndpointAuthMethod
+		}
+		writeJSON(w, response)
 	})
 	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
 		as.tokenHits.Add(1)
@@ -107,6 +125,27 @@ func newFakeAS(t *testing.T) *fakeAS {
 		if err := r.ParseForm(); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
+		}
+		switch as.requireTokenAuthMethod {
+		case oauthTokenEndpointAuthMethodBasic:
+			username, password, ok := r.BasicAuth()
+			if !ok || username != "dcr-client-1" || password != "dcr-secret" || r.Form.Get("client_secret") != "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				writeJSON(w, map[string]any{"error": "invalid_client", "expected": oauthTokenEndpointAuthMethodBasic})
+				return
+			}
+		case oauthTokenEndpointAuthMethodPost:
+			if _, _, ok := r.BasicAuth(); ok || r.Form.Get("client_secret") != "dcr-secret" {
+				w.WriteHeader(http.StatusUnauthorized)
+				writeJSON(w, map[string]any{"error": "invalid_client", "expected": oauthTokenEndpointAuthMethodPost})
+				return
+			}
+		case oauthTokenEndpointAuthMethodNone:
+			if _, _, ok := r.BasicAuth(); ok || r.Form.Get("client_secret") != "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				writeJSON(w, map[string]any{"error": "invalid_client", "expected": oauthTokenEndpointAuthMethodNone})
+				return
+			}
 		}
 		if got := r.Form.Get("grant_type"); got != "authorization_code" && got != "refresh_token" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -171,41 +210,6 @@ func parseAuthCodeURL(t *testing.T, raw string) (flowID, challenge, resource str
 	return q.Get("state"), q.Get("code_challenge"), q.Get("resource")
 }
 
-// oauthVaultDB adapts OIDCStore + sqlc.Queries to the vault.DB interface for
-// the internal-package OAuth tests (mirrors the mcp_test package harness).
-type oauthVaultDB struct {
-	oidc *appdb.OIDCStore
-	q    *sqlc.Queries
-}
-
-func (d *oauthVaultDB) GetVaultUser(ctx context.Context, id string) (sqlc.VaultUser, error) {
-	u, err := d.oidc.GetUser(ctx, id)
-	if err != nil {
-		return sqlc.VaultUser{}, err
-	}
-	return sqlc.VaultUser{AgePublicKey: u.AgePublicKey, AgePrivateKey: u.AgePrivateKey}, nil
-}
-
-func (d *oauthVaultDB) GetVaultEntryByScope(ctx context.Context, arg sqlc.GetVaultEntryByScopeParams) (sqlc.VaultEntry, error) {
-	return d.q.GetVaultEntryByScope(ctx, arg)
-}
-
-func (d *oauthVaultDB) ListVaultEntriesByScope(ctx context.Context, arg sqlc.ListVaultEntriesByScopeParams) ([]sqlc.VaultEntry, error) {
-	return d.q.ListVaultEntriesByScope(ctx, arg)
-}
-
-func (d *oauthVaultDB) ListVaultEntriesForRuntime(ctx context.Context, arg sqlc.ListVaultEntriesForRuntimeParams) ([]sqlc.VaultEntry, error) {
-	return d.q.ListVaultEntriesForRuntime(ctx, arg)
-}
-
-func (d *oauthVaultDB) UpsertVaultEntryByScope(ctx context.Context, arg sqlc.UpsertVaultEntryByScopeParams) (sqlc.VaultEntry, error) {
-	return d.q.UpsertVaultEntryByScope(ctx, arg)
-}
-
-func (d *oauthVaultDB) DeleteVaultEntryByScope(ctx context.Context, arg sqlc.DeleteVaultEntryByScopeParams) error {
-	return d.q.DeleteVaultEntryByScope(ctx, arg)
-}
-
 // setupInternal is the package-mcp twin of the mcp_test setup(): real database,
 // real age-encrypted vault, one user and one agent.
 func setupInternal(t *testing.T) (svc *Service, q *sqlc.Queries, userID, agentID string) {
@@ -219,7 +223,7 @@ func setupInternal(t *testing.T) (svc *Service, q *sqlc.Queries, userID, agentID
 	if err != nil {
 		t.Fatalf("master identity: %v", err)
 	}
-	vaultSvc, err := vault.NewService(&oauthVaultDB{oidc: oidc, q: q}, masterID.String(), nil)
+	vaultSvc, err := vault.NewServiceForPool(pool, masterID.String(), nil)
 	if err != nil {
 		t.Fatalf("vault.NewService: %v", err)
 	}
@@ -240,7 +244,14 @@ func setupInternal(t *testing.T) (svc *Service, q *sqlc.Queries, userID, agentID
 	}); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
-	return NewServiceForPool(pool, vaultSvc, func(tx pgx.Tx) Vault { return vaultSvc.WithTx(tx) }), q, user.ID, "oauth-test-agent"
+	svc = NewServiceForPool(pool, vaultSvc, func(tx pgx.Tx) Vault { return vaultSvc.WithTx(tx) })
+	policy := EndpointPolicy{AllowPrivate: true}
+	svc.SetEndpointPolicy(policy)
+	agents := agentaccess.NewService(storepkg.NewDBStore(pool), appdb.NewAuthStore(pool))
+	svc.SetPluginService(plugin.NewService(pool, agents, plugin.NewCatalog(), NewMCPBackendPolicy(policy), func(_ context.Context, fn func() error) error {
+		return fn()
+	}))
+	return svc, q, user.ID, "oauth-test-agent"
 }
 
 // newUserForOAuthTest provisions a second vault-capable user.

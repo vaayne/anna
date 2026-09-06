@@ -22,10 +22,11 @@ func (r *sandboxRunner) Chat(context.Context, []ai.Message, MessageContent) <-ch
 	close(ch)
 	return ch
 }
-func (r *sandboxRunner) Alive() bool             { return r.sess.Alive() }
-func (r *sandboxRunner) Busy() bool              { return false }
-func (r *sandboxRunner) LastActivity() time.Time { return time.Now() }
-func (r *sandboxRunner) SystemPrompt() string    { return "" }
+func (r *sandboxRunner) Alive() bool                  { return r.sess.Alive() }
+func (r *sandboxRunner) Busy() bool                   { return false }
+func (r *sandboxRunner) LastActivity() time.Time      { return time.Now() }
+func (r *sandboxRunner) SystemPrompt() string         { return "" }
+func (r *sandboxRunner) PluginContext() PluginContext { return PluginContext{} }
 func (r *sandboxRunner) SandboxSession() sandbox.Session {
 	return r.sess
 }

@@ -133,6 +133,24 @@ func TestBuildMounts(t *testing.T) {
 			t.Fatalf("unexpected volume mount: %+v", mounts[0])
 		}
 	})
+	t.Run("selection volume disables copy-up", func(t *testing.T) {
+		opts := CreateOptions{ExtraMounts: []Mount{{
+			HostPath: "stella-selection-abc", ContainerPath: "/opt/stella/bin",
+			ReadOnly: true, Type: MountTypeVolume, NoCopy: true,
+		}}}
+		mounts := buildMounts(opts)
+		if len(mounts) != 1 || mounts[0].VolumeOptions == nil || !mounts[0].VolumeOptions.NoCopy {
+			t.Fatalf("selection mount must set NoCopy: %+v", mounts)
+		}
+	})
+	t.Run("tmpfs mount provides writable helper scratch", func(t *testing.T) {
+		mounts := buildMounts(CreateOptions{ExtraMounts: []Mount{{
+			ContainerPath: "/tmp", Type: MountTypeTmpfs, TmpfsExec: true,
+		}}})
+		if len(mounts) != 1 || mounts[0].Type != mount.TypeTmpfs || mounts[0].Target != "/tmp" || mounts[0].ReadOnly || mounts[0].TmpfsOptions == nil || len(mounts[0].TmpfsOptions.Options) != 1 || mounts[0].TmpfsOptions.Options[0][0] != "exec" {
+			t.Fatalf("unexpected tmpfs mount: %+v", mounts)
+		}
+	})
 	t.Run("workspace plus readonly", func(t *testing.T) {
 		opts := CreateOptions{
 			WorkspaceHost:  "/host/ws",

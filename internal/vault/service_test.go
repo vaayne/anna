@@ -584,7 +584,7 @@ func TestValidateUserFacingNameRejectsSystemManagedWithoutBlockingSystemWriters(
 	ctx := context.Background()
 	svc.AddSystemManagedNames("CUSTOM_PROVIDER_BUNDLE")
 
-	for _, name := range []string{"GH_OAUTH", "OAUTH_FOO", "MCP_TOKEN_01234567_89AB_4DEF_8123_456789ABCDEF", "CUSTOM_PROVIDER_BUNDLE"} {
+	for _, name := range []string{"GH_OAUTH", "OAUTH_FOO", "MCP_TOKEN_01234567_89AB_4DEF_8123_456789ABCDEF", "MCP_OAUTH_01234567_89AB_4DEF_8123_456789ABCDEF", "CUSTOM_PROVIDER_BUNDLE"} {
 		t.Run(name, func(t *testing.T) {
 			err := svc.ValidateUserFacingName(name)
 			if err == nil || !strings.Contains(err.Error(), "reserved for system-managed credentials") {
@@ -644,5 +644,28 @@ func TestBuiltinOAuthVaultKeysAreNotAmbientWhenRegistryWired(t *testing.T) {
 		if _, ok := env[name]; ok {
 			t.Fatalf("builtin OAuth vault key %s should not be ambient", name)
 		}
+	}
+}
+
+func TestMCPManagedOAuthPrefixIsNotAmbient(t *testing.T) {
+	svc, _, userID, _ := testServiceWithQueries(t)
+	ctx := context.Background()
+	name := "MCP_OAUTH_0198F9A4_1B2C_7DEF_8123_456789ABCDEF"
+	if err := svc.Set(ctx, userID, name, "provider-bundle"); err != nil {
+		t.Fatalf("Set managed MCP OAuth bundle: %v", err)
+	}
+	if err := svc.Set(ctx, userID, "AMBIENT_KEY", "ambient-value"); err != nil {
+		t.Fatalf("Set ambient key: %v", err)
+	}
+
+	env, err := svc.LoadEnvForAgent(ctx, userID, "agent-1")
+	if err != nil {
+		t.Fatalf("LoadEnvForAgent: %v", err)
+	}
+	if env["AMBIENT_KEY"] != "ambient-value" {
+		t.Fatalf("AMBIENT_KEY = %q, want ambient-value", env["AMBIENT_KEY"])
+	}
+	if _, ok := env[name]; ok {
+		t.Fatalf("managed MCP OAuth bundle %q leaked into ambient env", name)
 	}
 }

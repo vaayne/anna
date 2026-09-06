@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/CherryHQ/stella/internal/platform/config"
@@ -34,15 +35,22 @@ func (h *Host) ListChannels(ctx context.Context) ([]config.Channel, error) {
 	return h.store.ListChannels(ctx)
 }
 
-func (h *Host) ChannelConfigured(ctx context.Context, name string) bool {
-	state, reg, ok := h.channelState(ctx, name)
-	if !ok || !state.Enabled {
-		return false
+// ReconcileChannels reapplies every durable channel instance after a committed
+// plugin mutation. Runtime failures are reported together after all instances
+// have been attempted, so one broken credential or listener cannot prevent an
+// unrelated instance from receiving the same committed policy.
+func (h *Host) ReconcileChannels(ctx context.Context) error {
+	channels, err := h.store.ListChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("list channel instances for reconciliation: %w", err)
 	}
-	if reg.Configured == nil {
-		return true
+	var failures []error
+	for _, channel := range channels {
+		if err := h.runtimes.ReconcileChannel(ctx, channel.ID); err != nil {
+			failures = append(failures, fmt.Errorf("reconcile channel %s: %w", channel.ID, err))
+		}
 	}
-	return reg.Configured(cloneMap(state.Config))
+	return errors.Join(failures...)
 }
 
 func (h *Host) ChannelInstanceConfigured(channel config.Channel) bool {
@@ -68,18 +76,4 @@ func (h *Host) ChannelInstanceConfigured(channel config.Channel) bool {
 		return true
 	}
 	return reg.Configured(cloneMap(state.Config))
-}
-
-func (h *Host) channelState(ctx context.Context, name string) (state pkgplugins.PluginState, reg pkgplugins.ChannelSpec, ok bool) {
-	h.mu.RLock()
-	reg, ok = h.channelRegs[name]
-	h.mu.RUnlock()
-	if !ok {
-		return pkgplugins.PluginState{}, pkgplugins.ChannelSpec{}, false
-	}
-	desired, err := h.DesiredState(ctx, reg.PluginID)
-	if err != nil {
-		return pkgplugins.PluginState{}, pkgplugins.ChannelSpec{}, false
-	}
-	return desired.Clone(), reg, true
 }

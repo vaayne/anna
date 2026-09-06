@@ -525,6 +525,7 @@ func TestRunCycleSoftBudgetFinishesCurrentTargetThenRunsCurator(t *testing.T) {
 		usageCuratorStore:        fakeUsageCuratorStore{pairs: []usageCuratorPair{{UserID: "curator-user", AgentID: "curator-agent"}}},
 		usageCuratorSettings:     UsageCuratorSettings{Mode: UsageCuratorModeShadow, Now: func() time.Time { return base }},
 		log:                      testLogger(),
+		capabilityGate:           func(context.Context, authz.Authority, string, ...string) error { return nil },
 		services:                 reflectTestServiceManager{services: map[string]*agent.Service{"agent-a": {Sessions: registry}}},
 	}
 	reviewer := func(context.Context, *config.Snapshot, reviewTarget) error {

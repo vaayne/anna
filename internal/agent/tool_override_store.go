@@ -41,10 +41,15 @@ func (s *ToolOverrideStore) Fetch(ctx context.Context, userID, agentID string) (
 	}
 	out := make([]ToolOverride, 0, len(rows))
 	for _, row := range rows {
-		if isSettingsManagedTool(row.ToolName) {
+		identity, err := persistedToolIdentity(row)
+		if err != nil {
+			return nil, fmt.Errorf("tool override: invalid persisted identity: %w", err)
+		}
+		if identity.CoreToolName != "" && isSettingsManagedTool(identity.CoreToolName) {
 			continue
 		}
-		out = append(out, ToolOverride{ToolName: row.ToolName, Scope: row.Scope, Enabled: row.Enabled})
+		override := ToolOverride{Identity: identity, Scope: row.Scope, Enabled: row.Enabled}
+		out = append(out, override)
 	}
 	return out, nil
 }
@@ -52,7 +57,7 @@ func (s *ToolOverrideStore) Fetch(ctx context.Context, userID, agentID string) (
 // ToolOverrideWrite is the durable owner+scope key plus the desired enabled state
 // for one tool visibility override.
 type ToolOverrideWrite struct {
-	ToolName string
+	Identity ToolIdentity
 	Scope    string
 	UserID   string
 	AgentID  string
@@ -61,7 +66,7 @@ type ToolOverrideWrite struct {
 
 // ToolOverrideKey identifies one override row for clearing.
 type ToolOverrideKey struct {
-	ToolName string
+	Identity ToolIdentity
 	Scope    string
 	UserID   string
 	AgentID  string
@@ -69,11 +74,12 @@ type ToolOverrideKey struct {
 
 // ToolOverrideVersion is the safe exact-row projection used by management tools.
 type ToolOverrideVersion struct {
-	ToolName string `json:"tool_name"`
-	Scope    string `json:"scope"`
-	Enabled  bool   `json:"enabled"`
-	Version  string `json:"version"`
-	Present  bool   `json:"present"`
+	Identity *ToolIdentity `json:"identity,omitempty"`
+	ToolName string        `json:"tool_name"`
+	Scope    string        `json:"scope"`
+	Enabled  bool          `json:"enabled"`
+	Version  string        `json:"version"`
+	Present  bool          `json:"present"`
 	// Family is set only for MCP tools ("mcp:<server>"); generated tools carry
 	// their family in the toolmeta registry and the profile tools endpoint.
 	Family string `json:"family,omitempty"`
@@ -93,10 +99,14 @@ func (s *ToolOverrideStore) ListVersions(ctx context.Context, userID, agentID st
 	}
 	out := make(map[string]ToolOverrideVersion, len(rows))
 	for _, row := range rows {
-		if row.Scope != ToolOverrideScopeUserAgent || isSettingsManagedTool(row.ToolName) {
+		identity, err := persistedToolIdentity(row)
+		if err != nil {
+			return nil, fmt.Errorf("tool override: invalid persisted identity: %w", err)
+		}
+		if row.Scope != ToolOverrideScopeUserAgent || (identity.CoreToolName != "" && isSettingsManagedTool(identity.CoreToolName)) {
 			continue
 		}
-		out[row.ToolName] = overrideVersion(row)
+		out[toolOverrideVersionKey(identity)] = overrideVersion(row)
 	}
 	return out, nil
 }
@@ -105,9 +115,17 @@ func (s *ToolOverrideStore) Get(ctx context.Context, k ToolOverrideKey) (ToolOve
 	if !isOverrideScope(k.Scope) {
 		return ToolOverrideVersion{}, fmt.Errorf("tool override: invalid scope %q", k.Scope)
 	}
-	row, err := s.q.GetToolOverride(ctx, overrideParams(k))
+	identity, err := k.toolIdentity()
+	if err != nil {
+		return ToolOverrideVersion{}, err
+	}
+	row, err := s.q.GetToolOverrideByIdentity(ctx, identityParams(identity, k.Scope, k.UserID, k.AgentID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ToolOverrideVersion{ToolName: k.ToolName, Scope: k.Scope, Version: ToolOverrideAbsentVersion}, nil
+		version := ToolOverrideVersion{ToolName: identity.CoreToolName, Scope: k.Scope, Version: ToolOverrideAbsentVersion}
+		if identity.isPlugin() {
+			version.Identity = &identity
+		}
+		return version, nil
 	}
 	if err != nil {
 		return ToolOverrideVersion{}, err
@@ -121,9 +139,20 @@ func (s *ToolOverrideStore) Set(ctx context.Context, w ToolOverrideWrite) error 
 	if !isOverrideScope(w.Scope) {
 		return fmt.Errorf("tool override: invalid scope %q", w.Scope)
 	}
-	_, err := s.q.UpsertToolOverride(ctx, sqlc.UpsertToolOverrideParams{
-		ToolName: w.ToolName, Scope: w.Scope, UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), Enabled: w.Enabled,
-	})
+	identity, err := w.toolIdentity()
+	if err != nil {
+		return err
+	}
+	if identity.isPlugin() {
+		_, err = s.q.UpsertPluginToolOverride(ctx, sqlc.UpsertPluginToolOverrideParams{
+			PluginID: pgnull.Text(identity.PluginID), LocalToolName: pgnull.Text(identity.LocalToolName), Scope: w.Scope,
+			UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), Enabled: w.Enabled,
+		})
+	} else {
+		_, err = s.q.UpsertCoreToolOverride(ctx, sqlc.UpsertCoreToolOverrideParams{
+			ToolName: pgnull.Text(identity.CoreToolName), Scope: w.Scope, UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), Enabled: w.Enabled,
+		})
+	}
 	return err
 }
 
@@ -134,10 +163,22 @@ func (s *ToolOverrideStore) SetIfVersion(ctx context.Context, w ToolOverrideWrit
 	if !isOverrideScope(w.Scope) {
 		return ToolOverrideVersion{}, fmt.Errorf("tool override: invalid scope %q", w.Scope)
 	}
+	identity, err := w.toolIdentity()
+	if err != nil {
+		return ToolOverrideVersion{}, err
+	}
 	if expected == ToolOverrideAbsentVersion {
-		row, err := s.q.InsertToolOverrideIfAbsent(ctx, sqlc.InsertToolOverrideIfAbsentParams{
-			ToolName: w.ToolName, Scope: w.Scope, UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), Enabled: w.Enabled,
-		})
+		var row sqlc.ToolOverride
+		if identity.isPlugin() {
+			row, err = s.q.InsertPluginToolOverrideIfAbsent(ctx, sqlc.InsertPluginToolOverrideIfAbsentParams{
+				PluginID: pgnull.Text(identity.PluginID), LocalToolName: pgnull.Text(identity.LocalToolName), Scope: w.Scope,
+				UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), Enabled: w.Enabled,
+			})
+		} else {
+			row, err = s.q.InsertCoreToolOverrideIfAbsent(ctx, sqlc.InsertCoreToolOverrideIfAbsentParams{
+				ToolName: pgnull.Text(identity.CoreToolName), Scope: w.Scope, UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), Enabled: w.Enabled,
+			})
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ToolOverrideVersion{}, config.ErrAgentVersionConflict
 		}
@@ -150,9 +191,17 @@ func (s *ToolOverrideStore) SetIfVersion(ctx context.Context, w ToolOverrideWrit
 	if err != nil {
 		return ToolOverrideVersion{}, config.ErrAgentVersionConflict
 	}
-	row, err := s.q.UpdateToolOverrideIfVersion(ctx, sqlc.UpdateToolOverrideIfVersionParams{
-		Enabled: w.Enabled, ToolName: w.ToolName, Scope: w.Scope, UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), ExpectedUpdatedAt: expectedAt,
-	})
+	var row sqlc.ToolOverride
+	if identity.isPlugin() {
+		row, err = s.q.UpdatePluginToolOverrideIfVersion(ctx, sqlc.UpdatePluginToolOverrideIfVersionParams{
+			Enabled: w.Enabled, PluginID: pgnull.Text(identity.PluginID), LocalToolName: pgnull.Text(identity.LocalToolName), Scope: w.Scope,
+			UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), ExpectedUpdatedAt: expectedAt,
+		})
+	} else {
+		row, err = s.q.UpdateCoreToolOverrideIfVersion(ctx, sqlc.UpdateCoreToolOverrideIfVersionParams{
+			Enabled: w.Enabled, ToolName: pgnull.Text(identity.CoreToolName), Scope: w.Scope, UserID: pgnull.Text(w.UserID), AgentID: pgnull.Text(w.AgentID), ExpectedUpdatedAt: expectedAt,
+		})
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ToolOverrideVersion{}, config.ErrAgentVersionConflict
 	}
@@ -167,8 +216,18 @@ func (s *ToolOverrideStore) Clear(ctx context.Context, k ToolOverrideKey) error 
 	if !isOverrideScope(k.Scope) {
 		return fmt.Errorf("tool override: invalid scope %q", k.Scope)
 	}
-	return s.q.DeleteToolOverride(ctx, sqlc.DeleteToolOverrideParams{
-		ToolName: k.ToolName, Scope: k.Scope, UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID),
+	identity, err := k.toolIdentity()
+	if err != nil {
+		return err
+	}
+	if identity.isPlugin() {
+		return s.q.DeletePluginToolOverride(ctx, sqlc.DeletePluginToolOverrideParams{
+			PluginID: pgnull.Text(identity.PluginID), LocalToolName: pgnull.Text(identity.LocalToolName), Scope: k.Scope,
+			UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID),
+		})
+	}
+	return s.q.DeleteCoreToolOverride(ctx, sqlc.DeleteCoreToolOverrideParams{
+		ToolName: pgnull.Text(identity.CoreToolName), Scope: k.Scope, UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID),
 	})
 }
 
@@ -177,25 +236,86 @@ func (s *ToolOverrideStore) ClearIfVersion(ctx context.Context, k ToolOverrideKe
 	if !isOverrideScope(k.Scope) || expected == ToolOverrideAbsentVersion {
 		return config.ErrAgentVersionConflict
 	}
+	identity, err := k.toolIdentity()
+	if err != nil {
+		return err
+	}
 	expectedAt, err := parseOverrideVersion(expected)
 	if err != nil {
 		return config.ErrAgentVersionConflict
 	}
-	_, err = s.q.DeleteToolOverrideIfVersion(ctx, sqlc.DeleteToolOverrideIfVersionParams{
-		ToolName: k.ToolName, Scope: k.Scope, UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID), ExpectedUpdatedAt: expectedAt,
-	})
+	if identity.isPlugin() {
+		_, err = s.q.DeletePluginToolOverrideIfVersion(ctx, sqlc.DeletePluginToolOverrideIfVersionParams{
+			PluginID: pgnull.Text(identity.PluginID), LocalToolName: pgnull.Text(identity.LocalToolName), Scope: k.Scope,
+			UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID), ExpectedUpdatedAt: expectedAt,
+		})
+	} else {
+		_, err = s.q.DeleteCoreToolOverrideIfVersion(ctx, sqlc.DeleteCoreToolOverrideIfVersionParams{
+			ToolName: pgnull.Text(identity.CoreToolName), Scope: k.Scope, UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID), ExpectedUpdatedAt: expectedAt,
+		})
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return config.ErrAgentVersionConflict
 	}
 	return err
 }
 
-func overrideParams(k ToolOverrideKey) sqlc.GetToolOverrideParams {
-	return sqlc.GetToolOverrideParams{ToolName: k.ToolName, Scope: k.Scope, UserID: pgnull.Text(k.UserID), AgentID: pgnull.Text(k.AgentID)}
+func identityParams(identity ToolIdentity, scope, userID, agentID string) sqlc.GetToolOverrideByIdentityParams {
+	return sqlc.GetToolOverrideByIdentityParams{
+		ToolName: pgnull.Text(identity.CoreToolName), PluginID: pgnull.Text(identity.PluginID), LocalToolName: pgnull.Text(identity.LocalToolName),
+		Scope: scope, UserID: pgnull.Text(userID), AgentID: pgnull.Text(agentID),
+	}
 }
 
 func overrideVersion(row sqlc.ToolOverride) ToolOverrideVersion {
-	return ToolOverrideVersion{ToolName: row.ToolName, Scope: row.Scope, Enabled: row.Enabled, Present: true, Version: row.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	identity, _ := persistedToolIdentity(row)
+	toolName := ""
+	if row.ToolName.Valid {
+		toolName = row.ToolName.String
+	}
+	version := ToolOverrideVersion{ToolName: toolName, Scope: row.Scope, Enabled: row.Enabled, Present: true, Version: row.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	if identity.isPlugin() {
+		version.Identity = &identity
+	}
+	return version
+}
+
+// toolOverrideVersionKey keeps the management projection collision-free while
+// retaining the historical core-name key for core tools. Plugin exported names
+// are display values and cannot identify a policy row on their own.
+func toolOverrideVersionKey(identity ToolIdentity) string {
+	if identity.isPlugin() {
+		return "plugin:" + identity.PluginID + "\x00" + identity.LocalToolName
+	}
+	return identity.CoreToolName
+}
+
+func (w ToolOverrideWrite) toolIdentity() (ToolIdentity, error) {
+	if err := w.Identity.Validate(); err != nil {
+		return ToolIdentity{}, fmt.Errorf("tool override: %w", err)
+	}
+	return w.Identity, nil
+}
+
+func (k ToolOverrideKey) toolIdentity() (ToolIdentity, error) {
+	if err := k.Identity.Validate(); err != nil {
+		return ToolIdentity{}, fmt.Errorf("tool override: %w", err)
+	}
+	return k.Identity, nil
+}
+
+func persistedToolIdentity(row sqlc.ToolOverride) (ToolIdentity, error) {
+	if row.PluginID.Valid || row.LocalToolName.Valid {
+		identity := ToolIdentity{PluginID: row.PluginID.String, LocalToolName: row.LocalToolName.String}
+		if err := identity.Validate(); err != nil {
+			return ToolIdentity{}, err
+		}
+		return identity, nil
+	}
+	if !row.ToolName.Valid || row.ToolName.String == "" {
+		return ToolIdentity{}, fmt.Errorf("core tool_name is required")
+	}
+	return ToolIdentity{CoreToolName: row.ToolName.String}, nil
 }
 
 func parseOverrideVersion(version string) (time.Time, error) {

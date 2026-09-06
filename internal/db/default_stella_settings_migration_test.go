@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"maps"
 	"testing"
 )
@@ -12,14 +11,8 @@ const (
 )
 
 func TestDefaultStellaSettingsMigrationEnablesOnlyReservedAgent(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, defaultStellaSettingsBeforeMigration); err != nil {
-		t.Fatalf("restore pre-default-Stella-settings schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, defaultStellaSettingsBeforeMigration)
+	ctx := t.Context()
 	for _, id := range []string{"stella", "custom"} {
 		if _, err := db.Exec(ctx, `
 			INSERT INTO agent (id, name, workspace, system_settings_tools_enabled)

@@ -29,7 +29,10 @@ func (r bindingProbeRunner) Alive() bool             { return true }
 func (r bindingProbeRunner) Busy() bool              { return false }
 func (r bindingProbeRunner) LastActivity() time.Time { return time.Now() }
 func (r bindingProbeRunner) SystemPrompt() string    { return "" }
-func (r bindingProbeRunner) Close() error            { return nil }
+func (r bindingProbeRunner) PluginContext() agentruntime.PluginContext {
+	return agentruntime.PluginContext{}
+}
+func (r bindingProbeRunner) Close() error { return nil }
 
 // newBindingProbeChat is newCompactTestChat with a runner that captures the turn
 // context instead of a nil one.

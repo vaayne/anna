@@ -18,6 +18,7 @@ import (
 	oauth "github.com/CherryHQ/stella/internal/connections/oauth"
 	"github.com/CherryHQ/stella/internal/db/dbtest"
 	"github.com/CherryHQ/stella/internal/platform/home"
+	"github.com/CherryHQ/stella/internal/plugin"
 	"github.com/CherryHQ/stella/internal/vault"
 	"github.com/CherryHQ/stella/pkg/tools"
 )
@@ -31,7 +32,9 @@ func (f fakeBuiltinTool) Execute(context.Context, map[string]any) (string, error
 
 type fakeMCPToolProvider struct{}
 
-func (fakeMCPToolProvider) ToolsForContext(context.Context, string, string) []tools.Tool { return nil }
+func (fakeMCPToolProvider) ToolsForSnapshot(context.Context, plugin.Snapshot) ([]tools.Tool, error) {
+	return nil, nil
+}
 
 type fakeVaultEnvLoader struct{}
 

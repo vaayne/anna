@@ -698,6 +698,19 @@ type LibraryFile struct {
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
+type McpConnectionState struct {
+	ID               string             `json:"id"`
+	ConfigID         string             `json:"config_id"`
+	CredentialUserID pgtype.Text        `json:"credential_user_id"`
+	Tools            json.RawMessage    `json:"tools"`
+	Status           string             `json:"status"`
+	StatusError      string             `json:"status_error"`
+	ProbedAt         pgtype.Timestamptz `json:"probed_at"`
+	ConfigRevision   int64              `json:"config_revision"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
 type McpOauthFlow struct {
 	ID                string             `json:"id"`
 	ServerID          string             `json:"server_id"`
@@ -833,6 +846,36 @@ type Plugin struct {
 	Config    json.RawMessage `json:"config"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+type PluginConfig struct {
+	ID             string          `json:"id"`
+	PluginID       string          `json:"plugin_id"`
+	Namespace      string          `json:"namespace"`
+	Scope          string          `json:"scope"`
+	UserID         pgtype.Text     `json:"user_id"`
+	AgentID        pgtype.Text     `json:"agent_id"`
+	Enabled        pgtype.Bool     `json:"enabled"`
+	Config         []byte          `json:"config"`
+	CredentialRefs json.RawMessage `json:"credential_refs"`
+	Revision       int64           `json:"revision"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type PluginDefinition struct {
+	ID                string          `json:"id"`
+	Namespace         string          `json:"namespace"`
+	DisplayName       string          `json:"display_name"`
+	Backend           string          `json:"backend"`
+	Source            string          `json:"source"`
+	ImplementationKey string          `json:"implementation_key"`
+	Spec              json.RawMessage `json:"spec"`
+	DefaultEnabled    bool            `json:"default_enabled"`
+	Revision          int64           `json:"revision"`
+	CreatorUserID     pgtype.Text     `json:"creator_user_id"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 type PluginOauthProvider struct {
@@ -1098,14 +1141,16 @@ type SkillUsage struct {
 }
 
 type ToolOverride struct {
-	ID        string      `json:"id"`
-	ToolName  string      `json:"tool_name"`
-	Scope     string      `json:"scope"`
-	UserID    pgtype.Text `json:"user_id"`
-	AgentID   pgtype.Text `json:"agent_id"`
-	Enabled   bool        `json:"enabled"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID            string      `json:"id"`
+	ToolName      pgtype.Text `json:"tool_name"`
+	Scope         string      `json:"scope"`
+	UserID        pgtype.Text `json:"user_id"`
+	AgentID       pgtype.Text `json:"agent_id"`
+	Enabled       bool        `json:"enabled"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	PluginID      pgtype.Text `json:"plugin_id"`
+	LocalToolName pgtype.Text `json:"local_tool_name"`
 }
 
 type VaultEntry struct {

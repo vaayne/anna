@@ -90,7 +90,7 @@ function CreateForm({
       const agentId = channelString(draft.agent_id);
       return createChannel({
         body: {
-          // No id: the server mints it (and pins weixin to its singleton id).
+          // No id: the server mints an independent instance id for every platform.
           name,
           type,
           agent_id: agentId,

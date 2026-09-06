@@ -55,7 +55,7 @@ interface ChannelRow {
   type: string;
   name: string;
   agentId: string;
-  enabled: boolean;
+  is_active: boolean;
 }
 
 interface PlatformGroup {
@@ -69,7 +69,7 @@ interface Props {
 }
 
 /**
- * Channels bound to this agent, grouped by platform. Admins also see disabled
+ * Channels bound to this agent, grouped by platform. Admins also see inactive
  * bound channels and the edit/create affordances that manage credentials.
  *
  * Linking your own chat account is per platform, not per channel, so it lives
@@ -84,7 +84,7 @@ export function AgentChannelsPanel({ agentId }: Props) {
   const isAdmin = me?.is_admin ?? false;
 
   // The two lists answer the same question for different viewers: admins get
-  // every channel (including disabled ones), everyone else the enabled channels
+  // every channel (including inactive ones), everyone else the active channels
   // whose binding they may see.
   const publicChannels = useQuery({ ...publicChannelsQueryOptions, enabled: !isAdmin });
   const adminChannels = useQuery({ ...channelsQueryOptions, enabled: isAdmin });
@@ -156,7 +156,7 @@ export function AgentChannelsPanel({ agentId }: Props) {
             type,
             name: channel.name || platformLabel(type),
             agentId: channel.agent_id ?? "",
-            enabled: channel.enabled ?? false,
+            is_active: channel.is_active ?? false,
           };
         })
         .filter((channel) => channel.agentId === agentId);
@@ -167,7 +167,7 @@ export function AgentChannelsPanel({ agentId }: Props) {
         type: channel.type,
         name: platformLabel(channel.type, channel.label),
         agentId: channel.agent_id ?? "",
-        enabled: channel.enabled,
+        is_active: channel.is_active,
       }))
       .filter((channel) => channel.agentId === agentId);
   }, [agentId, isAdmin, adminChannels.data, publicChannels.data]);
@@ -299,7 +299,7 @@ export function AgentChannelsPanel({ agentId }: Props) {
                     // subtitle never repeats it.
                     const subtitle = [
                       row.id !== row.name ? row.id : "",
-                      isAdmin && !row.enabled ? t("channels.disabled") : "",
+                      isAdmin && !row.is_active ? t("channels.inactive") : "",
                     ]
                       .filter(Boolean)
                       .join(" · ");

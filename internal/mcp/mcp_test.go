@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,10 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/CherryHQ/stella/internal/agent"
 	"github.com/CherryHQ/stella/internal/authz"
 	"github.com/CherryHQ/stella/internal/vault"
 	"github.com/CherryHQ/stella/pkg/ai"
@@ -27,11 +31,11 @@ import (
 
 // fakeDB is an in-memory mcp.DB for unit tests.
 type fakeDB struct {
-	mu              sync.Mutex // Probe runs concurrently from ToolsForContext
+	mu              sync.Mutex // Probe runs concurrently from provider discovery
 	created         []sqlc.CreateMCPServerParams
 	gets            int
 	rows            map[string]sqlc.McpServer // id -> row
-	forCtx          []sqlc.McpServer          // canned ResolveForContext result
+	forCtx          []sqlc.McpServer          // canned legacy-row fixture
 	byScope         []sqlc.McpServer
 	updated         []sqlc.UpdateMCPServerByScopeParams
 	probeResults    []sqlc.UpdateMCPServerProbeResultParams
@@ -243,10 +247,9 @@ func TestToolMutationSchemasRequireNonEmptyExpectedVersion(t *testing.T) {
 }
 
 func TestToolMutationDispatchRejectsBlankExpectedVersionBeforeService(t *testing.T) {
-	db := newFakeDB()
-	db.rows["server"] = sqlc.McpServer{ID: "server", Scope: ScopeUser, UserID: pgnull.Text("user"), Name: "before", Url: "https://mcp.example.test", Transport: TransportStreamableHTTP, AuthType: AuthTypeNone, Enabled: true, UpdatedAt: time.Now().UTC()}
-	svc := NewService(db, nil)
-	authority, err := authz.NewUserAuthority(authz.UserID("user"), false)
+	svc, userID, _, ctx := commonMCPTestService(t)
+	configID, _, _ := seedCommonConfig(t, svc.pool, userID, 1, AuthTypeNone)
+	authority, err := authz.NewUserAuthority(authz.UserID(userID), true)
 	if err != nil {
 		t.Fatalf("new authority: %v", err)
 	}
@@ -259,57 +262,72 @@ func TestToolMutationDispatchRejectsBlankExpectedVersionBeforeService(t *testing
 		action string
 		args   map[string]any
 	}{
-		{action: "update", args: map[string]any{"id": "server", "expected_version": "", "enabled": false}},
-		{action: "delete", args: map[string]any{"id": "server", "expected_version": ""}},
+		{action: "update", args: map[string]any{"expected_version": "", "enabled": false}},
+		{action: "delete", args: map[string]any{"expected_version": ""}},
 	} {
 		t.Run(tc.action, func(t *testing.T) {
-			if _, err := SettingsMcpDispatch(t.Context(), handler, tc.action, tc.args); !errors.Is(err, ErrVersionConflict) {
+			args := make(map[string]any, len(tc.args)+1)
+			maps.Copy(args, tc.args)
+			args["id"] = configID
+			if _, err := SettingsMcpDispatch(ctx, handler, tc.action, args); !errors.Is(err, ErrVersionConflict) {
 				t.Fatalf("dispatch = %v, want version conflict", err)
 			}
 		})
 	}
-	if db.gets != 0 || len(db.updated) != 0 || len(db.deleted) != 0 {
-		t.Fatalf("blank version reached service: gets=%d updates=%d deletes=%d", db.gets, len(db.updated), len(db.deleted))
+	var revision int64
+	if err := svc.pool.QueryRow(t.Context(), `SELECT revision FROM plugin_config WHERE id = $1::uuid`, configID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 1 {
+		t.Fatalf("blank version changed config revision to %d", revision)
 	}
 }
 
 func TestUpdateIfVersionRejectsChangedRegistration(t *testing.T) {
-	db := newFakeDB()
-	updatedAt := time.Now().UTC().Add(-time.Minute)
-	db.rows["server"] = sqlc.McpServer{ID: "server", Scope: ScopeUser, UserID: pgnull.Text("user"), Name: "before", Url: "https://mcp.example.test", Transport: TransportStreamableHTTP, AuthType: AuthTypeNone, Enabled: true, UpdatedAt: updatedAt}
-	svc := NewService(db, nil)
-	observed := registrationFromRow(db.rows["server"])
+	svc, userID, _, ctx := commonMCPTestService(t)
+	configID, _, _ := seedCommonConfig(t, svc.pool, userID, 1, AuthTypeNone)
+	observed, err := svc.Get(ctx, configID, ScopeUser, userID, "")
+	if err != nil {
+		t.Fatalf("get common registration: %v", err)
+	}
 
 	// Simulate a committed write between the caller's get and its mutation.
-	row := db.rows["server"]
-	row.UpdatedAt = row.UpdatedAt.Add(time.Second)
-	db.rows["server"] = row
+	if _, err := svc.pool.Exec(t.Context(), `UPDATE plugin_config SET revision = revision + 1, updated_at = now() WHERE id = $1::uuid`, configID); err != nil {
+		t.Fatal(err)
+	}
 	name := "after"
-	_, err := svc.UpdateIfVersion(t.Context(), UpdateInput{ID: "server", Scope: ScopeUser, UserID: "user", Name: &name}, observed.Version())
+	_, err = svc.UpdateIfVersion(ctx, UpdateInput{ID: configID, Scope: ScopeUser, UserID: userID, Name: &name}, observed.Version())
 	if !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("UpdateIfVersion error = %v, want version conflict", err)
 	}
-	if err := svc.DeleteIfVersion(t.Context(), "server", ScopeUser, "user", "", observed.Version()); !errors.Is(err, ErrVersionConflict) {
+	if err := svc.DeleteIfVersion(ctx, configID, ScopeUser, userID, "", observed.Version()); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("DeleteIfVersion error = %v, want version conflict", err)
 	}
-	if len(db.deleted) != 0 {
-		t.Fatalf("stale delete mutated registration: %v", db.deleted)
+	var count int
+	if err := svc.pool.QueryRow(t.Context(), `SELECT count(*) FROM plugin_config WHERE id = $1::uuid`, configID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatal("stale delete removed common config")
 	}
 }
 
 func TestToolVersionPathsRejectBlankBeforeMutation(t *testing.T) {
-	db := newFakeDB()
-	db.rows["server"] = sqlc.McpServer{ID: "server", Scope: ScopeUser, UserID: pgnull.Text("user"), Name: "before", Url: "https://mcp.example.test", Transport: TransportStreamableHTTP, AuthType: AuthTypeNone, Enabled: true, UpdatedAt: time.Now().UTC()}
-	svc := NewService(db, nil)
+	svc, userID, _, ctx := commonMCPTestService(t)
+	configID, _, _ := seedCommonConfig(t, svc.pool, userID, 1, AuthTypeNone)
 	name := "after"
-	if _, err := svc.UpdateIfVersion(t.Context(), UpdateInput{ID: "server", Scope: ScopeUser, UserID: "user", Name: &name}, ""); !errors.Is(err, ErrVersionConflict) {
+	if _, err := svc.UpdateIfVersion(ctx, UpdateInput{ID: configID, Scope: ScopeUser, UserID: userID, Name: &name}, ""); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("blank UpdateIfVersion = %v, want version conflict", err)
 	}
-	if err := svc.DeleteIfVersion(t.Context(), "server", ScopeUser, "user", "", ""); !errors.Is(err, ErrVersionConflict) {
+	if err := svc.DeleteIfVersion(ctx, configID, ScopeUser, userID, "", ""); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("blank DeleteIfVersion = %v, want version conflict", err)
 	}
-	if db.gets != 0 || len(db.updated) != 0 || len(db.deleted) != 0 {
-		t.Fatalf("blank version mutated registration: gets=%d updates=%d deletes=%d", db.gets, len(db.updated), len(db.deleted))
+	var revision int64
+	if err := svc.pool.QueryRow(t.Context(), `SELECT revision FROM plugin_config WHERE id = $1::uuid`, configID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 1 {
+		t.Fatalf("blank version changed config revision to %d", revision)
 	}
 }
 
@@ -321,6 +339,63 @@ type fakeVault struct {
 }
 
 func newFakeVault() *fakeVault { return &fakeVault{stored: map[string]string{}} }
+
+func commonMCPTestService(t *testing.T) (*Service, string, string, context.Context) {
+	t.Helper()
+	svc, _, userID, _ := setupInternal(t)
+	pluginID := "custom/" + uuid.NewString()
+	namespace := "mcp_test_" + strings.ReplaceAll(pluginID[len("custom/"):], "-", "")[:8]
+	if _, err := svc.pool.Exec(t.Context(), `
+		INSERT INTO plugin_definition(id, namespace, display_name, backend, source,
+			implementation_key, spec, default_enabled, revision, creator_user_id)
+		VALUES ($1, $2, $3, 'mcp', 'custom', 'mcp', '{}'::jsonb, false, 1, $4::uuid)`,
+		pluginID, namespace, "MCP test", userID); err != nil {
+		t.Fatalf("seed common MCP definition: %v", err)
+	}
+	preparePluginToolOverrideIdentitySchema(t, svc.pool)
+	authority, err := authz.NewUserAuthority(authz.UserID(userID), true)
+	if err != nil {
+		t.Fatalf("new test authority: %v", err)
+	}
+	return svc, userID, pluginID, authz.WithAuthority(t.Context(), authority)
+}
+
+// Migration 41 deliberately leaves tool policy identity for the coordinated
+// policy migration. These tests install the reviewed shape locally so the
+// common config fixture can exercise plugin/local identities without changing
+// production DDL.
+func preparePluginToolOverrideIdentitySchema(t *testing.T, pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+},
+) {
+	t.Helper()
+	if _, err := pool.Exec(t.Context(), `
+		ALTER TABLE tool_override ALTER COLUMN tool_name DROP NOT NULL;
+		ALTER TABLE tool_override DROP CONSTRAINT IF EXISTS tool_override_tool_name_scope_user_id_agent_id_key;
+		CREATE UNIQUE INDEX IF NOT EXISTS test_tool_override_plugin_identity
+			ON tool_override (plugin_id, local_tool_name, scope, user_id, agent_id) NULLS NOT DISTINCT
+			WHERE tool_name IS NULL;
+	`); err != nil {
+		t.Fatalf("prepare plugin tool override identity schema: %v", err)
+	}
+}
+
+func commonMCPRegistration(t *testing.T, authType string) (*Service, Registration, string, context.Context) {
+	t.Helper()
+	svc, _, userID, _ := setupInternal(t)
+	configID, _, _ := seedCommonConfig(t, svc.pool, userID, 1, authType)
+	authority, err := authz.NewUserAuthority(authz.UserID(userID), true)
+	if err != nil {
+		t.Fatalf("new test authority: %v", err)
+	}
+	ctx := authz.WithAuthority(t.Context(), authority)
+	reg, err := svc.Get(ctx, configID, ScopeUser, userID, "")
+	if err != nil {
+		t.Fatalf("get common MCP registration: %v", err)
+	}
+	reg.Name, reg.Namespace = "gh", "gh"
+	return svc, reg, userID, ctx
+}
 
 func vaultKey(scope, userID, agentID, name string) string {
 	return scope + "|" + userID + "|" + agentID + "|" + name
@@ -503,27 +578,18 @@ func TestBuildTransportRejectsStdio(t *testing.T) {
 }
 
 func TestCreateRejectsStdioTransport(t *testing.T) {
-	db := newFakeDB()
-	svc := NewService(db, newFakeVault())
-	_, err := svc.Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "http://x", Transport: "stdio",
-	})
+	err := validateRegistration(ScopeUser, "gh", "http://x", "stdio", AuthTypeNone, EndpointPolicy{})
 	if err == nil {
 		t.Fatal("Create must reject stdio transport")
-	}
-	if len(db.created) != 0 {
-		t.Fatalf("no row should be inserted for an invalid transport; got %d", len(db.created))
 	}
 }
 
 func TestCreateBearerStoresTokenInVaultNotRow(t *testing.T) {
-	db := newFakeDB()
-	vlt := newFakeVault()
-	svc := NewService(db, vlt)
+	svc, userID, pluginID, ctx := commonMCPTestService(t)
 	const token = "secret-bearer-123"
 
-	reg, err := svc.Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "https://mcp.example.com",
+	reg, err := svc.Create(ctx, CreateInput{
+		PluginID: pluginID, Scope: ScopeUser, UserID: userID, Name: "gh", URL: "https://mcp.example.com",
 		Transport: TransportStreamableHTTP, AuthType: AuthTypeBearer, Token: token,
 	})
 	if err != nil {
@@ -531,28 +597,28 @@ func TestCreateBearerStoresTokenInVaultNotRow(t *testing.T) {
 	}
 
 	// The row must reference the credential, never carry the secret itself.
-	if len(db.created) != 1 {
-		t.Fatalf("want 1 insert, got %d", len(db.created))
+	configs, err := sqlc.New(svc.pool).ListPluginConfigs(ctx, reg.PluginID)
+	if err != nil || len(configs) != 1 {
+		t.Fatalf("common config rows = %d, err=%v", len(configs), err)
 	}
-	arg := db.created[0]
-	if arg.CredentialRef == "" {
+	if !strings.Contains(string(configs[0].CredentialRefs), credentialName(reg.ID)) {
 		t.Fatal("credential_ref must be set for bearer auth")
 	}
-	if arg.CredentialRef == token {
-		t.Fatal("credential_ref must not be the token itself")
+	if strings.Contains(string(configs[0].CredentialRefs), token) || strings.Contains(string(configs[0].Config), token) {
+		t.Fatal("common config must not contain the bearer token")
 	}
 
 	// The token must have been handed to the vault under the credential name.
-	got, ok := vlt.stored[vaultKey(ScopeUser, "u1", "", reg.CredentialRef)]
-	if !ok {
-		t.Fatalf("token was not stored in the vault under %q", reg.CredentialRef)
+	got, err := svc.vault.GetScoped(ctx, ScopeUser, userID, "", reg.CredentialRef)
+	if err != nil {
+		t.Fatalf("token was not stored in the vault under %q: %v", reg.CredentialRef, err)
 	}
 	if got != token {
 		t.Fatalf("vault stored %q, want the raw token %q", got, token)
 	}
 
 	// And the service can read it back for connecting.
-	back, err := svc.BearerToken(context.Background(), reg)
+	back, err := svc.BearerToken(ctx, reg)
 	if err != nil {
 		t.Fatalf("BearerToken: %v", err)
 	}
@@ -569,47 +635,43 @@ func TestCreateBearerStoresTokenInVaultNotRow(t *testing.T) {
 func strPtr(s string) *string { return &s }
 
 func TestUpdateBearerRejectsScopeMoveWithoutReplacement(t *testing.T) {
-	db := newFakeDB()
-	vlt := newFakeVault()
-	svc := NewService(db, vlt)
-	reg, err := svc.Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "https://old.example.com",
+	svc, userID, pluginID, ctx := commonMCPTestService(t)
+	reg, err := svc.Create(ctx, CreateInput{
+		PluginID: pluginID, Scope: ScopeUser, UserID: userID, Name: "gh", URL: "https://old.example.com",
 		Transport: TransportStreamableHTTP, AuthType: AuthTypeBearer, Token: "secret",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	_, err = svc.Update(context.Background(), UpdateInput{
-		ID: reg.ID, Scope: ScopeUser, UserID: "u1",
-		NewScope: strPtr(ScopeUserAgent), NewUserID: "u1", NewAgentID: "a1",
+	_, err = svc.Update(ctx, UpdateInput{
+		ID: reg.ID, Scope: ScopeUser, UserID: userID,
+		NewScope: strPtr(ScopeUserAgent), NewUserID: userID, NewAgentID: "oauth-test-agent",
 		URL: strPtr("https://new.example.com"),
 	})
 	if err == nil {
 		t.Fatal("moving bearer registration without replacement credentials must fail")
 	}
-	if _, ok := vlt.stored[vaultKey(ScopeUserAgent, "u1", "a1", reg.CredentialRef)]; ok {
+	if got, err := svc.vault.GetScoped(ctx, ScopeUserAgent, userID, "oauth-test-agent", reg.CredentialRef); err == nil && got != "" {
 		t.Fatal("scope move must not copy the existing bearer")
 	}
-	if got := vlt.stored[vaultKey(ScopeUser, "u1", "", reg.CredentialRef)]; got != "secret" {
+	if got, err := svc.vault.GetScoped(ctx, ScopeUser, userID, "", reg.CredentialRef); err != nil || got != "secret" {
 		t.Fatalf("original token = %q, want unchanged", got)
 	}
 }
 
 func TestUpdateAuthNonePurgesToken(t *testing.T) {
-	db := newFakeDB()
-	vlt := newFakeVault()
-	svc := NewService(db, vlt)
-	reg, err := svc.Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "https://mcp.example.com",
+	svc, userID, pluginID, ctx := commonMCPTestService(t)
+	reg, err := svc.Create(ctx, CreateInput{
+		PluginID: pluginID, Scope: ScopeUser, UserID: userID, Name: "gh", URL: "https://mcp.example.com",
 		Transport: TransportStreamableHTTP, AuthType: AuthTypeBearer, Token: "secret",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	updated, err := svc.Update(context.Background(), UpdateInput{
-		ID: reg.ID, Scope: ScopeUser, UserID: "u1", AuthType: strPtr(AuthTypeNone),
+	updated, err := svc.Update(ctx, UpdateInput{
+		ID: reg.ID, Scope: ScopeUser, UserID: userID, AuthType: strPtr(AuthTypeNone),
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
@@ -617,28 +679,31 @@ func TestUpdateAuthNonePurgesToken(t *testing.T) {
 	if updated.AuthType != AuthTypeNone || updated.CredentialRef != "" {
 		t.Fatalf("updated auth = %q cred = %q", updated.AuthType, updated.CredentialRef)
 	}
-	if _, ok := vlt.stored[vaultKey(ScopeUser, "u1", "", reg.CredentialRef)]; ok {
+	if got, err := svc.vault.GetScoped(ctx, ScopeUser, userID, "", reg.CredentialRef); err == nil && got != "" {
 		t.Fatal("token should be deleted when auth switches to none")
 	}
 }
 
 func TestCreateBearerRequiresTokenAndVault(t *testing.T) {
 	// Missing token.
-	if _, err := NewService(newFakeDB(), newFakeVault()).Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "http://x", AuthType: AuthTypeBearer,
+	svc, userID, pluginID, ctx := commonMCPTestService(t)
+	if _, err := svc.Create(ctx, CreateInput{
+		PluginID: pluginID, Scope: ScopeUser, UserID: userID, Name: "gh", URL: "https://mcp.example.test",
+		Transport: TransportStreamableHTTP, AuthType: AuthTypeBearer,
 	}); err == nil {
 		t.Fatal("bearer without token must fail")
 	}
 	// No vault configured.
-	if _, err := NewService(newFakeDB(), nil).Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "http://x", AuthType: AuthTypeBearer, Token: "t",
+	svc.bindVault = nil
+	if _, err := svc.Create(ctx, CreateInput{
+		PluginID: pluginID, Scope: ScopeUser, UserID: userID, Name: "gh", URL: "https://mcp.example.test",
+		Transport: TransportStreamableHTTP, AuthType: AuthTypeBearer, Token: "t",
 	}); err == nil {
 		t.Fatal("bearer without vault must fail")
 	}
 }
 
 func TestCreateScopeOwnerValidation(t *testing.T) {
-	svc := NewService(newFakeDB(), newFakeVault())
 	cases := []struct {
 		name    string
 		in      CreateInput
@@ -656,56 +721,11 @@ func TestCreateScopeOwnerValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := svc.Create(context.Background(), tc.in)
+			err := validateScopeOwner(tc.in.Scope, tc.in.UserID, tc.in.AgentID)
 			if tc.wantErr != (err != nil) {
-				t.Fatalf("Create(%+v) err=%v, wantErr=%v", tc.in, err, tc.wantErr)
+				t.Fatalf("scope validation(%+v) err=%v, wantErr=%v", tc.in, err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestResolveForContextDedupPrecedence(t *testing.T) {
-	db := newFakeDB()
-	// The SQL orders most-specific-first; the service keeps the first per name.
-	// A disabled row (6) must not shadow the enabled system "other" (5), and a
-	// disabled-only name (7) stays visible to the management view but not to
-	// the runner.
-	db.forCtx = []sqlc.McpServer{
-		{ID: "1", Scope: ScopeUserAgent, Name: "gh", UserID: pgnull.Text("u1"), AgentID: pgnull.Text("a1"), Enabled: true},
-		{ID: "2", Scope: ScopeUser, Name: "gh", UserID: pgnull.Text("u1"), Enabled: true},
-		{ID: "6", Scope: ScopeUser, Name: "other", UserID: pgnull.Text("u1"), Enabled: false},
-		{ID: "7", Scope: ScopeUser, Name: "off", UserID: pgnull.Text("u1"), Enabled: false},
-		{ID: "3", Scope: ScopeSystemAgent, Name: "gh", AgentID: pgnull.Text("a1"), Enabled: true},
-		{ID: "4", Scope: ScopeSystem, Name: "gh", Enabled: true},
-		{ID: "5", Scope: ScopeSystem, Name: "other", Enabled: true},
-	}
-	svc := NewService(db, newFakeVault())
-	managed, err := svc.ResolveForContextWithShadowed(context.Background(), "u1", "a1")
-	if err != nil {
-		t.Fatalf("ResolveForContextWithShadowed: %v", err)
-	}
-	if len(managed) != 3 || managed[2].ID != "7" || managed[2].Enabled {
-		t.Fatalf("management view: want gh, other, off(disabled); got %+v", managed)
-	}
-	if managed[1].ID != "5" {
-		t.Fatalf("disabled user row must not shadow system other; got %+v", managed[1])
-	}
-	regs, err := svc.ResolveForContext(context.Background(), "u1", "a1")
-	if err != nil {
-		t.Fatalf("ResolveForContext: %v", err)
-	}
-	if len(regs) != 2 {
-		t.Fatalf("want 2 deduped servers, got %d", len(regs))
-	}
-	byName := map[string]Registration{}
-	for _, r := range regs {
-		byName[r.Name] = r
-	}
-	if byName["gh"].ID != "1" {
-		t.Fatalf("gh precedence: kept id %q, want user_agent id 1", byName["gh"].ID)
-	}
-	if byName["other"].ID != "5" {
-		t.Fatalf("other: kept id %q, want 5", byName["other"].ID)
 	}
 }
 
@@ -765,6 +785,12 @@ func catalogRow(d *fakeDB, id, name string, toolNames ...string) {
 	seedRow(d, id, name, StatusOK, now, tools)
 }
 
+func providerRegistration(d *fakeDB, id, namespace string) Registration {
+	reg := registrationFromRow(d.rows[id])
+	reg.Namespace = namespace
+	return reg
+}
+
 func TestToolProviderUsesPersistedCatalogWithoutConnecting(t *testing.T) {
 	db := newFakeDB()
 	catalogRow(db, "srv1", "gh", "create_issue")
@@ -776,19 +802,20 @@ func TestToolProviderUsesPersistedCatalogWithoutConnecting(t *testing.T) {
 	}
 	provider := NewToolProvider(svc)
 
-	tools := provider.ToolsForContext(context.Background(), "u1", "a1")
+	tools := provider.toolsForRegistrations(context.Background(), []Registration{providerRegistration(db, "srv1", "gh")}, true, "u1")
 	if connects != 0 {
 		t.Fatalf("connects = %d, want 0 with a fresh persisted catalog", connects)
 	}
-	if len(tools) != 1 || tools[0].Definition().Name != "mcp__gh__create_issue" {
+	if len(tools) != 1 || tools[0].Definition().Name != "gh__create_issue" {
 		t.Fatalf("tools = %#v, want the cataloged tool", tools)
 	}
 }
 
 func TestToolProviderStaleCatalogTriggersColdDiscovery(t *testing.T) {
-	db := newFakeDB()
-	seedRow(db, "srv1", "gh", StatusOK, time.Now().UTC().Add(-25*time.Hour), []CatalogTool{{Name: "old_tool", InputSchema: map[string]any{"type": "object"}}})
-	svc := NewService(db, newFakeVault())
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeNone)
+	reg.Status = StatusOK
+	reg.ProbedAt = time.Now().UTC().Add(-25 * time.Hour)
+	reg.Tools = []CatalogTool{{Name: "old_tool", InputSchema: map[string]any{"type": "object"}}}
 	svc.probeTimeout = time.Second
 	connects := 0
 	svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
@@ -799,15 +826,19 @@ func TestToolProviderStaleCatalogTriggersColdDiscovery(t *testing.T) {
 	}
 	provider := NewToolProvider(svc)
 
-	tools := provider.ToolsForContext(context.Background(), "u1", "a1")
+	tools := provider.toolsForRegistrations(ctx, []Registration{reg}, true, userID)
 	if connects != 1 {
 		t.Fatalf("connects = %d, want 1 cold discovery", connects)
 	}
-	if len(tools) != 1 || tools[0].Definition().Name != "mcp__gh__new_tool" {
+	if len(tools) != 1 || tools[0].Definition().Name != "gh__new_tool" {
 		t.Fatalf("tools = %#v, want tools from the refreshed catalog", tools)
 	}
-	if len(db.probeResults) != 1 || db.probeResults[0].Status != StatusOK {
-		t.Fatalf("cold discovery result not persisted: %+v", db.probeResults)
+	stateCount := 0
+	if err := svc.pool.QueryRow(t.Context(), `SELECT count(*) FROM mcp_connection_state WHERE config_id = $1::uuid`, reg.ID).Scan(&stateCount); err != nil {
+		t.Fatal(err)
+	}
+	if stateCount != 1 {
+		t.Fatalf("cold discovery result not persisted: %d rows", stateCount)
 	}
 }
 
@@ -819,18 +850,13 @@ func TestToolProviderNeedsAuthSkippedWithoutConnecting(t *testing.T) {
 		t.Fatal("needs_auth server must be skipped without connecting")
 		return nil, nil
 	}
-	if tools := NewToolProvider(svc).ToolsForContext(context.Background(), "u1", "a1"); len(tools) != 0 {
+	if tools := NewToolProvider(svc).toolsForRegistrations(context.Background(), []Registration{providerRegistration(db, "srv1", "gh")}, true, "u1"); len(tools) != 0 {
 		t.Fatalf("tools = %d, want none", len(tools))
 	}
 }
 
 func TestToolProviderDiscoversServersConcurrently(t *testing.T) {
-	db := newFakeDB()
-	for i, id := range []string{"srv1", "srv2", "srv3"} {
-		seedRow(db, id, id, StatusUnknown, time.Time{}, nil)
-		_ = i
-	}
-	svc := NewService(db, newFakeVault())
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeNone)
 	svc.probeTimeout = time.Second
 	var current atomic.Int32
 	var maxSeen atomic.Int32
@@ -852,7 +878,28 @@ func TestToolProviderDiscoversServersConcurrently(t *testing.T) {
 	provider := NewToolProvider(svc)
 	provider.concurrency = 3
 
-	tools := provider.ToolsForContext(context.Background(), "u1", "a1")
+	regs := []Registration{reg}
+	for i := 1; i < 3; i++ {
+		scope, ownerUser, ownerAgent := ScopeUser, userID, ""
+		switch i {
+		case 1:
+			scope, ownerAgent = ScopeUserAgent, "oauth-test-agent"
+		case 2:
+			scope, ownerUser, ownerAgent = ScopeSystemAgent, "", "oauth-test-agent"
+		}
+		copy, err := svc.Create(ctx, CreateInput{
+			PluginID: reg.PluginID, Scope: scope, UserID: ownerUser, AgentID: ownerAgent,
+			Name: fmt.Sprintf("gh%d", i), URL: "https://mcp.example.test",
+			Transport: TransportStreamableHTTP, AuthType: AuthTypeNone,
+		})
+		if err != nil {
+			t.Fatalf("Create concurrent config %d: %v", i, err)
+		}
+		copy.Name = fmt.Sprintf("gh%d", i)
+		copy.Namespace = reg.Namespace
+		regs = append(regs, copy)
+	}
+	tools := provider.toolsForRegistrations(ctx, regs, true, userID)
 	if len(tools) != 3 {
 		t.Fatalf("tools = %d, want 3", len(tools))
 	}
@@ -862,18 +909,21 @@ func TestToolProviderDiscoversServersConcurrently(t *testing.T) {
 }
 
 func TestToolProviderFailedDiscoveryPersistsErrorAndSkips(t *testing.T) {
-	db := newFakeDB()
-	seedRow(db, "srv1", "broken", StatusUnknown, time.Time{}, nil)
-	svc := NewService(db, newFakeVault())
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeNone)
+	reg.Name, reg.Namespace, reg.Status, reg.ProbedAt, reg.Tools = "broken", "broken", StatusUnknown, time.Time{}, nil
 	svc.probeTimeout = time.Second
 	client := &fakeMCPClient{listErr: errors.New("list failed")}
 	svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) { return client, nil }
 
-	if tools := NewToolProvider(svc).ToolsForContext(context.Background(), "u1", "a1"); len(tools) != 0 {
+	if tools := NewToolProvider(svc).toolsForRegistrations(ctx, []Registration{reg}, true, userID); len(tools) != 0 {
 		t.Fatalf("tools = %d, want none after discovery failure", len(tools))
 	}
-	if len(db.probeResults) != 1 || db.probeResults[0].Status != StatusError {
-		t.Fatalf("discovery failure not persisted: %+v", db.probeResults)
+	var status string
+	if err := svc.pool.QueryRow(t.Context(), `SELECT status FROM mcp_connection_state WHERE config_id = $1::uuid`, reg.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusError {
+		t.Fatalf("discovery failure not persisted: %q", status)
 	}
 	if got := client.closeCount.Load(); got != 1 {
 		t.Fatalf("failed discovery close count = %d, want 1 (probe closes its client)", got)
@@ -890,19 +940,20 @@ func TestToolProviderSkipsCollidingToolNames(t *testing.T) {
 		return nil, nil
 	}
 
-	tools := NewToolProvider(svc).ToolsForContext(context.Background(), "u1", "a1")
+	tools := NewToolProvider(svc).toolsForRegistrations(context.Background(), []Registration{
+		providerRegistration(db, "srv1", "git_hub"),
+		providerRegistration(db, "srv2", "git_hub"),
+	}, false, "u1")
 	if len(tools) != 1 {
 		t.Fatalf("tools = %d, want one duplicate skipped", len(tools))
 	}
-	if got := tools[0].Definition().Name; got != "mcp__git_hub__foo_bar" {
+	if got := tools[0].Definition().Name; got != "git_hub__foo_bar" {
 		t.Fatalf("tool name = %q", got)
 	}
 }
 
 func TestProbeSuccessPersistsToolsAndStatus(t *testing.T) {
-	db := newFakeDB()
-	db.rows["srv1"] = sqlc.McpServer{ID: "srv1", Scope: ScopeUser, UserID: pgnull.Text("u1"), Name: "gh", Url: "https://mcp.example.com", Transport: TransportStreamableHTTP, AuthType: AuthTypeNone, Enabled: true}
-	svc := NewService(db, newFakeVault())
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeNone)
 	svc.probeTimeout = time.Second
 	svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
 		return &fakeMCPClient{tools: []*mcpsdk.Tool{
@@ -910,8 +961,7 @@ func TestProbeSuccessPersistsToolsAndStatus(t *testing.T) {
 		}}, nil
 	}
 
-	reg := registrationFromRow(db.rows["srv1"])
-	updated, err := svc.Probe(context.Background(), reg, CredentialOwner{})
+	updated, err := svc.Probe(ctx, reg, svc.CredentialOwner(reg, userID))
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
@@ -930,22 +980,19 @@ func TestProbeSuccessPersistsToolsAndStatus(t *testing.T) {
 	if got, ok := updated.Tools[0].Annotations["readOnlyHint"].(bool); !ok || !got {
 		t.Fatalf("annotations = %#v, want readOnlyHint true", updated.Tools[0].Annotations)
 	}
-	if got := registrationFromRow(db.rows["srv1"]).Version(); got != reg.Version() {
-		t.Fatal("probe must not change Version()")
+	if updated.ConfigRevision != reg.ConfigRevision {
+		t.Fatal("probe must not change config revision")
 	}
 }
 
 func TestProbeFailurePersistsRedactedError(t *testing.T) {
-	db := newFakeDB()
-	db.rows["srv1"] = sqlc.McpServer{ID: "srv1", Scope: ScopeUser, Name: "gh", Url: "https://mcp.example.com", Transport: TransportStreamableHTTP, AuthType: AuthTypeNone, Enabled: true}
-	svc := NewService(db, newFakeVault())
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeNone)
 	svc.probeTimeout = time.Second
 	svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
 		return nil, fmt.Errorf("dial https://user:pass@example.com/mcp?token=secret failed")
 	}
 
-	reg := registrationFromRow(db.rows["srv1"])
-	updated, err := svc.Probe(context.Background(), reg, CredentialOwner{})
+	updated, err := svc.Probe(ctx, reg, svc.CredentialOwner(reg, userID))
 	if err != nil {
 		t.Fatalf("Probe must not fail the caller: %v", err)
 	}
@@ -958,8 +1005,8 @@ func TestProbeFailurePersistsRedactedError(t *testing.T) {
 			t.Fatalf("probe error leaked %q: %s", secret, msg)
 		}
 	}
-	if !strings.Contains(msg, "example.com/mcp") {
-		t.Fatalf("probe error lost its redacted endpoint: %s", msg)
+	if msg != "MCP probe failed" {
+		t.Fatalf("probe error = %q, want bounded error", msg)
 	}
 }
 
@@ -970,15 +1017,13 @@ func TestIsCredentialRejectionIncludesOAuthHint(t *testing.T) {
 }
 
 func TestProbeCredentialRejectionSetsNeedsAuth(t *testing.T) {
-	db := newFakeDB()
-	db.rows["srv1"] = sqlc.McpServer{ID: "srv1", Scope: ScopeUser, Name: "gh", Url: "https://mcp.example.com", Transport: TransportStreamableHTTP, AuthType: AuthTypeBearer, Enabled: true}
-	svc := NewService(db, newFakeVault())
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeBearer)
 	svc.probeTimeout = time.Second
 	svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
 		return &fakeMCPClient{listErr: errors.New("tools/list: Unauthorized")}, nil
 	}
 
-	updated, err := svc.Probe(context.Background(), registrationFromRow(db.rows["srv1"]), CredentialOwner{})
+	updated, err := svc.Probe(ctx, reg, svc.CredentialOwner(reg, userID))
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
@@ -987,11 +1032,52 @@ func TestProbeCredentialRejectionSetsNeedsAuth(t *testing.T) {
 	}
 }
 
+func TestProbeSkipsOAuthWhenObservationNeedsAuth(t *testing.T) {
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeOAuth)
+	called := false
+	svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
+		called = true
+		return nil, errors.New("dead refresh token must not be retried")
+	}
+	authority, ok := authz.AuthorityFromContext(ctx)
+	if !ok {
+		t.Fatal("test context has no authority")
+	}
+	if err := svc.persistCommonStatus(ctx, reg, svc.CredentialOwner(reg, userID), StatusNeedsAuth, credentialRejectedHint); err != nil {
+		t.Fatalf("seed needs_auth observation: %v", err)
+	}
+	access, err := NewAccess(svc, nil, nil).Begin(authority)
+	if err != nil {
+		t.Fatalf("begin MCP access: %v", err)
+	}
+
+	updated, err := access.Probe(ctx, reg.ID, ScopeUser, "")
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if called {
+		t.Fatal("Probe connected with a terminal needs_auth observation")
+	}
+	if updated.Status != StatusNeedsAuth {
+		t.Fatalf("status = %q, want needs_auth", updated.Status)
+	}
+	updated, err = access.Probe(ctx, reg.ID, ScopeUser, "")
+	if err != nil {
+		t.Fatalf("repeat Probe: %v", err)
+	}
+	if called {
+		t.Fatal("repeat Probe connected with a terminal needs_auth observation")
+	}
+	if updated.Status != StatusNeedsAuth {
+		t.Fatalf("repeat status = %q, want needs_auth", updated.Status)
+	}
+}
+
 func TestExecuteContentConvertsImageBlocks(t *testing.T) {
 	proxy := &toolProxy{
-		reg:        Registration{Name: "gh"},
+		reg:        Registration{Name: "gh", Namespace: "gh"},
 		remoteName: "render",
-		def:        pkgtools.Definition{Name: "mcp__gh__render"},
+		def:        pkgtools.Definition{Name: "gh__render"},
 		svc:        NewService(newFakeDB(), newFakeVault()),
 	}
 	svc := proxy.svc
@@ -1038,9 +1124,9 @@ func TestCallTimeoutReturnsContextErrorWithoutStatusChange(t *testing.T) {
 	db := newFakeDB()
 	db.rows["srv1"] = sqlc.McpServer{ID: "srv1", Scope: ScopeUser, Name: "gh", Url: "https://mcp.example.com", Enabled: true}
 	proxy := &toolProxy{
-		reg:        Registration{ID: "srv1", Name: "gh", Metadata: map[string]any{"call_timeout_seconds": float64(1)}},
+		reg:        Registration{ID: "srv1", Name: "gh", Namespace: "gh", Metadata: map[string]any{"call_timeout_seconds": float64(1)}},
 		remoteName: "slow",
-		def:        pkgtools.Definition{Name: "mcp__gh__slow"},
+		def:        pkgtools.Definition{Name: "gh__slow"},
 		svc:        NewService(db, newFakeVault()),
 	}
 	proxy.svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
@@ -1064,25 +1150,30 @@ func TestCallTimeoutReturnsContextErrorWithoutStatusChange(t *testing.T) {
 }
 
 func TestCredentialRejectionMarksNeedsAuth(t *testing.T) {
-	db := newFakeDB()
-	db.rows["srv1"] = sqlc.McpServer{ID: "srv1", Scope: ScopeUser, Name: "gh", Url: "https://mcp.example.com", Enabled: true}
+	svc, reg, userID, ctx := commonMCPRegistration(t, AuthTypeNone)
+	reg.Name, reg.Namespace = "gh", "gh"
 	proxy := &toolProxy{
-		reg:        Registration{ID: "srv1", Name: "gh"},
+		reg:        reg,
 		remoteName: "list",
-		def:        pkgtools.Definition{Name: "mcp__gh__list"},
-		svc:        NewService(db, newFakeVault()),
+		def:        pkgtools.Definition{Name: "gh__list"},
+		svc:        svc,
 	}
 	proxy.svc.connect = func(context.Context, Registration, CredentialOwner) (RemoteClient, error) {
 		return &fakeMCPClient{callErr: errors.New("tools/call: Forbidden")}, nil
 	}
 
-	_, err := proxy.Execute(context.Background(), nil)
+	_, err := proxy.Execute(ctx, nil)
 	if err == nil || !strings.Contains(err.Error(), "credential rejected; reconnect in the Web UI") {
 		t.Fatalf("Execute error = %v, want credential-rejection guidance", err)
 	}
-	if len(db.statusUpdates) != 1 || db.statusUpdates[0].Status != StatusNeedsAuth {
-		t.Fatalf("status updates = %+v, want needs_auth", db.statusUpdates)
+	var status string
+	if err := svc.pool.QueryRow(t.Context(), `SELECT status FROM mcp_connection_state WHERE config_id = $1::uuid AND credential_user_id IS NULL`, reg.ID).Scan(&status); err != nil {
+		t.Fatal(err)
 	}
+	if status != StatusNeedsAuth {
+		t.Fatalf("status = %q, want needs_auth", status)
+	}
+	_ = userID
 }
 
 func TestCallTimeoutDefaultsAndClamps(t *testing.T) {
@@ -1121,75 +1212,110 @@ func TestValidateCredentialMode(t *testing.T) {
 }
 
 func TestHTTPDeleteIsIdempotentButCASDeleteConflictsWhenAbsent(t *testing.T) {
-	svc := NewService(newFakeDB(), newFakeVault())
-	if err := svc.Delete(context.Background(), "missing", ScopeUser, "u1", ""); err != nil {
+	svc, userID, _, ctx := commonMCPTestService(t)
+	missing := uuid.NewString()
+	if err := svc.Delete(ctx, missing, ScopeUser, userID, ""); err != nil {
 		t.Fatalf("unconditional delete absent registration: %v", err)
 	}
-	if err := svc.DeleteIfVersion(context.Background(), "missing", ScopeUser, "u1", "", "version"); !errors.Is(err, ErrVersionConflict) {
+	if err := svc.DeleteIfVersion(ctx, missing, ScopeUser, userID, "", "version"); !errors.Is(err, ErrVersionConflict) {
 		t.Fatalf("CAS delete absent registration = %v, want ErrVersionConflict", err)
 	}
 }
 
 func TestDeletePurgesCredential(t *testing.T) {
-	db := newFakeDB()
-	vlt := newFakeVault()
-	svc := NewService(db, vlt)
-	reg, err := svc.Create(context.Background(), CreateInput{
-		Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "http://x",
+	svc, userID, pluginID, ctx := commonMCPTestService(t)
+	reg, err := svc.Create(ctx, CreateInput{
+		PluginID: pluginID, Scope: ScopeUser, UserID: userID, Name: "gh", URL: "https://mcp.example.test",
 		AuthType: AuthTypeBearer, Token: "tok",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, ok := vlt.stored[vaultKey(ScopeUser, "u1", "", reg.CredentialRef)]; !ok {
-		t.Fatal("precondition: token should be stored")
+	if got, err := svc.vault.GetScoped(ctx, ScopeUser, userID, "", reg.CredentialRef); err != nil || got != "tok" {
+		t.Fatalf("precondition: token should be stored, got %q/%v", got, err)
 	}
-	if err := svc.Delete(context.Background(), reg.ID, ScopeUser, "u1", ""); err != nil {
+	if err := svc.Delete(ctx, reg.ID, ScopeUser, userID, ""); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, ok := vlt.stored[vaultKey(ScopeUser, "u1", "", reg.CredentialRef)]; ok {
+	if got, err := svc.vault.GetScoped(ctx, ScopeUser, userID, "", reg.CredentialRef); err == nil && got != "" {
 		t.Fatal("Delete must purge the vault credential")
 	}
-	if len(db.deleted) != 1 || db.deleted[0] != reg.ID {
-		t.Fatalf("row not deleted: %v", db.deleted)
+	var count int
+	if err := svc.pool.QueryRow(t.Context(), `SELECT count(*) FROM plugin_config WHERE id = $1::uuid`, reg.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("common config row not deleted: %d", count)
 	}
 }
 
-// Overrides are keyed by name across every scope, so cleanup on rename or
-// delete must wait until the last registration with that name goes away.
-func TestOverrideCleanupSkippedWhileSameNameRemains(t *testing.T) {
-	db := newFakeDB()
-	svc := NewService(db, newFakeVault())
-	ctx := context.Background()
-	sys, err := svc.Create(ctx, CreateInput{Scope: ScopeSystem, Name: "gh", URL: "http://x", AuthType: AuthTypeNone})
+// Tool policy identity is the stable plugin/local pair. Renaming a config or
+// deleting one config must not rewrite or remove policy rows for that plugin.
+func TestPluginToolOverridesSurviveConfigRenameAndDelete(t *testing.T) {
+	svc, userID, pluginID, ctx := commonMCPTestService(t)
+	q := sqlc.New(svc.pool)
+	create := func(scope, ownerUser string) Registration {
+		t.Helper()
+		reg, err := svc.Create(ctx, CreateInput{
+			PluginID: pluginID, Scope: scope, UserID: ownerUser, Name: "gh", URL: "https://mcp.example.test",
+			Transport: TransportStreamableHTTP, AuthType: AuthTypeNone,
+		})
+		if err != nil {
+			t.Fatalf("Create %s config: %v", scope, err)
+		}
+		return reg
+	}
+	system := create(ScopeSystem, "")
+	user := create(ScopeUser, userID)
+	const localTool = "list"
+	for _, arg := range []sqlc.UpsertPluginToolOverrideParams{
+		{PluginID: pgnull.Text(pluginID), LocalToolName: pgnull.Text(localTool), Scope: agent.ToolOverrideScopeSystem, Enabled: false},
+		{PluginID: pgnull.Text(pluginID), LocalToolName: pgnull.Text(localTool), Scope: agent.ToolOverrideScopeUser, UserID: pgnull.Text(userID), Enabled: true},
+	} {
+		if _, err := q.UpsertPluginToolOverride(ctx, arg); err != nil {
+			t.Fatalf("seed plugin override %+v: %v", arg, err)
+		}
+	}
+
+	newName := "renamed"
+	updated, err := svc.Update(ctx, UpdateInput{ID: user.ID, Scope: ScopeUser, UserID: userID, Name: &newName})
 	if err != nil {
-		t.Fatalf("Create system: %v", err)
+		t.Fatalf("rename common config: %v", err)
 	}
-	usr, err := svc.Create(ctx, CreateInput{Scope: ScopeUser, UserID: "u1", Name: "gh", URL: "http://y", AuthType: AuthTypeNone})
+	if updated.Name != newName || updated.PluginID != pluginID {
+		t.Fatalf("renamed registration = %#v", updated)
+	}
+
+	rows, err := q.ListToolOverridesForAgentContext(ctx, sqlc.ListToolOverridesForAgentContextParams{
+		UserID: pgnull.Text(userID), AgentID: pgnull.Text("oauth-test-agent"),
+	})
 	if err != nil {
-		t.Fatalf("Create user: %v", err)
+		t.Fatalf("list plugin overrides after rename: %v", err)
 	}
-	newName := "gh2"
-	if _, err := svc.Update(ctx, UpdateInput{ID: usr.ID, Scope: ScopeUser, UserID: "u1", Name: &newName}); err != nil {
-		t.Fatalf("Update: %v", err)
+	assertPluginOverrideRows(t, rows, pluginID, localTool, 2)
+
+	if err := svc.Delete(ctx, system.ID, ScopeSystem, "", ""); err != nil {
+		t.Fatalf("delete system config: %v", err)
 	}
-	if len(db.renames) != 0 {
-		t.Fatalf("rename must not migrate overrides still governing the system gh: %+v", db.renames)
+	rows, err = q.ListToolOverridesForAgentContext(ctx, sqlc.ListToolOverridesForAgentContextParams{
+		UserID: pgnull.Text(userID), AgentID: pgnull.Text("oauth-test-agent"),
+	})
+	if err != nil {
+		t.Fatalf("list plugin overrides after delete: %v", err)
 	}
-	if err := svc.Delete(ctx, sys.ID, ScopeSystem, "", ""); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	if len(db.deletedPrefixes) != 1 || db.deletedPrefixes[0] != "mcp__gh__" {
-		t.Fatalf("last gh gone: want override cleanup, got %v", db.deletedPrefixes)
-	}
+	assertPluginOverrideRows(t, rows, pluginID, localTool, 2)
 }
 
-func TestNamespacedToolName(t *testing.T) {
-	if got := NamespacedToolName("git hub", "create-issue"); got != "mcp__git_hub__create_issue" {
-		t.Fatalf("NamespacedToolName = %q", got)
+func assertPluginOverrideRows(t *testing.T, rows []sqlc.ToolOverride, pluginID, localTool string, want int) {
+	t.Helper()
+	got := 0
+	for _, row := range rows {
+		if row.PluginID.Valid && row.PluginID.String == pluginID && row.LocalToolName.Valid && row.LocalToolName.String == localTool {
+			got++
+		}
 	}
-	if got := NamespacedToolName("!!!", "///"); got != "mcp__server__tool" {
-		t.Fatalf("NamespacedToolName fallback = %q", got)
+	if got != want {
+		t.Fatalf("plugin override rows = %d, want %d, rows=%+v", got, want, rows)
 	}
 }
 
@@ -1222,27 +1348,7 @@ func TestIsCredentialRejectionSeesThroughConnectionFailure(t *testing.T) {
 	if isCredentialRejection(connectionError(reg, errors.New("dial tcp: connection refused"))) {
 		t.Fatal("a wrapped dial failure must not classify as a credential rejection")
 	}
-}
-
-func TestSplitToolName(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		server, tool string
-		ok           bool
-	}{
-		{"mcp__github__create_issue", "github", "create_issue", true},
-		{"mcp__git_hub__foo_bar", "git_hub", "foo_bar", true},
-		{"mcp__a__b__c", "a", "b__c", true},
-		{"mcp__x", "", "", false},
-		{"mcp__", "", "", false},
-		{"mcp__server__", "", "", false},
-		{"mcp____tool", "", "", false},
-		{"goal_create", "", "", false},
-		{"", "", "", false},
-	} {
-		server, tool, ok := SplitToolName(tc.name)
-		if server != tc.server || tool != tc.tool || ok != tc.ok {
-			t.Errorf("SplitToolName(%q) = %q, %q, %v; want %q, %q, %v", tc.name, server, tool, ok, tc.server, tc.tool, tc.ok)
-		}
+	if !isCredentialRejection(connectionError(reg, errors.New(`oauth2: cannot fetch token: 400 Bad Request {"error":"invalid_grant"}`))) {
+		t.Fatal("an OAuth invalid_grant refresh failure must classify as a credential rejection")
 	}
 }

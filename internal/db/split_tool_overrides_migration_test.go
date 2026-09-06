@@ -32,14 +32,8 @@ var retiredToolNames = []string{
 // The assertion that matters is the second one: deleting by name must not reach
 // a name this change did not retire.
 func TestSplitToolOverridesDeletesOnlyTheRetiredNames(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, splitToolOverridesBeforeMigration); err != nil {
-		t.Fatalf("restore pre-split schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, splitToolOverridesBeforeMigration)
+	ctx := t.Context()
 	for _, name := range retiredToolNames {
 		seedToolOverride(t, db, name, false)
 	}
@@ -73,14 +67,8 @@ var settingsToolNamesRetiredByRename = []string{
 }
 
 func TestSettingsToolRenameDeletesOnlyRetiredNames(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, settingsToolRenameBeforeMigration); err != nil {
-		t.Fatalf("restore pre-settings-rename schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, settingsToolRenameBeforeMigration)
+	ctx := t.Context()
 	if got := len(settingsToolNamesRetiredByRename); got != 34 {
 		t.Fatalf("retired Settings tool inventory = %d, want 34", got)
 	}
@@ -140,14 +128,8 @@ const (
 )
 
 func TestWebFetchRenameDeletesOnlyRetiredName(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, webFetchRenameBeforeMigration); err != nil {
-		t.Fatalf("restore pre-web-fetch-rename schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, webFetchRenameBeforeMigration)
+	ctx := t.Context()
 	seedToolOverride(t, db, "webfetch", false)
 	seedToolOverride(t, db, "web_fetch", true)
 	seedToolOverride(t, db, "web_search", false)
@@ -165,14 +147,8 @@ const (
 )
 
 func TestWebToolsRemovalDeletesOnlyRetiredNames(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := reflectWatermarkProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, webToolsRemovalBeforeMigration); err != nil {
-		t.Fatalf("restore pre-web-tools-removal schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, webToolsRemovalBeforeMigration)
+	ctx := t.Context()
 	seedToolOverride(t, db, "web_fetch", true)
 	seedToolOverride(t, db, "web_search", false)
 	seedToolOverride(t, db, "library_search", false)

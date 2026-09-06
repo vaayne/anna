@@ -21,14 +21,8 @@ const weixinRegistrationPollInterval = 2
 // failure (HTTP 500).
 var errWeixinConfigInvalid = errors.New("invalid weixin channel config")
 
-// validateWeixinChannelID enforces the WeChat singleton invariant: one iLink
-// account cannot back multiple independent bots, so the only valid weixin
-// channel ID is the canonical "weixin".
-func validateWeixinChannelID(id string) error {
-	if id != pkgchannel.PlatformWeixin {
-		return errors.New("weixin supports only the default channel id weixin")
-	}
-	return nil
+type weixinRegistrationBeginRequest struct {
+	ChannelID string `json:"channel_id"`
 }
 
 type weixinRegistrationPollRequest struct {
@@ -44,7 +38,21 @@ func (s *Server) BeginWeixinRegistration(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if _, err := access.ManageChannel(pkgchannel.PlatformWeixin); err != nil {
+	var req weixinRegistrationBeginRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	channelID := strings.TrimSpace(req.ChannelID)
+	if channelID == "" {
+		channelID = generateChannelID(pkgchannel.PlatformWeixin)
+	}
+	operation, err := access.ManageChannel(channelID)
+	if err != nil {
+		s.writeControlPlaneError(w, err)
+		return
+	}
+	if err := s.validateWeixinTarget(r.Context(), operation); err != nil {
 		s.writeControlPlaneError(w, err)
 		return
 	}
@@ -54,6 +62,7 @@ func (s *Server) BeginWeixinRegistration(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeData(w, http.StatusOK, map[string]any{
+		"channel_id":    channelID,
 		"qrcode":        qr.QRCode,
 		"qr_image_url":  qr.QRCodeImgContent,
 		"poll_interval": weixinRegistrationPollInterval,
@@ -73,27 +82,28 @@ func (s *Server) PollWeixinRegistration(w http.ResponseWriter, r *http.Request) 
 	req.QRCode = strings.TrimSpace(req.QRCode)
 	req.ChannelID = strings.TrimSpace(req.ChannelID)
 	req.AgentID = strings.TrimSpace(req.AgentID)
-	if req.ChannelID == "" {
-		req.ChannelID = pkgchannel.PlatformWeixin
-	}
 	if req.QRCode == "" {
 		writeError(w, http.StatusBadRequest, "qrcode is required")
 		return
 	}
-	if err := validateWeixinChannelID(req.ChannelID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if req.ChannelID == "" {
+		writeError(w, http.StatusBadRequest, "channel_id is required")
 		return
 	}
 	if req.AgentID == "" {
 		writeError(w, http.StatusBadRequest, "agent_id is required; bind this WeChat channel to an agent")
 		return
 	}
-	prospective := config.Channel{ID: pkgchannel.PlatformWeixin, Type: pkgchannel.PlatformWeixin, AgentID: req.AgentID}
-	operation, err := access.ManageChannel(pkgchannel.PlatformWeixin)
+	operation, err := access.ManageChannel(req.ChannelID)
 	if err != nil {
 		s.writeControlPlaneError(w, err)
 		return
 	}
+	if err := s.validateWeixinTarget(r.Context(), operation); err != nil {
+		s.writeControlPlaneError(w, err)
+		return
+	}
+	prospective := config.Channel{ID: req.ChannelID, Type: pkgchannel.PlatformWeixin, AgentID: req.AgentID}
 	agent, err := access.LookupAgent(r.Context(), req.AgentID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "agent_id must reference an existing agent")
@@ -126,7 +136,7 @@ func (s *Server) PollWeixinRegistration(w http.ResponseWriter, r *http.Request) 
 	if name == "" {
 		name = "WeChat"
 	}
-	saved, err := s.saveWeixinSingletonChannel(r.Context(), operation, name, req.AgentID, true, req.Config, status)
+	saved, err := s.saveWeixinChannel(r.Context(), operation, name, req.AgentID, true, req.Config, status)
 	if errors.Is(err, errWeixinConfigInvalid) {
 		writeError(w, http.StatusBadRequest, "invalid channel config")
 		return
@@ -138,20 +148,52 @@ func (s *Server) PollWeixinRegistration(w http.ResponseWriter, r *http.Request) 
 	writeData(w, http.StatusOK, map[string]any{"status": "created", "channel": channelToView(saved)})
 }
 
-// saveWeixinSingletonChannel upserts the canonical "weixin" channel with the
-// iLink credentials from status, merging cfgPatch first so the credentials
-// always win. name and agentID are applied only when non-empty; enable only
-// ever turns the channel on (a confirmed registration enables it; the
-// identity-link path passes false to leave the existing state untouched).
-func (s *Server) saveWeixinSingletonChannel(ctx context.Context, operation *controlplane.ChannelManagement, name, agentID string, enable bool, cfgPatch map[string]any, status WeixinQRCodeStatus) (config.Channel, error) {
-	ch, err := operation.Channel(ctx, pkgchannel.PlatformWeixin)
+// validateWeixinTarget permits an existing ordinary channel row named
+// "weixin" for compatibility, while rejecting a target that belongs to a
+// different platform before any credentials can be merged.
+func (s *Server) validateWeixinTarget(ctx context.Context, operation *controlplane.ChannelManagement) error {
+	ch, err := operation.Channel(ctx, operation.ID())
+	if err == nil {
+		channelType := ch.Type
+		if channelType == "" {
+			channelType = ch.ID
+		}
+		if channelType != pkgchannel.PlatformWeixin {
+			return &controlplane.ValidationError{Msg: fmt.Sprintf("channel %q is not a weixin channel", ch.ID)}
+		}
+		return nil
+	}
+	if !isNotFound(err) {
+		return fmt.Errorf("load weixin channel: %w", err)
+	}
+	return nil
+}
+
+// saveWeixinChannel writes credentials to the exact channel selected by the
+// registration request. Existing rows are merged after their type was checked;
+// missing rows are created with the requested ID and Weixin type.
+func (s *Server) saveWeixinChannel(ctx context.Context, operation *controlplane.ChannelManagement, name, agentID string, enable bool, cfgPatch map[string]any, status WeixinQRCodeStatus) (config.Channel, error) {
+	if operation == nil {
+		return config.Channel{}, errors.New("missing authorized channel operation")
+	}
+	channelID := operation.ID()
+	ch, err := operation.Channel(ctx, channelID)
 	create := isNotFound(err)
 	if err != nil && !create {
 		return config.Channel{}, fmt.Errorf("load weixin channel: %w", err)
 	}
+	if !create {
+		channelType := ch.Type
+		if channelType == "" {
+			channelType = ch.ID
+		}
+		if channelType != pkgchannel.PlatformWeixin {
+			return config.Channel{}, &controlplane.ValidationError{Msg: fmt.Sprintf("channel %q is not a weixin channel", ch.ID)}
+		}
+	}
 	cfg := map[string]any{}
 	if create {
-		ch = config.Channel{ID: pkgchannel.PlatformWeixin, Type: pkgchannel.PlatformWeixin, Enabled: true}
+		ch = config.Channel{ID: channelID, Type: pkgchannel.PlatformWeixin, Enabled: true}
 	} else if ch.Config != "" {
 		_ = json.Unmarshal([]byte(ch.Config), &cfg)
 		if cfg == nil {
@@ -176,10 +218,7 @@ func (s *Server) saveWeixinSingletonChannel(ctx context.Context, operation *cont
 	cfg["bot_id"] = status.ILinkBotID
 	cfg["user_id"] = status.ILinkUserID
 
-	if operation == nil {
-		return config.Channel{}, errors.New("missing authorized channel operation")
-	}
-	ch.ID = pkgchannel.PlatformWeixin
+	ch.ID = channelID
 	ch.Type = pkgchannel.PlatformWeixin
 	if s.pluginHost != nil {
 		if err := s.pluginHost.ValidateConfig(config.PluginID(config.PluginKindChannel, ch.Type), cfg); err != nil {

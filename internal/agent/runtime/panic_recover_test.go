@@ -17,11 +17,12 @@ type panicRunner struct{}
 func (panicRunner) Chat(_ context.Context, _ []ai.Message, _ MessageContent) <-chan Event {
 	panic("boom")
 }
-func (panicRunner) Alive() bool             { return true }
-func (panicRunner) Busy() bool              { return false }
-func (panicRunner) LastActivity() time.Time { return time.Now() }
-func (panicRunner) SystemPrompt() string    { return "" }
-func (panicRunner) Close() error            { return nil }
+func (panicRunner) Alive() bool                  { return true }
+func (panicRunner) Busy() bool                   { return false }
+func (panicRunner) LastActivity() time.Time      { return time.Now() }
+func (panicRunner) SystemPrompt() string         { return "" }
+func (panicRunner) PluginContext() PluginContext { return PluginContext{} }
+func (panicRunner) Close() error                 { return nil }
 
 // A panic inside the turn must not wedge the session: the caller's channel
 // still closes, the busy guard clears, and the hub stops reporting the session

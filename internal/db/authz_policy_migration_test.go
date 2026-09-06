@@ -1,14 +1,6 @@
 package db
 
-import (
-	"context"
-	"io/fs"
-	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
-)
+import "testing"
 
 const (
 	authzPolicyBeforeRemoval = 20260714024406
@@ -16,14 +8,8 @@ const (
 )
 
 func TestRemoveAuthzPolicyMigrationDropsOnlyInactiveRows(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := authzPolicyProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, authzPolicyBeforeRemoval); err != nil {
-		t.Fatalf("restore pre-removal schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, authzPolicyBeforeRemoval)
+	ctx := t.Context()
 	if _, err := db.Exec(ctx, `INSERT INTO authz_policy (id, effect, status) VALUES ('inactive', 'allow', 'inactive')`); err != nil {
 		t.Fatalf("seed inactive policy: %v", err)
 	}
@@ -36,14 +22,8 @@ func TestRemoveAuthzPolicyMigrationDropsOnlyInactiveRows(t *testing.T) {
 }
 
 func TestRemoveAuthzPolicyMigrationRejectsActiveRows(t *testing.T) {
-	db := newTestDB(t)
-	provider, closeProvider := authzPolicyProvider(t, db)
-	defer closeProvider()
-	ctx := context.Background()
-
-	if _, err := provider.DownTo(ctx, authzPolicyBeforeRemoval); err != nil {
-		t.Fatalf("restore pre-removal schema: %v", err)
-	}
+	db, provider := newTestDBAtMigration(t, authzPolicyBeforeRemoval)
+	ctx := t.Context()
 	if _, err := db.Exec(ctx, `INSERT INTO authz_policy (id, effect, status) VALUES ('active', 'deny', 'active')`); err != nil {
 		t.Fatalf("seed active policy: %v", err)
 	}
@@ -60,19 +40,4 @@ func TestRemoveAuthzPolicyMigrationRejectsActiveRows(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("active policy count = %d, want 1", count)
 	}
-}
-
-func authzPolicyProvider(t *testing.T, pool *pgxpool.Pool) (*goose.Provider, func()) {
-	t.Helper()
-	migrations, err := fs.Sub(MigrationsFS, "migrations")
-	if err != nil {
-		t.Fatalf("open migrations: %v", err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(pool)
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
-	if err != nil {
-		_ = sqlDB.Close()
-		t.Fatalf("create migration provider: %v", err)
-	}
-	return provider, func() { _ = sqlDB.Close() }
 }
